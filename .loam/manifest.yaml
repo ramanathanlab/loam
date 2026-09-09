@@ -1,0 +1,28 @@
+version: 1
+name: loam-lifecycle
+# Canonical, harness-neutral lifecycle mapping. Adapter-specific code maps its
+# native callbacks into the JSON payload described below.
+
+wire_protocol:
+  stdin: |
+    One JSON object. Every payload contains `event` and `repo_root`; adapters
+    add event-specific fields such as `tool_name`, `arguments`, `session_id`,
+    or `child_summary`.
+  stdout: |
+    Optional JSON object. Empty stdout means no action. Supported portable
+    response forms: `{ "action": "block", "message": "..." }` for a
+    pre-tool veto and `{ "context": "..." }` for pre-LLM context injection.
+
+hooks:
+  pre_tool_call:
+    script: hooks/pre-tool.py
+    behavior: may_block
+  pre_llm_call:
+    script: hooks/pre-llm.py
+    behavior: may_inject_context
+  subagent_start:
+    script: hooks/subagent-start.py
+    behavior: observe
+  subagent_stop:
+    script: hooks/subagent-stop.py
+    behavior: observe

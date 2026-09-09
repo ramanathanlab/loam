@@ -1,0 +1,3 @@
+name: loam-hooks
+version: "0.1.0"
+description: Hermes adapter for this repository's Loam lifecycle hooks

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Launch Hermes with this repository's Loam project plugin discoverable.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+export HERMES_ENABLE_PROJECT_PLUGINS=1
+# Invoke `.loam/hooks/pre-llm.py` every N turns of each Hermes session.
+# Override at launch, e.g. `LOAM_PRE_LLM_EVERY=3 .loam/run-hermes`.
+export LOAM_PRE_LLM_EVERY="${LOAM_PRE_LLM_EVERY:-5}"
+exec hermes "$@"

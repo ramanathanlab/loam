@@ -1,0 +1,3 @@
+name: loam-hooks
+version: "0.1.0"
+description: Discovery shim for this repository's .loam Hermes adapter
