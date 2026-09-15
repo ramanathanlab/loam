@@ -43,21 +43,54 @@ Loam-specific Hermes home before invoking `run-hermes` and place the same
 `plugins.enabled` entry in `$HERMES_HOME/config.yaml`. That isolated home needs
 its own model/credential configuration.
 
-## Hook contract
+### Global Hermes installation
 
-See `manifest.yaml`. Current hook scripts are deliberately no-ops, so enabling
-the adapter is safe. Replace their bodies with Loam policy as it is designed.
-
-`pre-llm.py` runs every **N** turns, independently for each Hermes session.
-The interval defaults to 5 and is configured at launch:
+Loam can also be installed once as a user plugin at
+`~/.hermes/plugins/loam-hooks/`. The global shim loads this repository's adapter
+(default `LOAM_ROOT=/Users/msinclair/github/loam`; override that variable for a
+separate checkout). Enable it once with:
 
 ```bash
-LOAM_PRE_LLM_EVERY=3 .loam/run-hermes
+hermes plugins enable loam-hooks
 ```
 
-The adapter supplies `loam_turn` and `loam_interval` in that script's JSON
-payload. It runs on turns N, 2N, 3N, and so on; set the interval to `1` to run
-on every turn. The count resets when the Hermes process restarts.
+The plugin remains inert unless `LOAM_ENABLED=1` or a Loam runtime variable such
+as `LOAM_LEDGER_PATH`, `LOAM_PARENT_MEMORY_PATH`, or `LOAM_WORKFLOW_ID` is set.
+`run-hermes` sets `LOAM_ENABLED=1` automatically.
+
+## Hook contract
+
+See `manifest.yaml`. `subagent-start.py` and `subagent-stop.py` now implement an
+observe-only JSONL lifecycle ledger; the remaining starter hooks are deliberately
+no-ops, so enabling the adapter remains safe. Replace their bodies with Loam
+policy as it is designed.
+
+- `subagent-start.py` / `subagent-stop.py` — append lifecycle observations to the
+  repo-local `.loam/state/subagent-ledger.jsonl` ledger. `subagent-stop.py` also
+  extracts an opt-in `protein_structure_metadata_v1` fenced JSON object into
+  `candidate-results.jsonl`; candidates remain unvalidated and receive no
+  findings, evidence, memory, or control credit until reconciliation.
+- `pre-llm.py` runs every **N** turns, independently for each Hermes session.
+  The interval is profile-configured as `pre_llm_every` (or defaults to 5 for
+  the emergency environment override). The adapter supplies `loam_turn` and
+  `loam_interval` in that script's JSON payload. It runs on turns N, 2N, 3N,
+  and so on; set the interval to `1` to run on every turn. The count resets
+  when the Hermes process restarts.
+
+  A profile may additionally opt into `hypothesis_tournament`. When enabled,
+  the hook runs a bounded, workflow-scoped Jnana/ProtoGnosis tournament before
+  the model call, persists Jnana JSON state and an immutable Loam report, and
+  injects only a compact Elo ranking. It requires at least two existing
+  hypotheses; it does not generate hypotheses, and its rankings are advisory
+  rather than empirical validation. The hook uses a nonblocking state lock and
+  fails open on unavailable endpoints or contention.
+
+  Configure `inference_endpoint` as an OpenAI-compatible API base URL (normally
+  ending in `/v1`). If your endpoint is the exact Chat Completions URL, set
+  `endpoint_is_chat_completions: true`; Loam removes `/chat/completions` before
+  creating Jnana's client. `api_key_env` is optional for no-auth local services;
+  when supplied, it names the environment variable holding that endpoint's
+  credential rather than an OpenAI-specific key.
 
 - `pre-tool.py` may return `{"action":"block","message":"..."}` to veto a
   Hermes tool call.

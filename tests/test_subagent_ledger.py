@@ -1,0 +1,371 @@
+"""Smoke tests for Loam's observe-only subagent lifecycle ledger."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+HOOKS = ROOT / ".loam" / "hooks"
+START = HOOKS / "subagent-start.py"
+STOP = HOOKS / "subagent-stop.py"
+RECONCILER = ROOT / ".loam" / "reconcile" / "protein_structure_metadata.py"
+MEMORY_PROJECTOR = ROOT / ".loam" / "reconcile" / "project_parent_memory.py"
+MEMORY_RECALL = HOOKS / "memory_recall.py"
+
+
+def _load_module(name: str, path: Path):
+    hook_path = str(HOOKS)
+    if hook_path not in sys.path:
+        sys.path.insert(0, hook_path)
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_reconciler():
+    return _load_module("loam_reconciler", RECONCILER)
+
+
+def _load_memory_projector():
+    return _load_module("loam_memory_projector", MEMORY_PROJECTOR)
+
+
+class SubagentLedgerTests(unittest.TestCase):
+    def _run_hook(self, script: Path, payload: dict, ledger: Path) -> subprocess.CompletedProcess[str]:
+        env = dict(os.environ)
+        env["LOAM_LEDGER_PATH"] = str(ledger)
+        return subprocess.run(
+            [sys.executable, str(script)],
+            cwd=str(ROOT),
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+
+    def test_start_and_stop_records_share_a_unit_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "ledger.jsonl"
+            common = {
+                "repo_root": str(ROOT),
+                "parent_session_id": "parent-session",
+                "parent_turn_id": "turn-7",
+                "child_session_id": "child-session",
+                "child_subagent_id": "child-42",
+                "child_role": "leaf",
+            }
+            start = self._run_hook(
+                START,
+                {**common, "event": "subagent_start", "child_goal": "Inspect one source."},
+                ledger,
+            )
+            stop = self._run_hook(
+                STOP,
+                {
+                    **common,
+                    "event": "subagent_stop",
+                    "child_status": "completed",
+                    "duration_ms": 123,
+                    "child_summary": "Unvalidated audit text.",
+                },
+                ledger,
+            )
+            self.assertEqual(start.returncode, 0, start.stderr)
+            self.assertEqual(stop.returncode, 0, stop.stderr)
+            records = [json.loads(line) for line in ledger.read_text().splitlines()]
+
+        self.assertEqual([record["event"] for record in records], ["subagent_start", "subagent_stop"])
+        self.assertEqual(records[0]["unit_id"], records[1]["unit_id"])
+        self.assertEqual(records[1]["observation_status"], "observed")
+        self.assertEqual(records[1]["finding_ids"], [])
+        self.assertEqual(records[1]["cost"]["elapsed_ms"], 123)
+
+    def test_interrupted_child_is_excluded_not_zero_yield(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "ledger.jsonl"
+            completed = self._run_hook(
+                STOP,
+                {
+                    "event": "subagent_stop",
+                    "repo_root": str(ROOT),
+                    "parent_session_id": "parent",
+                    "parent_turn_id": "turn",
+                    "child_session_id": "child",
+                    "child_subagent_id": "child-id",
+                    "child_status": "interrupted",
+                },
+                ledger,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            record = json.loads(ledger.read_text())
+
+        self.assertEqual(record["observation_status"], "excluded")
+        self.assertEqual(record["finding_ids"], [])
+    def test_completed_opt_in_contract_creates_pending_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "ledger.jsonl"
+            summary = '''Candidate output:
+```json
+{
+  "contract_version": "protein_structure_metadata_v1",
+  "source_kind": "uniprot",
+  "source_accession": "P00918",
+  "source_url": "https://www.uniprot.org/uniprotkb/P00918",
+  "claims": {
+    "recommended_name": "Carbonic anhydrase 2",
+    "gene_name": "CA2",
+    "sequence_length": 260
+  },
+  "uncertainties": []
+}
+```'''
+            completed = self._run_hook(
+                STOP,
+                {
+                    "event": "subagent_stop",
+                    "repo_root": str(ROOT),
+                    "parent_session_id": "parent",
+                    "parent_turn_id": "turn",
+                    "child_session_id": "child",
+                    "child_subagent_id": "child-id",
+                    "child_status": "completed",
+                    "child_summary": summary,
+                },
+                ledger,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            candidate_file = ledger.with_name("candidate-results.jsonl")
+            candidate = json.loads(candidate_file.read_text())
+
+        self.assertEqual(candidate["candidate_status"], "pending")
+        self.assertEqual(candidate["candidate"]["source_accession"], "P00918")
+        self.assertEqual(candidate["candidate"]["claims"]["gene_name"], "CA2")
+        self.assertNotIn("finding_id", candidate)
+
+    def test_completed_plain_fence_contract_creates_pending_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "ledger.jsonl"
+            summary = '''Verified record:\n\n```\n{"contract_version":"protein_structure_metadata_v1","source_kind":"uniprot","source_accession":"P00918","source_url":"https://www.uniprot.org/uniprotkb/P00918","claims":{"recommended_name":"Carbonic anhydrase 2","gene_name":"CA2","sequence_length":260},"uncertainties":[]}\n```'''
+            completed = self._run_hook(
+                STOP,
+                {
+                    "event": "subagent_stop",
+                    "repo_root": str(ROOT),
+                    "parent_session_id": "parent",
+                    "parent_turn_id": "turn",
+                    "child_session_id": "child",
+                    "child_subagent_id": "child-id",
+                    "child_status": "completed",
+                    "child_summary": summary,
+                },
+                ledger,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            candidate = json.loads(ledger.with_name("candidate-results.jsonl").read_text())
+
+        self.assertEqual(candidate["candidate_status"], "pending")
+        self.assertEqual(candidate["candidate"]["source_accession"], "P00918")
+
+    def test_reconciler_accepts_matching_uniprot_claims(self) -> None:
+        reconciler = _load_reconciler()
+        candidate_record = {
+            "candidate_status": "pending",
+            "candidate_id": "candidate-1",
+            "unit_id": "unit-1",
+            "candidate": {
+                "source_kind": "uniprot",
+                "source_accession": "P00918",
+                "claims": {
+                    "recommended_name": "Carbonic anhydrase 2",
+                    "gene_name": "CA2",
+                    "sequence_length": 260,
+                },
+            },
+        }
+        source = {
+            "proteinDescription": {
+                "recommendedName": {"fullName": {"value": "Carbonic anhydrase 2"}}
+            },
+            "genes": [{"geneName": {"value": "CA2"}}],
+            "sequence": {"length": 260},
+        }
+        module: Any = reconciler
+        original = module._fetch_json
+        module._fetch_json = lambda _url, _timeout: (source, "ok")
+        try:
+            rows = list(module.decisions(candidate_record, 1.0))
+        finally:
+            module._fetch_json = original
+
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all(row["validation_status"] == "accepted" for row in rows))
+        self.assertTrue(all(row["finding_id"] for row in rows))
+
+    def test_parent_memory_uses_only_accepted_deduplicated_findings(self) -> None:
+        projector = _load_memory_projector()
+        decisions = [
+            {
+                "parent_session_id": "parent",
+                "parent_turn_id": "turn",
+                "unit_id": "unit-a",
+                "source_kind": "uniprot",
+                "source_accession": "P00918",
+                "field": "gene_name",
+                "authoritative_value": "CA2",
+                "source_url": "https://rest.uniprot.org/uniprotkb/P00918.json",
+                "validation_status": "accepted",
+                "finding_id": "finding-ca2",
+            },
+            {
+                "parent_session_id": "parent",
+                "parent_turn_id": "turn",
+                "unit_id": "unit-b",
+                "source_kind": "uniprot",
+                "source_accession": "P00918",
+                "field": "gene_name",
+                "authoritative_value": "CA2",
+                "source_url": "https://rest.uniprot.org/uniprotkb/P00918.json",
+                "validation_status": "accepted",
+                "finding_id": "finding-ca2",
+            },
+            {
+                "parent_session_id": "parent",
+                "parent_turn_id": "turn",
+                "unit_id": "unit-c",
+                "validation_status": "claim_mismatch",
+                "finding_id": "",
+            },
+        ]
+        snapshots = projector.project(decisions)
+
+        self.assertEqual(len(snapshots), 1)
+        snapshot = snapshots[0]
+        self.assertEqual(snapshot["accepted_finding_ids"], ["finding-ca2"])
+        self.assertEqual(snapshot["accepted_findings"][0]["unit_ids"], ["unit-a", "unit-b"])
+        self.assertEqual(snapshot["validation_failure_statuses"], ["claim_mismatch"])
+        self.assertEqual(snapshot["attempted_unit_ids"], ["unit-a", "unit-b", "unit-c"])
+
+    def test_recall_injects_validated_memory_and_audits_exact_duplicate(self) -> None:
+        recall = _load_module("loam_memory_recall", MEMORY_RECALL)
+        with tempfile.TemporaryDirectory() as tmp:
+            memory_path = Path(tmp) / "parent-memory.jsonl"
+            audit_path = Path(tmp) / "subagent-ledger.jsonl"
+            snapshot = {
+                "parent_session_id": "parent",
+                "parent_turn_id": "turn",
+                "accepted_findings": [
+                    {
+                        "finding_id": "finding-ca2",
+                        "source_kind": "uniprot",
+                        "source_accession": "P00918",
+                        "field": "gene_name",
+                        "value": "CA2",
+                    }
+                ],
+            }
+            memory_path.write_text(json.dumps(snapshot) + "\n", encoding="utf-8")
+            old_memory = os.environ.get("LOAM_PARENT_MEMORY_PATH")
+            old_ledger = os.environ.get("LOAM_LEDGER_PATH")
+            os.environ["LOAM_PARENT_MEMORY_PATH"] = str(memory_path)
+            os.environ["LOAM_LEDGER_PATH"] = str(audit_path)
+            try:
+                payload = {
+                    "session_id": "parent",
+                    "parent_session_id": "parent",
+                    "parent_turn_id": "turn",
+                    "tool_name": "delegate_task",
+                    "arguments": {"goal": "Verify the UniProt P00918 gene name."},
+                }
+                context = recall.context_for(payload)
+                matches = recall.audit_duplicates(payload)
+            finally:
+                if old_memory is None:
+                    os.environ.pop("LOAM_PARENT_MEMORY_PATH", None)
+                else:
+                    os.environ["LOAM_PARENT_MEMORY_PATH"] = old_memory
+                if old_ledger is None:
+                    os.environ.pop("LOAM_LEDGER_PATH", None)
+                else:
+                    os.environ["LOAM_LEDGER_PATH"] = old_ledger
+            audit_rows = [
+                json.loads(line)
+                for line in audit_path.with_name("duplicate-candidates.jsonl").read_text().splitlines()
+            ]
+
+        self.assertIn("uniprot P00918: gene_name = CA2", context)
+        self.assertEqual(matches, None)
+        self.assertEqual(audit_rows[0]["policy_action"], "allow_and_audit")
+
+    def test_exact_duplicate_block_is_opt_in(self) -> None:
+        recall = _load_module("loam_memory_recall_block", MEMORY_RECALL)
+        with tempfile.TemporaryDirectory() as tmp:
+            memory_path = Path(tmp) / "parent-memory.jsonl"
+            ledger_path = Path(tmp) / "subagent-ledger.jsonl"
+            memory_path.write_text(
+                json.dumps(
+                    {
+                        "workflow_id": "ca2",
+                        "accepted_findings": [
+                            {
+                                "finding_id": "finding-ca2",
+                                "source_kind": "uniprot",
+                                "source_accession": "P00918",
+                                "field": "gene_name",
+                                "value": "CA2",
+                            }
+                        ],
+                    }
+                ) + "\n",
+                encoding="utf-8",
+            )
+            old_memory = os.environ.get("LOAM_PARENT_MEMORY_PATH")
+            old_ledger = os.environ.get("LOAM_LEDGER_PATH")
+            os.environ["LOAM_PARENT_MEMORY_PATH"] = str(memory_path)
+            os.environ["LOAM_LEDGER_PATH"] = str(ledger_path)
+            try:
+                blocked = recall.audit_duplicates(
+                    {
+                        "session_id": "new-session",
+                        "workflow_id": "ca2",
+                        "loam_duplicate_policy": "block_exact_duplicate",
+                        "tool_name": "delegate_task",
+                        "arguments": {"goal": "Verify the UniProt P00918 gene name."},
+                    }
+                )
+                distinct = recall.audit_duplicates(
+                    {
+                        "session_id": "new-session",
+                        "workflow_id": "ca2",
+                        "loam_duplicate_policy": "block_exact_duplicate",
+                        "tool_name": "delegate_task",
+                        "arguments": {"goal": "Verify the UniProt P00918 sequence length."},
+                    }
+                )
+            finally:
+                if old_memory is None:
+                    os.environ.pop("LOAM_PARENT_MEMORY_PATH", None)
+                else:
+                    os.environ["LOAM_PARENT_MEMORY_PATH"] = old_memory
+                if old_ledger is None:
+                    os.environ.pop("LOAM_LEDGER_PATH", None)
+                else:
+                    os.environ["LOAM_LEDGER_PATH"] = old_ledger
+
+        self.assertEqual(blocked["action"], "block")
+        self.assertEqual(blocked["reason"], "accepted_exact_duplicate")
+        self.assertIsNone(distinct)
+
+
+if __name__ == "__main__":
+    unittest.main()

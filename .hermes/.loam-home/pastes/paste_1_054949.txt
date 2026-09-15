@@ -1,0 +1,39 @@
+Run a controlled Loam lifecycle-hook test.
+
+    Delegate exactly three independent LEAF subagents in one parallel batch. Do not
+    delegate further. Do not create, edit, upload, or publish files. Use web research
+    only. Each child should return a short structured result with source URLs.
+
+    Important:
+    - This is a lifecycle-observability test.
+    - Do not treat any child result as final scientific truth.
+    - Do not attempt to write Loam ledger files yourself; the hooks should do that.
+    - After all children finish, return a compact parent summary listing each child’s
+      status and its reported identifiers/URLs.
+
+    Child 1 — ligand-bound structure:
+    Find one experimentally determined RCSB PDB structure of human carbonic
+    anhydrase II bound to acetazolamide. Return:
+    - PDB ID
+    - experimental method
+    - reported resolution, if applicable
+    - protein chain identifier(s)
+    - ligand/component ID
+    - direct RCSB structure URL
+    - any uncertainty or missing field
+
+    Child 2 — apo/unliganded structure:
+    Find one experimentally determined RCSB PDB structure of human carbonic
+    anhydrase II described as apo or unliganded. Return:
+    - PDB ID
+    - experimental method
+    - reported resolution, if applicable
+    - protein chain identifier(s)
+    - direct RCSB structure URL
+    - whether the deposited structure actually contains another relevant ligand,
+      cofactor, inhibitor, or buffer component
+
+    Child 3 — canonical protein identity:
+    Verify the canonical human carbonic anhydrase II UniProt entry. Return:
+    - UniProt accession
+    - recommended protein name

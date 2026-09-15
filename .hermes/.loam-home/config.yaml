@@ -1,0 +1,17 @@
+model:
+  default: argo:gpt-5.6-terra
+  provider: custom
+  base_url: http://localhost:61612/v1
+  api_key: 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
+_config_version: 33
+plugins:
+  enabled:
+    - loam-hooks
+custom_providers:
+  - name: Local (localhost:61612)
+    base_url: http://localhost:61612/v1
+    api_key: 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
+    model: argo:gpt-5.6-terra
+onboarding:
+  seen:
+    tool_progress_prompt: true

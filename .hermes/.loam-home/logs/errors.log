@@ -1,0 +1,128 @@
+2026-09-10 05:44:30,155 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,156 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,160 WARNING agent.auxiliary_client: Auxiliary: marking openrouter unhealthy for 60s (payment / credit error). Subsequent auxiliary calls will skip it until 05:45:30.
+2026-09-10 05:44:30,161 WARNING agent.auxiliary_client: Auxiliary Nous client unavailable: no Nous authentication found (run: hermes auth).
+2026-09-10 05:44:30,161 WARNING agent.auxiliary_client: Auxiliary: marking nous unhealthy for 60s (payment / credit error). Subsequent auxiliary calls will skip it until 05:45:30.
+2026-09-10 05:44:30,164 WARNING agent.auxiliary_client: Auxiliary: marking openrouter unhealthy for 60s (payment / credit error). Subsequent auxiliary calls will skip it until 05:45:30.
+2026-09-10 05:44:30,166 WARNING agent.auxiliary_client: Auxiliary Nous client unavailable: no Nous authentication found (run: hermes auth).
+2026-09-10 05:44:30,166 WARNING agent.auxiliary_client: Auxiliary: marking nous unhealthy for 60s (payment / credit error). Subsequent auxiliary calls will skip it until 05:45:30.
+2026-09-10 05:44:30,166 WARNING tools.registry: check_fn check_browser_vision_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,166 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,167 WARNING tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,366 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,366 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,366 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,423 WARNING agent.auxiliary_client: Auxiliary: marking openrouter unhealthy for 60s (payment / credit error). Subsequent auxiliary calls will skip it until 05:45:30.
+2026-09-10 05:44:30,424 WARNING agent.auxiliary_client: Auxiliary Nous client unavailable: no Nous authentication found (run: hermes auth).
+2026-09-10 05:44:30,424 WARNING agent.auxiliary_client: Auxiliary: marking nous unhealthy for 60s (payment / credit error). Subsequent auxiliary calls will skip it until 05:45:30.
+2026-09-10 05:44:30,426 WARNING agent.auxiliary_client: Auxiliary: marking openrouter unhealthy for 60s (payment / credit error). Subsequent auxiliary calls will skip it until 05:45:30.
+2026-09-10 05:44:30,427 WARNING agent.auxiliary_client: Auxiliary Nous client unavailable: no Nous authentication found (run: hermes auth).
+2026-09-10 05:44:30,427 WARNING agent.auxiliary_client: Auxiliary: marking nous unhealthy for 60s (payment / credit error). Subsequent auxiliary calls will skip it until 05:45:30.
+2026-09-10 05:44:30,427 WARNING tools.registry: check_fn check_vision_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,435 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,438 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,438 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,438 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,445 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,445 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,445 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,448 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,449 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:44:30,451 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:07,619 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:07,621 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,225 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,226 WARNING tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,234 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,235 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,235 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,311 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,480 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,480 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,480 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,487 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,487 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,487 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,492 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,493 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:48:09,496 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:50:07,361 WARNING [20260910_054807_d59176] tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-09-10 05:50:07,362 WARNING [20260910_054807_d59176] tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-09-10 05:50:07,387 WARNING [20260910_054807_d59176] tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:50:07,388 WARNING [20260910_054807_d59176] tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:50:07,395 WARNING [20260910_054807_d59176] tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-09-10 05:50:07,395 WARNING [20260910_054807_d59176] tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-09-10 05:50:07,395 WARNING [20260910_054807_d59176] tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:50:07,428 WARNING [20260910_054807_d59176] tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-09-10 05:50:10,862 WARNING [20260910_054807_d59176] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:15,821 WARNING [20260910_055009_2f4c41] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:17,564 WARNING [20260910_055007_1ac5ad] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:18,405 WARNING [20260910_055009_2f4c41] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:19,208 WARNING [20260910_055008_32418a] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:21,376 WARNING [20260910_055008_32418a] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:21,512 WARNING [20260910_055009_2f4c41] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:22,552 WARNING [20260910_055007_1ac5ad] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:24,580 WARNING [20260910_055008_32418a] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:25,936 WARNING [20260910_055007_1ac5ad] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:25,936 WARNING [20260910_055007_1ac5ad] agent.tool_executor: Tool browser_console returned error (0.00s): {"success": false, "error": "Blocked: browser_console(expression=...) tried to use sensitive browser JavaScript primitive (network request). Use browser_snapshot/browser_get_images/browser_console wit
+2026-09-10 05:50:29,577 WARNING [20260910_055008_32418a] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:30,306 WARNING [20260910_055007_1ac5ad] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:31,673 WARNING [20260910_055008_32418a] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:33,410 WARNING [20260910_055007_1ac5ad] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:37,297 WARNING [20260910_055007_1ac5ad] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:37,298 WARNING [20260910_055007_1ac5ad] agent.tool_executor: Tool terminal returned error (0.68s): {"output": "/bin/bash: line 10: python: command not found", "exit_code": 127, "error": null}
+2026-09-10 05:50:41,263 WARNING [20260910_055007_1ac5ad] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:50:44,525 WARNING [20260910_055007_1ac5ad] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:53:49,700 WARNING [20260910_054807_d59176] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:53:53,817 WARNING [20260910_054807_d59176] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:53:55,945 WARNING [20260910_054807_d59176] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:53:58,263 WARNING [20260910_054807_d59176] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:54:00,304 WARNING [20260910_054807_d59176] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:54:03,584 WARNING [20260910_054807_d59176] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:54:05,772 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-09-10 05:54:05,774 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-09-10 05:54:05,802 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:54:05,804 WARNING tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:54:05,812 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-09-10 05:54:05,813 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-09-10 05:54:05,813 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-09-10 05:54:05,847 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-09-10 05:54:09,127 WARNING [20260910_054807_d59176] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-10 05:54:16,780 WARNING [20260910_054807_d59176] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-11 04:21:19,215 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:19,217 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,383 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,384 WARNING tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,392 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,393 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,393 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,486 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,644 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,644 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,645 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,653 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,653 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,654 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,658 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,659 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:20,662 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn
+2026-09-11 04:21:39,254 WARNING [20260911_042118_80a4dd] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-11 04:21:39,254 WARNING [20260911_042118_80a4dd] agent.tool_executor: Tool terminal returned error (0.80s): {"output": "usage: protein_structure_metadata.py [-h] --candidates CANDIDATES --out OUT\n                                     [--timeout TIMEOUT]\nprotein_structure_metadata.py: error: candidate file 
+2026-09-11 04:21:42,300 WARNING [20260911_042118_80a4dd] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-09-11 04:25:50,222 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:50,224 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,328 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,329 WARNING tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,337 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,338 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,338 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,415 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,418 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,418 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,418 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,423 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,423 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,424 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,427 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,428 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-09-11 04:25:51,430 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn

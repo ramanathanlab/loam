@@ -8,13 +8,17 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import subprocess
 import sys
 import threading
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+
+_ADAPTER_DIR = Path(__file__).resolve().parent
+if str(_ADAPTER_DIR) not in sys.path:
+    sys.path.insert(0, str(_ADAPTER_DIR))
+from loam_config import effective_profile, payload_values
 
 logger = logging.getLogger(__name__)
 
@@ -26,20 +30,20 @@ HOOK_TIMEOUT_SECONDS = 15
 _DEFAULT_PRE_LLM_INTERVAL = 5
 _PRE_LLM_TURNS: dict[str, int] = defaultdict(int)
 _PRE_LLM_TURNS_LOCK = threading.Lock()
+_CHILD_SUBAGENT_IDS: dict[str, str] = {}
+_CHILD_SUBAGENT_IDS_LOCK = threading.Lock()
 
 
-def _pre_llm_interval() -> int:
-    """Read Loam's per-session pre-LLM hook interval from the environment."""
-    raw_interval = os.environ.get("LOAM_PRE_LLM_EVERY", str(_DEFAULT_PRE_LLM_INTERVAL))
-    try:
-        return max(1, int(raw_interval))
-    except ValueError:
-        logger.warning(
-            "Invalid LOAM_PRE_LLM_EVERY=%r; using %d",
-            raw_interval,
-            _DEFAULT_PRE_LLM_INTERVAL,
-        )
-        return _DEFAULT_PRE_LLM_INTERVAL
+def _profile():
+    """Return the selected config profile, or None when Loam is inert."""
+
+    return effective_profile()
+
+
+def _pre_llm_interval(profile: Any) -> int:
+    """Use profile cadence; legacy environment activation is handled by config."""
+
+    return profile.pre_llm_every
 
 
 def _json_safe(value: Any) -> Any:
@@ -59,7 +63,11 @@ def _payload(event: str, **values: Any) -> dict[str, Any]:
     }
 
 
-def _invoke(script_name: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+def _invoke(
+    script_name: str,
+    payload: dict[str, Any],
+    timeout_seconds: int = HOOK_TIMEOUT_SECONDS,
+) -> dict[str, Any] | None:
     """Run one canonical Loam script and parse its optional JSON response."""
     script = HOOKS_DIR / script_name
     if not script.is_file():
@@ -73,7 +81,7 @@ def _invoke(script_name: str, payload: dict[str, Any]) -> dict[str, Any] | None:
             text=True,
             capture_output=True,
             cwd=str(REPO_ROOT),
-            timeout=HOOK_TIMEOUT_SECONDS,
+            timeout=timeout_seconds,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -104,13 +112,26 @@ def _invoke(script_name: str, payload: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def pre_tool_call(tool_name: str, args: dict[str, Any], **kwargs: Any) -> dict[str, Any] | None:
+    profile = _profile()
+    if profile is None:
+        return None
+    values = dict(kwargs)
+    values.update(payload_values(profile))
+    session_id = values.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        values.setdefault("parent_session_id", session_id)
     return _invoke(
         "pre-tool.py",
-        _payload("pre_tool_call", tool_name=tool_name, arguments=args, **kwargs),
+        _payload("pre_tool_call", tool_name=tool_name, arguments=args, **values),
     )
 
 
 def post_tool_call(tool_name: str, args: dict[str, Any], result: str, **kwargs: Any) -> None:
+    profile = _profile()
+    if profile is None:
+        return
+    values = dict(kwargs)
+    values.update(payload_values(profile))
     _invoke(
         "post-tool.py",
         _payload(
@@ -118,14 +139,17 @@ def post_tool_call(tool_name: str, args: dict[str, Any], result: str, **kwargs: 
             tool_name=tool_name,
             arguments=args,
             result=result,
-            **kwargs,
+            **values,
         ),
     )
 
 
 def pre_llm_call(session_id: str = "", **kwargs: Any) -> dict[str, Any] | None:
     """Run Loam's pre-LLM hook every N turns, independently per session."""
-    interval = _pre_llm_interval()
+    profile = _profile()
+    if profile is None:
+        return None
+    interval = _pre_llm_interval(profile)
     counter_key = session_id or "__no_session__"
 
     with _PRE_LLM_TURNS_LOCK:
@@ -136,24 +160,57 @@ def pre_llm_call(session_id: str = "", **kwargs: Any) -> dict[str, Any] | None:
     if turn % interval:
         return None
 
+    timeout_seconds = HOOK_TIMEOUT_SECONDS
+    tournament = profile.hypothesis_tournament
+    if tournament is not None:
+        timeout_seconds = max(timeout_seconds, tournament.timeout_seconds)
     return _invoke(
         "pre-llm.py",
         _payload(
             "pre_llm_call",
             session_id=session_id,
+            parent_session_id=session_id,
             loam_turn=turn,
             loam_interval=interval,
+            **payload_values(profile),
             **kwargs,
         ),
+        timeout_seconds=timeout_seconds,
     )
 
 
 def subagent_start(**kwargs: Any) -> None:
-    _invoke("subagent-start.py", _payload("subagent_start", **kwargs))
+    profile = _profile()
+    if profile is None:
+        return
+    values = dict(kwargs)
+    values.update(payload_values(profile))
+    child_session_id = values.get("child_session_id")
+    child_subagent_id = values.get("child_subagent_id")
+    if isinstance(child_session_id, str) and child_session_id and isinstance(child_subagent_id, str):
+        with _CHILD_SUBAGENT_IDS_LOCK:
+            _CHILD_SUBAGENT_IDS[child_session_id] = child_subagent_id
+    _invoke("subagent-start.py", _payload("subagent_start", **values))
 
 
 def subagent_stop(**kwargs: Any) -> None:
-    _invoke("subagent-stop.py", _payload("subagent_stop", **kwargs))
+    profile = _profile()
+    if profile is None:
+        return
+    # Hermes's current stop callback carries child_session_id but not the
+    # stable child_subagent_id supplied at start. Recover the latter from this
+    # process-local lifecycle map; use session ID only as a deterministic
+    # fallback if the corresponding start observer failed or predates this map.
+    values = dict(kwargs)
+    values.update(payload_values(profile))
+    child_session_id = values.get("child_session_id")
+    if isinstance(child_session_id, str) and child_session_id:
+        with _CHILD_SUBAGENT_IDS_LOCK:
+            child_subagent_id = _CHILD_SUBAGENT_IDS.pop(child_session_id, "")
+        values.setdefault("child_subagent_id", child_subagent_id or child_session_id)
+    else:
+        values.setdefault("child_subagent_id", "")
+    _invoke("subagent-stop.py", _payload("subagent_stop", **values))
 
 
 def register(ctx: Any) -> None:
