@@ -1,0 +1,95 @@
+"""Opt-in, unvalidated hypothesis/evidence provenance candidate contract.
+
+This contract records proposed hypotheses and source-located evidence candidates
+from a completed child.  It deliberately does not accept claims, alter a parent
+hypothesis, or assign credit; those occur only in explicit reconciliation.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from typing import Any, Mapping
+
+CONTRACT_VERSION = "hypothesis_provenance_v1"
+_FENCED_JSON = re.compile(r"```(?:json|JSON)?[ \t]*\r?\n?\s*(\{.*?\})\s*```", re.DOTALL)
+_KEY = re.compile(r"[a-z][a-z0-9_-]{0,79}")
+_STANCES = {"supports", "contradicts", "context"}
+
+
+def stable_id(kind: str, material: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        {"contract_version": CONTRACT_VERSION, "kind": kind, **dict(material)},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"{kind}_{hashlib.sha256(encoded).hexdigest()}"
+
+
+def extract_contract_object(summary: str) -> tuple[dict[str, Any] | None, str]:
+    for match in _FENCED_JSON.finditer(summary or ""):
+        try:
+            value = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and value.get("contract_version") == CONTRACT_VERSION:
+            return value, "present"
+    return None, "absent"
+
+
+def normalize_candidate(value: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    if value.get("contract_version") != CONTRACT_VERSION:
+        return None, "unsupported_contract"
+    hypotheses = value.get("hypotheses")
+    evidence = value.get("evidence_candidates", [])
+    if not isinstance(hypotheses, list) or not hypotheses:
+        return None, "invalid_hypotheses"
+    if not isinstance(evidence, list):
+        return None, "invalid_evidence_candidates"
+
+    normalized_hypotheses: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for raw in hypotheses:
+        if not isinstance(raw, Mapping):
+            return None, "invalid_hypothesis"
+        key = raw.get("hypothesis_key")
+        statement = raw.get("statement")
+        parents = raw.get("parent_hypothesis_keys", [])
+        if not isinstance(key, str) or not _KEY.fullmatch(key):
+            return None, "invalid_hypothesis_key"
+        if key in seen_keys:
+            return None, "duplicate_hypothesis_key"
+        if not isinstance(statement, str) or not statement.strip() or len(statement.strip()) > 4000:
+            return None, "invalid_hypothesis_statement"
+        if not isinstance(parents, list) or not all(isinstance(parent, str) and _KEY.fullmatch(parent) for parent in parents):
+            return None, "invalid_parent_hypothesis_keys"
+        seen_keys.add(key)
+        normalized_hypotheses.append(
+            {"hypothesis_key": key, "statement": statement.strip(), "parent_hypothesis_keys": sorted(set(parents))}
+        )
+
+    normalized_evidence: list[dict[str, str]] = []
+    for raw in evidence:
+        if not isinstance(raw, Mapping):
+            return None, "invalid_evidence_candidate"
+        key, claim, source_url, stance = (
+            raw.get("hypothesis_key"), raw.get("claim"), raw.get("source_url"), raw.get("stance")
+        )
+        if key not in seen_keys:
+            return None, "unknown_evidence_hypothesis"
+        if not isinstance(claim, str) or not claim.strip() or len(claim.strip()) > 4000:
+            return None, "invalid_evidence_claim"
+        if not isinstance(source_url, str) or not source_url.startswith(("https://", "http://")):
+            return None, "invalid_evidence_source_url"
+        if stance not in _STANCES:
+            return None, "invalid_evidence_stance"
+        normalized_evidence.append(
+            {"hypothesis_key": key, "claim": claim.strip(), "source_url": source_url.strip(), "stance": stance}
+        )
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "hypotheses": normalized_hypotheses,
+        "evidence_candidates": normalized_evidence,
+    }, "pending"

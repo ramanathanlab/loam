@@ -67,9 +67,11 @@ policy as it is designed.
 
 - `subagent-start.py` / `subagent-stop.py` — append lifecycle observations to the
   repo-local `.loam/state/subagent-ledger.jsonl` ledger. `subagent-stop.py` also
-  extracts an opt-in `protein_structure_metadata_v1` fenced JSON object into
-  `candidate-results.jsonl`; candidates remain unvalidated and receive no
-  findings, evidence, memory, or control credit until reconciliation.
+  extracts opt-in structured candidates into `candidate-results.jsonl`; candidates
+  remain unvalidated and receive no findings, evidence, memory, or control credit
+  until explicit reconciliation. The available contracts include the narrow
+  protein-metadata pilot and `hypothesis_provenance_v1`, documented in
+  `reconcile/HYPOTHESIS_PROVENANCE.md`.
 - `pre-llm.py` runs every **N** turns, independently for each Hermes session.
   The interval is profile-configured as `pre_llm_every` (or defaults to 5 for
   the emergency environment override). The adapter supplies `loam_turn` and

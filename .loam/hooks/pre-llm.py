@@ -12,6 +12,8 @@ import json
 import sys
 from typing import Any
 
+from hypothesis_recall import context_for as hypothesis_context_for
+from hypothesis_steering_recall import context_for as steering_context_for
 from hypothesis_tournament import context_for as tournament_context_for
 from memory_recall import context_for as memory_context_for
 
@@ -26,7 +28,12 @@ def _payload() -> dict[str, Any]:
 def main() -> int:
     try:
         payload = _payload()
-        contexts = [memory_context_for(payload), tournament_context_for(payload)]
+        contexts = [
+            memory_context_for(payload),
+            hypothesis_context_for(payload),
+            steering_context_for(payload),
+            tournament_context_for(payload),
+        ]
         context = "\n\n".join(part for part in contexts if part)
         if context:
             print(json.dumps({"context": context}))

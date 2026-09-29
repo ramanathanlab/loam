@@ -21,6 +21,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from hypothesis_provenance import (
+    CONTRACT_VERSION as HYPOTHESIS_CONTRACT_VERSION,
+    extract_contract_object as extract_hypothesis_contract,
+    normalize_candidate as normalize_hypothesis_candidate,
+)
 from protein_structure_metadata import (
     CONTRACT_VERSION,
     extract_contract_object,
@@ -164,39 +169,53 @@ def candidate_path(payload: Mapping[str, Any]) -> Path:
     return ledger_path(payload).with_name("candidate-results.jsonl")
 
 
-def build_candidate_record(stop_record: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Extract an opt-in candidate from a completed child without accepting it."""
+def build_candidate_records(stop_record: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Extract opt-in pending candidates from a completed child without accepting them."""
 
     if stop_record.get("observation_status") != "observed":
-        return None
+        return []
     raw_summary = _text(stop_record.get("child_summary"))
-    value, presence = extract_contract_object(raw_summary)
-    if presence == "absent" or value is None:
-        return None
-    candidate, status = normalize_candidate(value)
-    return {
-        "record_version": CONTRACT_VERSION,
-        "event": "candidate_result",
-        "observed_at": _timestamp(),
-        "unit_id": _text(stop_record.get("unit_id")),
-        "run_id": _text(stop_record.get("run_id")),
-        "workflow_id": _text(stop_record.get("workflow_id")),
-        "loam_profile": _text(stop_record.get("loam_profile")),
-        "parent_session_id": _text(stop_record.get("parent_session_id")),
-        "parent_turn_id": _text(stop_record.get("parent_turn_id")),
-        "child_session_id": _text(stop_record.get("child_session_id")),
-        "child_subagent_id": _text(stop_record.get("child_subagent_id")),
-        "candidate_status": status,
-        "candidate_id": stable_id(
-            "candidate",
+    candidates = []
+    for version, extractor, normalizer in (
+        (CONTRACT_VERSION, extract_contract_object, normalize_candidate),
+        (HYPOTHESIS_CONTRACT_VERSION, extract_hypothesis_contract, normalize_hypothesis_candidate),
+    ):
+        value, presence = extractor(raw_summary)
+        if presence == "absent" or value is None:
+            continue
+        candidate, status = normalizer(value)
+        candidates.append(
             {
+                "record_version": version,
+                "event": "candidate_result",
+                "observed_at": _timestamp(),
                 "unit_id": _text(stop_record.get("unit_id")),
-                "raw": value,
-            },
-        ),
-        "candidate": candidate,
-        "raw_contract": value,
-    }
+                "run_id": _text(stop_record.get("run_id")),
+                "workflow_id": _text(stop_record.get("workflow_id")),
+                "loam_profile": _text(stop_record.get("loam_profile")),
+                "parent_session_id": _text(stop_record.get("parent_session_id")),
+                "parent_turn_id": _text(stop_record.get("parent_turn_id")),
+                "child_session_id": _text(stop_record.get("child_session_id")),
+                "child_subagent_id": _text(stop_record.get("child_subagent_id")),
+                "candidate_status": status,
+                "candidate_id": stable_id(
+                    "candidate",
+                    {"unit_id": _text(stop_record.get("unit_id")), "raw": value},
+                ),
+                "candidate": candidate,
+                "raw_contract": value,
+            }
+        )
+    return candidates
+
+
+def build_candidate_record(stop_record: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Backward-compatible protein candidate accessor for the first pilot."""
+
+    for candidate in build_candidate_records(stop_record):
+        if candidate.get("record_version") == CONTRACT_VERSION:
+            return candidate
+    return None
 
 
 def write_stop_and_candidate(payload: Mapping[str, Any]) -> Path:
@@ -204,8 +223,8 @@ def write_stop_and_candidate(payload: Mapping[str, Any]) -> Path:
 
     stop_record = build_stop_record(payload)
     path = write_record(payload, stop_record)
-    candidate = build_candidate_record(stop_record)
-    if candidate is not None:
+    candidates = build_candidate_records(stop_record)
+    for candidate in candidates:
         append_record(candidate_path(payload), candidate)
     return path
 def append_record(path: Path, record: Mapping[str, Any]) -> None:
