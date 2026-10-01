@@ -90,6 +90,48 @@ class SubagentLedgerTests(unittest.TestCase):
         self.assertEqual(records[1]["observation_status"], "observed")
         self.assertEqual(records[1]["finding_ids"], [])
         self.assertEqual(records[1]["cost"]["elapsed_ms"], 123)
+    def test_tagged_validator_lifecycle_records_orchestration_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "ledger.jsonl"
+            state_dir = root / "state"
+            common = {
+                "repo_root": str(ROOT),
+                "workflow_id": "research-v1",
+                "loam_state_dir": str(state_dir),
+                "parent_session_id": "parent-session",
+                "parent_turn_id": "turn-7",
+                "child_session_id": "validator-session",
+                "child_subagent_id": "validator-42",
+                "child_role": "orchestrator",
+                "child_goal": (
+                    "Validate ranked hypothesis "
+                    "[loam-agent-role=hypothesis-validator] "
+                    "[loam-plan-id=plan-1] [loam-hypothesis-id=hypothesis-1]"
+                ),
+            }
+            start = self._run_hook(START, {**common, "event": "subagent_start"}, ledger)
+            stop = self._run_hook(
+                STOP,
+                {
+                    **common,
+                    "event": "subagent_stop",
+                    "child_status": "completed",
+                    "child_summary": "Validator report.",
+                },
+                ledger,
+            )
+            rows = [
+                json.loads(line)
+                for line in (state_dir / "hypothesis-orchestration.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(start.returncode, 0, start.stderr)
+        self.assertEqual(stop.returncode, 0, stop.stderr)
+        self.assertEqual([row["event"] for row in rows], ["agent_started", "validator_completed"])
+        self.assertEqual(rows[1]["hypothesis_id"], "hypothesis-1")
+        self.assertEqual(rows[1]["summary"], "Validator report.")
+
 
     def test_interrupted_child_is_excluded_not_zero_yield(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

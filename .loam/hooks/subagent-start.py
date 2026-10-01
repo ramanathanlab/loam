@@ -13,6 +13,7 @@ import json
 import sys
 from typing import Any
 
+from hypothesis_orchestration import record_start
 from ledger import build_start_record, write_record
 
 
@@ -31,6 +32,7 @@ def main() -> int:
     try:
         payload = _payload()
         write_record(payload, build_start_record(payload))
+        record_start(payload)
     except Exception as exc:  # observer failures must not change Hermes behavior
         print(f"loam subagent-start observer failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

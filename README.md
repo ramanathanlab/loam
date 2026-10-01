@@ -19,6 +19,21 @@ LOAM_PRE_LLM_EVERY=3 .loam/run-hermes
 ```
 
 The hook integration and its runtime state are under `.loam/`. See `.loam/README.md` for lifecycle-hook behavior and optional global Hermes installation.
+## Verify Loam orchestration
+
+The focused verification suite exercises the ranked-hypothesis lifecycle without a live MCP execution service: it loads the three prompt roles, verifies validator-to-code-generator tool boundaries, simulates tagged subagent start/stop records, collates completed validator reports into a reasoner request, and confirms the reasoner brief reaches the next tournament goal. It also covers tournament profile parsing and the existing lifecycle/provenance ledger contracts.
+
+Run it from the repository root:
+
+```bash
+python3 -m unittest \
+  tests.test_hypothesis_orchestration \
+  tests.test_hypothesis_tournament \
+  tests.test_subagent_ledger -v
+```
+
+This is deterministic fixture coverage. It does not invoke a real harness subagent, MCP execution endpoint, or inference endpoint.
+
 
 ## Run the GC/codon survey
 

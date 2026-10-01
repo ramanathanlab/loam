@@ -9,6 +9,9 @@ This directory is created by Loam observer hooks at runtime.
   are created only by explicit hypothesis-provenance reconciliation.
 - `hypothesis-memory.jsonl` is a compact projection of accepted hypotheses and
   source-backed evidence for pre-LLM recall.
+- `hypothesis-orchestration.jsonl` is append-only campaign scheduling state. It
+  associates tagged validator, code-generator, and reasoner child lifecycles with
+  a Jnana tournament plan. It contains unvalidated summaries and is not evidence.
 - It may contain delegated task goals and child summaries; do not commit it.
 - Configure `LOAM_LEDGER_PATH` to write the ledger to an explicit operator-owned
   location instead of this repository-local default.

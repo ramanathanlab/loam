@@ -52,8 +52,26 @@ Use the tournament as an **advisory hypothesis-discovery and prioritization laye
 3. Persist an immutable tournament report with generation count, hypothesis count, and completed-match count. Treat Elo as a model-mediated prioritization signal only.
 4. Do not award evidence credit from generated or ranked hypotheses. Credit still requires explicit, source-backed operator review through Loam reconciliation.
 5. Give structured hypothesis generation more completion budget than compact ranking. In the current Jnana integration, use at least 4096 JSON tokens for generation; a 1200-token cap can end in an empty, length-terminated JSON completion.
+6. For a multi-turn steering probe, isolate Jnana `state_file`, tournament `reports_dir`, workflow ID, and Loam state directory under a temporary campaign root. Run one bounded live match per turn and inspect immutable reports plus persistent Jnana state independently.
+7. The composite pre-LLM hook recalls steering before it runs the current tournament. Regenerate the read-only steering projection after each completed tournament if the next turn must see its Elo update; otherwise that steering snapshot is intentionally one iteration behind.
+8. A later ranking turn with at least two persistent Jnana hypotheses must not require `user_message`; a current generation goal is necessary only for an underpopulated state. Verify later reports record `generation.status == "not_needed"`.
 
-For the implementation boundary and live verification recipe, see `references/loam-jnana-hypothesis-tournament.md`.
+For the implementation boundary and live verification recipe, see `references/loam-jnana-hypothesis-tournament.md`, `references/loam-jnana-multiturn-steering-probe.md`, and `references/loam-jnana-multiturn-campaign.md`.
+
+### Multi-turn exploration campaign contract
+
+When the requested biology exploration is explicitly iterative, make every transition observable and fail closed:
+
+1. For each round, require a completed Jnana result (`status == "completed"` and `matches_completed == matches_requested`) before selecting its ranked top three.
+2. Resolve every selected hypothesis ID against persistent Jnana state before launching exploration. A ranking report and a later state can otherwise drift or be incomplete.
+3. Require a non-empty completed exploration for every selected hypothesis. Do not synthesize a partial top-three pass or award any completion credit when even one exploration is absent.
+4. Persist a compact round synthesis, then inject that exact prior-round synthesis into the following tournament goal/context. Bound injected text and per-exploration synthesis excerpts so they cannot crowd out the tournament's structured JSON response.
+5. If automatic accounting is explicitly requested without source review, name it `unverified_exploration_credit` and persist it separately from the evidence/credit ledgers. Set `epistemic_status: "unverified"`, `eligible_for_evidence_rating: false`, and `eligible_for_contribution_credit: false`.
+6. Only append those unverified operational records after a non-empty round synthesis succeeds, so a failed synthesis leaves no misleading completed-credit trail.
+7. Keep this campaign isolated from the active research profile unless the user requests production integration. A deterministic fixture is valid for exercising persistence, credit-label, and next-turn-injection invariants; it does not substitute for a live exploration claim.
+8. For live model-backed campaigns, treat empty model completions or malformed tournament JSON as failed work, not as empty findings. Retry only according to a bounded, explicit policy; otherwise retain no operational credit and report the endpoint failure as the blocker.
+
+A future production integration should use actual Hermes subagent completion records as the exploration input, rather than treating arbitrary model summaries as accepted evidence.
 
 ## Verification checklist
 

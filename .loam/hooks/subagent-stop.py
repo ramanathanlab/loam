@@ -13,6 +13,7 @@ import json
 import sys
 from typing import Any
 
+from hypothesis_orchestration import record_stop
 from ledger import write_stop_and_candidate
 
 
@@ -31,6 +32,7 @@ def main() -> int:
     try:
         payload = _payload()
         write_stop_and_candidate(payload)
+        record_stop(payload)
     except Exception as exc:  # observer failures must not change Hermes behavior
         print(f"loam subagent-stop observer failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

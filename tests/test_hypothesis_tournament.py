@@ -40,6 +40,7 @@ class HypothesisTournamentTests(unittest.TestCase):
                     "state_dir": "/tmp/state",
                     "pre_llm_every": 4,
                     "duplicate_policy": "allow_and_audit",
+                    "hypothesis_orchestration": {"enabled": True},
                     "hypothesis_tournament": {
                         "enabled": True,
                         "jnana_root": "/tmp/jnana",
@@ -67,6 +68,7 @@ class HypothesisTournamentTests(unittest.TestCase):
         self.assertEqual(tournament["initial_hypotheses"], 3)
         self.assertEqual(tournament["matches_per_run"], 1)
         self.assertEqual(tournament["top_k"], 3)
+        self.assertTrue(values["loam_hypothesis_orchestration"])
         self.assertNotIn("api_key", tournament)
 
     def test_context_for_runs_runner_writes_report_and_renders_compact_ranking(self) -> None:

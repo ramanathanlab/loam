@@ -1,0 +1,404 @@
+"""Portable orchestration state for Jnana-ranked hypothesis validation.
+
+The harness LLM remains the scheduler: Hermes exposes delegated work only through
+``delegate_task``.  This module makes the role contracts, selected hypotheses,
+child completion state, and next-turn reasoner hand-off explicit without treating
+model output as validated evidence.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Mapping
+
+AGENT_NAMES = ("reasoner", "hypothesis-validator", "code-generator")
+STATE_FILENAME = "hypothesis-orchestration.jsonl"
+MAX_REASONER_THREAD_CHARS = 6_000
+MAX_BRIEF_CHARS = 2_000
+
+
+@dataclass(frozen=True)
+class AgentSpec:
+    name: str
+    description: str
+    model: str
+    prompt_path: Path
+    allowed_children: tuple[str, ...]
+    direct_execution: bool
+
+
+def _text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _state_path(payload: Mapping[str, Any]) -> Path:
+    state_dir = _text(payload.get("loam_state_dir"))
+    if state_dir:
+        return Path(state_dir).expanduser() / STATE_FILENAME
+    root = Path(_text(payload.get("repo_root")) or ".")
+    return root / ".loam" / "state" / STATE_FILENAME
+
+
+def _agent_dir(payload: Mapping[str, Any]) -> Path:
+    root = Path(_text(payload.get("repo_root")) or ".")
+    return root / ".loam" / "agents"
+
+
+def _front_matter(path: Path) -> dict[str, str]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0] != "---":
+        raise ValueError(f"agent prompt has no front matter: {path}")
+    values: dict[str, str] = {}
+    for line in lines[1:]:
+        if line == "---":
+            return values
+        key, separator, value = line.partition(":")
+        if separator:
+            values[key.strip()] = value.strip()
+    raise ValueError(f"agent prompt has unterminated front matter: {path}")
+
+
+def agent_registry(payload: Mapping[str, Any]) -> dict[str, AgentSpec]:
+    """Load the checked-in prompt roles and their non-negotiable capabilities."""
+
+    policies = {
+        "reasoner": ((), False),
+        "hypothesis-validator": (("code-generator",), False),
+        "code-generator": ((), True),
+    }
+    registry: dict[str, AgentSpec] = {}
+    for name in AGENT_NAMES:
+        path = _agent_dir(payload) / f"{name}.md"
+        front_matter = _front_matter(path)
+        if front_matter.get("name") != name:
+            raise ValueError(f"agent prompt name mismatch: {path}")
+        allowed_children, direct_execution = policies[name]
+        registry[name] = AgentSpec(
+            name=name,
+            description=_text(front_matter.get("description")),
+            model=_text(front_matter.get("model")),
+            prompt_path=path,
+            allowed_children=allowed_children,
+            direct_execution=direct_execution,
+        )
+    return registry
+
+
+def _read_rows(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        value = json.loads(line)
+        if isinstance(value, dict):
+            rows.append(value)
+    return rows
+
+
+def _append(path: Path, row: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(dict(row), ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _marker(value: str, key: str) -> str:
+    prefix = f"[{key}="
+    start = value.find(prefix)
+    if start < 0:
+        return ""
+    end = value.find("]", start + len(prefix))
+    return value[start + len(prefix) : end] if end >= 0 else ""
+
+def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
+    """Block tool use that violates a tagged orchestration role's boundary."""
+
+    if payload.get("loam_hypothesis_orchestration") is not True:
+        return None
+    session_id = _text(payload.get("session_id")) or _text(payload.get("parent_session_id"))
+    if not session_id:
+        return None
+    starts = [
+        row
+        for row in _read_rows(_state_path(payload))
+        if row.get("event") == "agent_started" and _text(row.get("child_session_id")) == session_id
+    ]
+    if not starts:
+        return None
+    role = _text(starts[-1].get("role"))
+    tool_name = _text(payload.get("tool_name"))
+    if role == "reasoner":
+        return {"action": "block", "message": "reasoner has no tool capability; return the synthesis to the harness"}
+    if role == "code-generator":
+        if tool_name == "delegate_task":
+            return {"action": "block", "message": "code-generator must not delegate"}
+        return None
+    if role != "hypothesis-validator":
+        return None
+    if tool_name != "delegate_task":
+        return {"action": "block", "message": "hypothesis-validator must delegate executable work to code-generator"}
+    arguments = payload.get("arguments")
+    goals = []
+    if isinstance(arguments, Mapping):
+        for key in ("goal", "context", "task"):
+            goals.append(_text(arguments.get(key)))
+    goal = "\n".join(goals)
+    plan_id = _text(starts[-1].get("plan_id"))
+    if _marker(goal, "loam-agent-role") != "code-generator" or _marker(goal, "loam-plan-id") != plan_id:
+        return {
+            "action": "block",
+            "message": "hypothesis-validator may delegate only tagged code-generator children in its plan",
+        }
+    return None
+
+
+def _latest_report(payload: Mapping[str, Any]) -> tuple[Path, Mapping[str, Any]] | None:
+    raw_config = payload.get("loam_hypothesis_tournament")
+    if not isinstance(raw_config, Mapping):
+        return None
+    reports_dir = Path(_text(raw_config.get("reports_dir"))).expanduser()
+    if not reports_dir.is_dir():
+        return None
+    workflow_id = _text(payload.get("workflow_id"))
+    for path in sorted(reports_dir.glob("tournament-*.json"), reverse=True):
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, Mapping):
+            continue
+        if workflow_id and _text(value.get("workflow_id")) != workflow_id:
+            continue
+        result = value.get("result")
+        if isinstance(result, Mapping) and result.get("status") == "completed":
+            return path, value
+    return None
+
+
+def _full_hypotheses(payload: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    raw_config = payload.get("loam_hypothesis_tournament")
+    if not isinstance(raw_config, Mapping):
+        return {}
+    state_file = Path(_text(raw_config.get("state_file"))).expanduser()
+    if not state_file.is_file():
+        return {}
+    value = json.loads(state_file.read_text(encoding="utf-8"))
+    raw_hypotheses = value.get("hypotheses") if isinstance(value, Mapping) else None
+    if not isinstance(raw_hypotheses, list):
+        return {}
+    return {
+        hypothesis_id: item
+        for item in raw_hypotheses
+        if isinstance(item, Mapping)
+        and (hypothesis_id := _text(item.get("hypothesis_id")))
+    }
+
+
+def _plan_id(report_path: Path, payload: Mapping[str, Any]) -> str:
+    material = "\0".join((str(report_path), _text(payload.get("workflow_id")), _text(payload.get("session_id"))))
+    return f"plan_{hashlib.sha256(material.encode()).hexdigest()[:16]}"
+
+
+def prepare_payload(payload: dict[str, Any]) -> None:
+    """Feed the latest reasoner brief into the next Jnana generation goal."""
+
+    rows = _read_rows(_state_path(payload))
+    brief = _latest_brief(rows, _text(payload.get("workflow_id")))
+    if not brief:
+        return
+    payload["loam_reasoner_brief"] = brief
+    user_message = _text(payload.get("user_message"))
+    if user_message:
+        payload["user_message"] = (
+            f"{user_message}\n\n"
+            "Prior reasoner brief (advisory and unvalidated unless independently reconciled):\n"
+            f"{brief}"
+        )
+
+
+def _active_plan(rows: list[dict[str, Any]], workflow_id: str) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]] | None:
+    """Return the most recent started plan until its reasoner has completed."""
+
+    plan_ids = [
+        _text(row.get("plan_id"))
+        for row in rows
+        if row.get("event") == "agent_started"
+        and row.get("role") == "hypothesis-validator"
+        and _text(row.get("workflow_id")) == workflow_id
+    ]
+    for plan_id in reversed(plan_ids):
+        if any(
+            row.get("event") == "reasoner_completed"
+            and _text(row.get("plan_id")) == plan_id
+            and _text(row.get("workflow_id")) == workflow_id
+            for row in rows
+        ):
+            continue
+        starts = [
+            row
+            for row in rows
+            if row.get("event") == "agent_started"
+            and row.get("role") == "hypothesis-validator"
+            and _text(row.get("plan_id")) == plan_id
+            and _text(row.get("workflow_id")) == workflow_id
+        ]
+        completions = [
+            row
+            for row in rows
+            if row.get("event") == "validator_completed"
+            and _text(row.get("plan_id")) == plan_id
+            and _text(row.get("workflow_id")) == workflow_id
+        ]
+        return plan_id, starts, completions
+    return None
+
+
+def _latest_brief(rows: list[dict[str, Any]], workflow_id: str) -> str:
+    for row in reversed(rows):
+        if row.get("event") != "reasoner_completed" or _text(row.get("workflow_id")) != workflow_id:
+            continue
+        return _text(row.get("summary"))[:MAX_BRIEF_CHARS]
+    return ""
+
+
+def record_start(payload: Mapping[str, Any]) -> None:
+    """Record a role-tagged child allocation for later completion collation."""
+
+    goal = _text(payload.get("child_goal"))
+    role = _marker(goal, "loam-agent-role")
+    plan_id = _marker(goal, "loam-plan-id")
+    if role not in AGENT_NAMES or not plan_id:
+        return
+    _append(
+        _state_path(payload),
+        {
+            "event": "agent_started",
+            "observed_at": _timestamp(),
+            "workflow_id": _text(payload.get("workflow_id")),
+            "plan_id": plan_id,
+            "role": role,
+            "hypothesis_id": _marker(goal, "loam-hypothesis-id"),
+            "child_subagent_id": _text(payload.get("child_subagent_id")),
+            "child_session_id": _text(payload.get("child_session_id")),
+        },
+    )
+
+
+def record_stop(payload: Mapping[str, Any]) -> None:
+    """Record a tagged terminal child result as unvalidated orchestration input."""
+
+    rows = _read_rows(_state_path(payload))
+    child_id = _text(payload.get("child_subagent_id"))
+    child_session = _text(payload.get("child_session_id"))
+    start = next(
+        (
+            row
+            for row in reversed(rows)
+            if row.get("event") == "agent_started"
+            and (_text(row.get("child_subagent_id")) == child_id or _text(row.get("child_session_id")) == child_session)
+        ),
+        None,
+    )
+    if start is None:
+        return
+    role = _text(start.get("role"))
+    event = "reasoner_completed" if role == "reasoner" else "validator_completed" if role == "hypothesis-validator" else "code_generator_completed"
+    _append(
+        _state_path(payload),
+        {
+            "event": event,
+            "observed_at": _timestamp(),
+            "workflow_id": _text(payload.get("workflow_id")),
+            "plan_id": _text(start.get("plan_id")),
+            "role": role,
+            "hypothesis_id": _text(start.get("hypothesis_id")),
+            "child_subagent_id": child_id,
+            "child_session_id": child_session,
+            "status": _text(payload.get("child_status")) or "error",
+            "summary": _text(payload.get("child_summary")),
+        }
+    )
+
+
+def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry: Mapping[str, AgentSpec]) -> str:
+    validator = registry["hypothesis-validator"]
+    lines = [
+        "Loam orchestration directive: launch every selected hypothesis validator now, in one delegate_task batch.",
+        f"Each child MUST read and follow {validator.prompt_path}. Use delegate_task role=orchestrator for validators; do not perform experimental code or tool calls yourself.",
+        "Pass the complete hypothesis object below, experiment constraints, and the execution contract. Every executable action MUST be delegated by that validator to code-generator as a leaf child; no other child may execute code.",
+        f"Tag every validator goal with [loam-agent-role=hypothesis-validator] [loam-plan-id={plan_id}] and [loam-hypothesis-id=<the supplied hypothesis_id>] so lifecycle hooks can collate completion.",
+        "Each validator MUST tag every code-generator goal [loam-agent-role=code-generator] [loam-plan-id=<same plan>] and supply its complete MCP execution contract.",
+        "Selected hypotheses:",
+    ]
+    for item in selected:
+        lines.append(json.dumps(item, ensure_ascii=False, sort_keys=True))
+    return "\n".join(lines)
+
+
+def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registry: Mapping[str, AgentSpec]) -> str:
+    reasoner = registry["reasoner"]
+    threads = [
+        {
+            "hypothesis_id": row.get("hypothesis_id", ""),
+            "validator_status": row.get("status"),
+            "validator_report": _text(row.get("summary"))[:MAX_REASONER_THREAD_CHARS],
+        }
+        for row in completions
+    ]
+    return "\n".join(
+        (
+            "Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding.",
+            f"The reasoner MUST read and follow {reasoner.prompt_path}; it must not execute experimental code.",
+            f"Tag its goal with [loam-agent-role=reasoner] [loam-plan-id={plan_id}] so its brief is persisted for the next tournament turn.",
+            "Completed validator threads are unvalidated orchestration input; preserve their reported uncertainty and do not turn summaries into accepted evidence.",
+            json.dumps(threads, ensure_ascii=False, sort_keys=True),
+        )
+    )
+
+
+def context_for(payload: dict[str, Any]) -> str:
+    """Inject the next scheduler action after the current tournament iteration."""
+
+    registry = agent_registry(payload)
+    rows = _read_rows(_state_path(payload))
+    workflow_id = _text(payload.get("workflow_id"))
+    brief = _latest_brief(rows, workflow_id)
+    active = _active_plan(rows, workflow_id)
+    if active is not None:
+        plan_id, starts, completions = active
+        if len(completions) == len(starts) and all(_text(row.get("status")) for row in completions):
+            return _reasoner_directive(plan_id, completions, registry)
+        return ""
+    report = _latest_report(payload)
+    if report is None:
+        return f"Latest reasoner brief for the next tournament turn:\n{brief}" if brief else ""
+    report_path, report_value = report
+    plan_id = _plan_id(report_path, payload)
+    if any(
+        row.get("event") == "reasoner_completed"
+        and _text(row.get("plan_id")) == plan_id
+        and _text(row.get("workflow_id")) == workflow_id
+        for row in rows
+    ):
+        return f"Latest reasoner brief for the next tournament turn:\n{brief}" if brief else ""
+    result = report_value.get("result")
+    rankings = result.get("top_hypotheses") if isinstance(result, Mapping) else None
+    if not isinstance(rankings, list) or not rankings:
+        return ""
+    full_hypotheses = _full_hypotheses(payload)
+    selected: list[dict[str, Any]] = []
+    for rank, ranking in enumerate(rankings, start=1):
+        if not isinstance(ranking, Mapping):
+            continue
+        hypothesis_id = _text(ranking.get("hypothesis_id"))
+        hypothesis = full_hypotheses.get(hypothesis_id)
+        if not hypothesis:
+            return ""
+        selected.append({"rank": rank, "elo_rating": ranking.get("elo_rating"), "hypothesis": hypothesis})
+    return _validator_directive(plan_id, selected, registry)

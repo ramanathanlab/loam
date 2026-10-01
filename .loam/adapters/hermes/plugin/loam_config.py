@@ -48,6 +48,7 @@ class LoamProfile:
     state_dir: Path
     pre_llm_every: int
     duplicate_policy: str
+    hypothesis_orchestration: bool = False
     hypothesis_tournament: HypothesisTournamentConfig | None = None
 
 
@@ -143,6 +144,8 @@ def load_profile() -> LoamProfile | None:
         state_dir=Path(state_dir).expanduser(),
         pre_llm_every=_interval(raw.get("pre_llm_every", DEFAULT_INTERVAL)),
         duplicate_policy=policy,
+        hypothesis_orchestration=_as_mapping(raw.get("hypothesis_orchestration")) is not None
+        and raw["hypothesis_orchestration"].get("enabled") is True,
         hypothesis_tournament=_tournament_config(raw.get("hypothesis_tournament")),
     )
 
@@ -180,6 +183,7 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
         "workflow_id": profile.workflow_id,
         "loam_state_dir": str(profile.state_dir),
         "loam_duplicate_policy": profile.duplicate_policy,
+        "loam_hypothesis_orchestration": profile.hypothesis_orchestration,
     }
     tournament = profile.hypothesis_tournament
     if tournament is not None:

@@ -96,6 +96,33 @@ policy as it is designed.
   creating Jnana's client. `api_key_env` is optional for no-auth local services;
   when supplied, it names the environment variable holding that endpoint's
   credential rather than an OpenAI-specific key.
+### Hypothesis-subagent orchestration
+
+Set `hypothesis_orchestration.enabled: true` alongside `hypothesis_tournament` to make the harness LLM act as the campaign orchestrator. The pre-LLM hook runs the tournament first, then supplies a directive containing full selected hypotheses from the Jnana state. The harness MUST launch one `hypothesis-validator` per selected hypothesis in a `delegate_task` batch, using an orchestrator role. Validators MAY delegate only to leaf `code-generator` children; only the code generator receives the configured execution/MCP capability.
+
+The harness MUST tag validator goals with `[loam-agent-role=hypothesis-validator]`, `[loam-plan-id=…]`, and `[loam-hypothesis-id=…]`. It MUST tag code-generator goals with `[loam-agent-role=code-generator]` and the same plan ID. `subagent-start` and `subagent-stop` persist these lifecycle associations in `hypothesis-orchestration.jsonl`. The pre-tool hook enforces the tags: validators cannot call tools directly or delegate outside their plan's code-generator children; code generators cannot delegate; reasoners cannot call tools. After all validators reach a terminal state, the next orchestrator callback receives one reasoner directive containing their bounded unvalidated reports. The reasoner goal uses `[loam-agent-role=reasoner]` and the same plan ID. Its completed brief is injected into the next Jnana generation goal and pre-LLM context.
+
+The orchestration record is scheduling state, not evidence. Validator and reasoner summaries remain unvalidated unless the existing explicit reconciliation path accepts source-backed evidence. A missing execution contract blocks the code generator; it must not guess MCP endpoint, function, schema, credentials, or sandbox policy.
+
+```yaml
+enabled: true
+active_profile: research
+profiles:
+  research:
+    workflow_id: research-v1
+    state_dir: /absolute/path/to/loam-state
+    pre_llm_every: 1
+    hypothesis_orchestration:
+      enabled: true
+    hypothesis_tournament:
+      enabled: true
+      jnana_root: /absolute/path/to/jnana
+      state_file: /absolute/path/to/jnana-memory.json
+      reports_dir: /absolute/path/to/tournament-reports
+      inference_endpoint: http://localhost:8000/v1
+      model: tournament-model
+```
+
 
 - `pre-tool.py` may return `{"action":"block","message":"..."}` to veto a
   Hermes tool call.

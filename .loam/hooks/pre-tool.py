@@ -12,6 +12,7 @@ import json
 import sys
 from typing import Any
 
+from hypothesis_orchestration import tool_policy
 from memory_recall import audit_duplicates
 
 
@@ -25,10 +26,11 @@ def _payload() -> dict[str, Any]:
 def main() -> int:
     try:
         payload = _payload()
-        if payload.get("tool_name") == "delegate_task":
+        result = tool_policy(payload)
+        if result is None and payload.get("tool_name") == "delegate_task":
             result = audit_duplicates(payload)
-            if result is not None:
-                print(json.dumps(result))
+        if result is not None:
+            print(json.dumps(result))
     except Exception as exc:
         print(f"loam pre-tool audit failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

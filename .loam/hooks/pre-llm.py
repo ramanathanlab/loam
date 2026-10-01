@@ -14,6 +14,8 @@ from typing import Any
 
 from hypothesis_recall import context_for as hypothesis_context_for
 from hypothesis_steering_recall import context_for as steering_context_for
+from hypothesis_orchestration import context_for as orchestration_context_for
+from hypothesis_orchestration import prepare_payload
 from hypothesis_tournament import context_for as tournament_context_for
 from memory_recall import context_for as memory_context_for
 
@@ -32,8 +34,12 @@ def main() -> int:
             memory_context_for(payload),
             hypothesis_context_for(payload),
             steering_context_for(payload),
-            tournament_context_for(payload),
         ]
+        if payload.get("loam_hypothesis_orchestration") is True:
+            prepare_payload(payload)
+        contexts.append(tournament_context_for(payload))
+        if payload.get("loam_hypothesis_orchestration") is True:
+            contexts.append(orchestration_context_for(payload))
         context = "\n\n".join(part for part in contexts if part)
         if context:
             print(json.dumps({"context": context}))
