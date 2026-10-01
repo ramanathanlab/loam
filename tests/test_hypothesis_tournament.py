@@ -202,6 +202,69 @@ class HypothesisTournamentTests(unittest.TestCase):
             report = json.loads(next(reports_dir.glob("tournament-*.json")).read_text())
             self.assertEqual(report["result"]["generation"]["generated_hypotheses"], 3)
 
+    def test_existing_hypotheses_do_not_require_current_user_message(self) -> None:
+        """Later pre-LLM turns rank persistent state even without a new prompt."""
+
+        hook = _load("loam_hypothesis_tournament_existing", HOOKS / "hypothesis_tournament.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            existing = [object(), object(), object()]
+            construction = {}
+            payload = {
+                "workflow_id": "research-v1",
+                "loam_profile": "research",
+                "session_id": "session-1",
+                "loam_turn": 6,
+                "loam_hypothesis_tournament": {
+                    "enabled": True,
+                    "jnana_root": str(JNANA_ROOT),
+                    "state_file": str(root / "state" / "memory.json"),
+                    "reports_dir": str(root / "reports"),
+                    "matches_per_run": 1,
+                    "top_k": 2,
+                    "provider": "openai",
+                    "inference_endpoint": "http://example.test/v1",
+                    "model": "test-model",
+                },
+            }
+
+            class FakeCoScientist:
+                def __init__(self, **kwargs):
+                    construction.update(kwargs)
+                    self.memory = type("Memory", (), {"save": lambda _self: None})()
+
+                def start(self):
+                    pass
+
+                def stop(self):
+                    pass
+
+                def get_all_hypotheses(self):
+                    return existing
+
+            result = {
+                "status": "completed",
+                "matches_requested": 1,
+                "matches_completed": 1,
+                "top_hypotheses": [{"hypothesis_id": "h-1", "summary": "First", "elo_rating": 1208}],
+            }
+            with patch.dict(os.environ, {}, clear=True):
+                original_path = list(sys.path)
+                sys.path.insert(0, str(JNANA_ROOT))
+                try:
+                    with patch.object(hook, "CoScientist", FakeCoScientist), patch(
+                        "jnana.protognosis.periodic_tournament.run_incremental_tournament", return_value=result
+                    ) as tournament:
+                        context = hook.context_for(payload)
+                finally:
+                    sys.path[:] = original_path
+
+            self.assertEqual(construction["llm_config"].model_adapter["json_max_tokens"], 4096)
+            tournament.assert_called_once()
+            self.assertIn("ran 1/1 pairwise matches", context)
+            report = json.loads(next((root / "reports").glob("tournament-*.json")).read_text())
+            self.assertEqual(report["result"]["generation"], {"status": "not_needed", "generated_hypotheses": 0})
+
     def test_pre_llm_hook_combines_memory_and_tournament_context(self) -> None:
         pre_llm = _load("loam_pre_llm_tournament", HOOKS / "pre-llm.py")
         payload = {"event": "pre_llm_call", "session_id": "session"}

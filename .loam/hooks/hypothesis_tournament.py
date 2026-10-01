@@ -107,9 +107,6 @@ def _ensure_initial_hypotheses(
     """Populate an empty Jnana state with bounded internal generation agents."""
 
     global CoScientist
-    goal = _generation_goal(payload)
-    if not goal:
-        return {"status": "skipped", "reason": "missing_research_goal", "generated_hypotheses": 0}
     if CoScientist is None:
         from jnana.protognosis.core.coscientist import CoScientist as JnanaCoScientist
 
@@ -126,6 +123,9 @@ def _ensure_initial_hypotheses(
         existing = len(coscientist.get_all_hypotheses())
         if existing >= 2:
             return {"status": "not_needed", "generated_hypotheses": 0}
+        goal = _generation_goal(payload)
+        if not goal:
+            return {"status": "skipped", "reason": "missing_research_goal", "generated_hypotheses": 0}
         requested = max(initial_hypotheses, 2 - existing)
         coscientist.set_research_goal(goal)
         coscientist.generate_hypotheses(count=requested)

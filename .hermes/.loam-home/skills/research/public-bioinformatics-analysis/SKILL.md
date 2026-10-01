@@ -26,15 +26,16 @@ Question: across a deliberately diverse set of annotated bacterial reference gen
 
 ### Calculation workflow
 
-1. Fetch each annotated GenBank record from NCBI E-utilities or an equivalent authoritative public source.
+1. Fetch each annotated GenBank record from NCBI E-utilities or an equivalent authoritative public source. Cache exact retrieved flatfiles locally before analysis, preserving accession versions and retrieval metadata. For transient public-API throttling, retry politely with backoff rather than silently changing the panel or accepting a partial fetch.
 2. Compute whole-genome GC% as `(G + C) / genome length * 100`.
 3. Extract each CDS according to its annotated strand/location, not by assuming a forward-strand interval.
-4. Skip CDS sequences that are not divisible by three or contain ambiguous bases, and report the number retained.
+4. Skip CDS sequences that are not divisible by three or contain ambiguous bases. Separately report retained CDS and all exclusion categories (ambiguous bases, non-triplet length, missing/invalid translation table); non-triplet annotated CDS are valid QC exclusions and must not be presumed absent.
 5. Read the feature's `transl_table`; do not assume genetic code 11. Use it to identify sense codons. This prevents treating recoded codons (for example, TGA under code 4) as stops.
 6. Count sense codons across CDSs; exclude translation-specific stop codons from codon-usage and GC3 denominators.
 7. Compute GC3 from all counted sense codons: fraction whose third base is G or C.
 8. For selected synonymous families, report within-family percentages or RSCU. A codon's raw abundance alone is confounded by amino-acid composition.
-9. If reporting Pearson correlation, label it descriptive and report the number of genomes. Do not make a p-value-driven or general biological claim from a tiny panel.
+9. Independently recompute the headline correlation from the persisted result artifact and assert that every displayed codon-family distribution sums to 100% within floating-point tolerance.
+10. If reporting Pearson correlation, label it descriptive and report the number of genomes. Do not make a p-value-driven or general biological claim from a tiny panel.
 
 ## Interpretation guidance
 

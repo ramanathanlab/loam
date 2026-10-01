@@ -1580,9 +1580,9 @@
 "max_completion_tokens":393216,
 "name":"DeepSeek: DeepSeek Pro Latest",
 "pricing":{
-"prompt":"0.0000001848",
-"completion":"0.0000005544",
-"input_cache_read":"0.00000000588"
+"prompt":"0.0000001642",
+"completion":"0.0000035",
+"input_cache_read":"0.0000001642"
 }
 },
 "deepseek-pro-latest":{
@@ -1590,9 +1590,9 @@
 "max_completion_tokens":393216,
 "name":"DeepSeek: DeepSeek Pro Latest",
 "pricing":{
-"prompt":"0.0000001848",
-"completion":"0.0000005544",
-"input_cache_read":"0.00000000588"
+"prompt":"0.0000001642",
+"completion":"0.0000035",
+"input_cache_read":"0.0000001642"
 }
 },
 "~deepseek/deepseek-flash-latest":{
@@ -1600,9 +1600,9 @@
 "max_completion_tokens":943718,
 "name":"DeepSeek: DeepSeek Flash Latest",
 "pricing":{
-"prompt":"0.0000000243",
+"prompt":"0.000000025",
 "completion":"0.0000006",
-"input_cache_read":"0.0000000243"
+"input_cache_read":"0.000000025"
 }
 },
 "deepseek-flash-latest":{
@@ -1610,9 +1610,9 @@
 "max_completion_tokens":943718,
 "name":"DeepSeek: DeepSeek Flash Latest",
 "pricing":{
-"prompt":"0.0000000243",
+"prompt":"0.000000025",
 "completion":"0.0000006",
-"input_cache_read":"0.0000000243"
+"input_cache_read":"0.000000025"
 }
 },
 "inference-net/schematron-v2-turbo":{
@@ -2842,9 +2842,9 @@
 "max_completion_tokens":64000,
 "name":"Tencent: Hy4 preview",
 "pricing":{
-"prompt":"0.000000834",
-"completion":"0.000002501",
-"input_cache_read":"0.000000042",
+"prompt":"0.0000007506",
+"completion":"0.0000022509",
+"input_cache_read":"0.0000000378",
 "overrides":[
 {
 "utc_start":0,
@@ -2868,9 +2868,9 @@
 "max_completion_tokens":64000,
 "name":"Tencent: Hy4 preview",
 "pricing":{
-"prompt":"0.000000834",
-"completion":"0.000002501",
-"input_cache_read":"0.000000042",
+"prompt":"0.0000007506",
+"completion":"0.0000022509",
+"input_cache_read":"0.0000000378",
 "overrides":[
 {
 "utc_start":0,
@@ -2894,9 +2894,9 @@
 "max_completion_tokens":64000,
 "name":"Tencent: Hy4 preview",
 "pricing":{
-"prompt":"0.000000834",
-"completion":"0.000002501",
-"input_cache_read":"0.000000042",
+"prompt":"0.0000007506",
+"completion":"0.0000022509",
+"input_cache_read":"0.0000000378",
 "overrides":[
 {
 "utc_start":0,
@@ -2920,9 +2920,9 @@
 "max_completion_tokens":64000,
 "name":"Tencent: Hy4 preview",
 "pricing":{
-"prompt":"0.000000834",
-"completion":"0.000002501",
-"input_cache_read":"0.000000042",
+"prompt":"0.0000007506",
+"completion":"0.0000022509",
+"input_cache_read":"0.0000000378",
 "overrides":[
 {
 "utc_start":0,
@@ -5116,9 +5116,9 @@
 "max_completion_tokens":943718,
 "name":"MoonshotAI: Kimi K3",
 "pricing":{
-"prompt":"0.00000066",
+"prompt":"0.0000006638",
 "completion":"0.00001",
-"input_cache_read":"0.00000066"
+"input_cache_read":"0.0000006638"
 }
 },
 "kimi-k3":{
@@ -5126,9 +5126,9 @@
 "max_completion_tokens":943718,
 "name":"MoonshotAI: Kimi K3",
 "pricing":{
-"prompt":"0.00000066",
+"prompt":"0.0000006638",
 "completion":"0.00001",
-"input_cache_read":"0.00000066"
+"input_cache_read":"0.0000006638"
 }
 },
 "moonshotai/kimi-k3-20260715":{
@@ -5146,9 +5146,9 @@
 "max_completion_tokens":943718,
 "name":"MoonshotAI: Kimi K3",
 "pricing":{
-"prompt":"0.00000066",
+"prompt":"0.0000006638",
 "completion":"0.00001",
-"input_cache_read":"0.00000066"
+"input_cache_read":"0.0000006638"
 }
 },
 "moonshotai/kimi-k3:batch":{
@@ -6186,9 +6186,9 @@
 "max_completion_tokens":128000,
 "name":"Tencent: Hy3",
 "pricing":{
-"prompt":"0.000000132",
-"completion":"0.000000528",
-"input_cache_read":"0.000000033",
+"prompt":"0.0000000825",
+"completion":"0.00000033",
+"input_cache_read":"0.000000020625",
 "overrides":[
 {
 "utc_start":0,
@@ -6212,9 +6212,9 @@
 "max_completion_tokens":128000,
 "name":"Tencent: Hy3",
 "pricing":{
-"prompt":"0.000000132",
-"completion":"0.000000528",
-"input_cache_read":"0.000000033",
+"prompt":"0.0000000825",
+"completion":"0.00000033",
+"input_cache_read":"0.000000020625",
 "overrides":[
 {
 "utc_start":0,
@@ -6238,9 +6238,9 @@
 "max_completion_tokens":128000,
 "name":"Tencent: Hy3",
 "pricing":{
-"prompt":"0.000000132",
-"completion":"0.000000528",
-"input_cache_read":"0.000000033",
+"prompt":"0.0000000825",
+"completion":"0.00000033",
+"input_cache_read":"0.000000020625",
 "overrides":[
 {
 "utc_start":0,
@@ -6264,9 +6264,9 @@
 "max_completion_tokens":128000,
 "name":"Tencent: Hy3",
 "pricing":{
-"prompt":"0.000000132",
-"completion":"0.000000528",
-"input_cache_read":"0.000000033",
+"prompt":"0.0000000825",
+"completion":"0.00000033",
+"input_cache_read":"0.000000020625",
 "overrides":[
 {
 "utc_start":0,
@@ -7934,9 +7934,9 @@
 "max_completion_tokens":943718,
 "name":"MoonshotAI: Kimi Latest",
 "pricing":{
-"prompt":"0.00000066",
+"prompt":"0.0000006638",
 "completion":"0.00001",
-"input_cache_read":"0.00000066"
+"input_cache_read":"0.0000006638"
 }
 },
 "kimi-latest":{
@@ -7944,9 +7944,9 @@
 "max_completion_tokens":943718,
 "name":"MoonshotAI: Kimi Latest",
 "pricing":{
-"prompt":"0.00000066",
+"prompt":"0.0000006638",
 "completion":"0.00001",
-"input_cache_read":"0.00000066"
+"input_cache_read":"0.0000006638"
 }
 },
 "~google/gemini-flash-latest":{
