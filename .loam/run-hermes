@@ -12,5 +12,5 @@ export LOAM_ENABLED="${LOAM_ENABLED:-1}"
 export HERMES_HOME="$ROOT/.hermes/.loam-home"
 # Invoke `.loam/hooks/pre-llm.py` every N turns of each Hermes session.
 # Override at launch, e.g. `LOAM_PRE_LLM_EVERY=3 .loam/run-hermes`.
-export LOAM_PRE_LLM_EVERY="${LOAM_PRE_LLM_EVERY:-5}"
+export LOAM_PRE_LLM_EVERY="${LOAM_PRE_LLM_EVERY:-1}"
 exec hermes "$@"
