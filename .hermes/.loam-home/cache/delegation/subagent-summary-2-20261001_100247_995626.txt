@@ -1,0 +1,155 @@
+## Outcome: use Loam as an audit → candidate → human-review pipeline, not as an automated scientific-validation system
+
+- Reviewed the lifecycle hooks, provenance contract, reconcilers, projections, adapter/configuration, and focused tests.
+- Verified the relevant facilities with:
+  ```bash
+  python3 -m unittest tests.test_hypothesis_provenance tests.test_subagent_ledger -v
+  ```
+  Result: **11 tests passed**.
+
+## Recommended experiment workflow
+
+1. **Activate the existing observer hooks with an experiment-unique workflow ID and explicit state path.**  
+   This avoids the environment-fallback path ambiguity and ensures all artifacts land in the ignored, repo-conventional `.loam/state/` directory.
+
+   ```bash
+   cd /Users/msinclair/github/loam
+
+   LOAM_LEDGER_PATH="$PWD/.loam/state/subagent-ledger.jsonl" \
+   LOAM_WORKFLOW_ID="experiment-YYYYMMDD-topic" \
+   LOAM_PRE_LLM_EVERY=1 \
+   .loam/run-hermes
+   ```
+
+   - `subagent_start` / `subagent_stop` append lifecycle observations to `subagent-ledger.jsonl`.
+   - A completed child’s prose remains audit material only; it is **not** treated as a finding, evidence, success, or credit.
+   - Use a distinct `LOAM_WORKFLOW_ID` per experiment/run. The recall hooks select snapshots by workflow ID, so unique IDs prevent stale evidence from another experiment being injected as context.
+
+2. **For scientific-hypothesis work, ask delegated agents to opt into the existing `hypothesis_provenance_v1` contract only after they have actually inspected sources.**  
+   Include this artifact in the child-task prompt:
+
+   ````text
+   After your normal concise report, if—and only if—you have a concrete proposed
+   hypothesis and source-located candidate evidence, append exactly one fenced JSON
+   object conforming to hypothesis_provenance_v1.
+
+   Do not label a claim accepted or scientifically established. Report uncertainty,
+   counterevidence, and missing source details in prose. Use source URLs you actually
+   inspected. A candidate is not evidence until an operator reviews it.
+
+   ```json
+   {
+     "contract_version": "hypothesis_provenance_v1",
+     "hypotheses": [
+       {
+         "hypothesis_key": "short-lowercase-key",
+         "statement": "A falsifiable proposed relationship between intervention/exposure and outcome.",
+         "parent_hypothesis_keys": []
+       }
+     ],
+     "evidence_candidates": [
+       {
+         "hypothesis_key": "short-lowercase-key",
+         "claim": "Narrow claim attributable to the cited source.",
+         "source_url": "https://actual-source.example/...",
+         "stance": "supports"
+       }
+     ]
+   }
+   ```
+   ````
+
+   Valid stances are exactly `supports`, `contradicts`, or `context`. A shape-valid result is written to `.loam/state/candidate-results.jsonl` with `candidate_status: pending`; it receives no evidence or credit automatically.
+
+3. **Inspect pending candidates and author reviews manually.**  
+   Do not copy an agent’s proposed claim into an accepted review unless the operator has checked the cited source.
+
+   ```bash
+   python3 - <<'PY'
+   import json
+   from pathlib import Path
+
+   path = Path(".loam/state/candidate-results.jsonl")
+   if not path.exists():
+       raise SystemExit("No candidate-results.jsonl exists yet.")
+   for line in path.read_text(encoding="utf-8").splitlines():
+       row = json.loads(line)
+       if row.get("record_version") == "hypothesis_provenance_v1":
+           print(json.dumps({
+               "candidate_id": row["candidate_id"],
+               "unit_id": row["unit_id"],
+               "workflow_id": row.get("workflow_id"),
+               "candidate": row["candidate"],
+           }, indent=2, ensure_ascii=False))
+   PY
+   ```
+
+   Operator-authored artifact: `.loam/state/hypothesis-reviews.jsonl` (ignored by Git). Its evidence fields must exactly repeat the candidate’s `hypothesis_key`, `claim`, `source_url`, and `stance`; accepted evidence additionally requires a nonempty, independently checked `source_ref`.
+
+   ```json
+   {
+     "candidate_id": "candidate_<copied-from-candidate-results>",
+     "accept_hypothesis_keys": ["short-lowercase-key"],
+     "evidence": [
+       {
+         "hypothesis_key": "short-lowercase-key",
+         "claim": "<exact candidate claim>",
+         "source_url": "<exact candidate URL>",
+         "stance": "supports",
+         "validation_status": "accepted",
+         "source_ref": "DOI:... or other durable checked reference",
+         "strength": 0.7,
+         "reliability": 0.7,
+         "relevance": 0.8,
+         "independence_group_id": "study-or-dataset-identifier"
+       }
+     ]
+   }
+   ```
+
+   The optional numeric ratings are bounded `[0,1]`; use them only as explicit operator judgments, not model-estimated certainty. Reuse an `independence_group_id` for non-independent reports of the same underlying study/data.
+
+4. **Run explicit reconciliation once per reviewed batch, then build read-only memory.**
+
+   ```bash
+   python3 .loam/reconcile/hypothesis_provenance.py \
+     --candidates .loam/state/candidate-results.jsonl \
+     --reviews .loam/state/hypothesis-reviews.jsonl \
+     --hypotheses-out .loam/state/hypothesis-ledger.jsonl \
+     --evidence-out .loam/state/evidence-ledger.jsonl \
+     --credit-out .loam/state/credit-ledger.jsonl
+
+   python3 .loam/reconcile/project_hypothesis_memory.py \
+     --hypotheses .loam/state/hypothesis-ledger.jsonl \
+     --evidence .loam/state/evidence-ledger.jsonl \
+     --credit .loam/state/credit-ledger.jsonl \
+     --out .loam/state/hypothesis-memory.jsonl
+   ```
+
+   Reconciliation only creates accepted-evidence and credit records where an operator review says `validation_status: accepted` and provides `source_ref`. The ledgers are append-only, so do **not** casually rerun the same reviewed batch against the same output ledgers.
+
+5. **Keep tournament/steering optional and advisory.**  
+   The existing Jnana tournament requires at least two existing hypotheses, does not generate hypotheses, and does not validate evidence. It should not be used as scientific confirmation. If it is intentionally configured and produces reports, generate advisory steering separately:
+
+   ```bash
+   python3 .loam/reconcile/project_hypothesis_steering.py \
+     --hypotheses .loam/state/hypothesis-ledger.jsonl \
+     --evidence .loam/state/evidence-ledger.jsonl \
+     --tournament-reports .loam/state/hypothesis-research/tournament-reports \
+     --out .loam/state/hypothesis-steering.jsonl
+   ```
+
+   Treat Elo, evidence rating, and contribution credit as separate signals—the implementation and documentation explicitly maintain that boundary.
+
+## Findings / caveats
+
+- The canonical hook surface is minimal: `pre_tool_call`, `pre_llm_call`, `subagent_start`, and `subagent_stop`. Only pre-tool can block and only pre-LLM can inject context; the subagent hooks are observe-only.
+- Current project-local Hermes config already enables `loam-hooks`; no repository configuration change is needed for the explicit environment invocation above.
+- `.loam/state/` is intentionally ignored because it may contain child goals and summaries; do not commit state, candidate, review, or ledger artifacts.
+- If the task is not genuinely hypothesis/evidence research, use the lifecycle ledger alone; do not force the hypothesis contract onto ordinary engineering or exploratory tasks.
+
+## Files modified / issues
+
+- **Modified:** none.
+- **Created:** none.
+- **Issue encountered:** none; existing focused provenance and ledger tests passed.

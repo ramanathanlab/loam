@@ -80,12 +80,15 @@ policy as it is designed.
   when the Hermes process restarts.
 
   A profile may additionally opt into `hypothesis_tournament`. When enabled,
-  the hook runs a bounded, workflow-scoped Jnana/ProtoGnosis tournament before
-  the model call, persists Jnana JSON state and an immutable Loam report, and
-  injects only a compact Elo ranking. It requires at least two existing
-  hypotheses; it does not generate hypotheses, and its rankings are advisory
-  rather than empirical validation. The hook uses a nonblocking state lock and
-  fails open on unavailable endpoints or contention.
+  the hook uses Jnana/ProtoGnosis generation agents to seed an empty
+  workflow-scoped state from the current user request, then runs a bounded
+  pairwise ranking tournament before the model call. `initial_hypotheses`
+  controls the one-time seed size (default `3`); existing states with at least
+  two hypotheses are ranked without generating more. The hook persists Jnana
+  JSON state and an immutable Loam report, and injects only a compact Elo
+  ranking. Generation and rankings are advisory rather than empirical
+  validation. The hook uses a nonblocking state lock and fails open on
+  unavailable endpoints or contention.
 
   Configure `inference_endpoint` as an OpenAI-compatible API base URL (normally
   ending in `/v1`). If your endpoint is the exact Chat Completions URL, set

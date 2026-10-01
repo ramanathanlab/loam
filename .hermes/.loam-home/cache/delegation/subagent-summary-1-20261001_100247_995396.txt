@@ -1,0 +1,225 @@
+## Extended analysis plan: GC composition and synonymous codon usage
+
+### 1. Study design and scope
+Use a **predefined, modest panel of ~15–30 bacterial reference genomes**, deliberately sampled across the GC spectrum and across multiple broad lineages. Prefer one high-quality, complete RefSeq/GenBank reference per species; avoid many near-identical strains from one clade.
+
+Create a frozen sample manifest before analysis containing:
+
+- accession **version**, organism/strain, assembly status, database/source, retrieval date;
+- approximate taxonomic lineage (at least phylum/class);
+- genome length, plasmid inclusion policy, and any exclusions.
+
+The inferential unit is the **genome**, not individual genes or individual codons. Gene-level data are useful for diagnostics and secondary analyses but should not be treated as independent replicates for the central cross-genome claim.
+
+### 2. Annotation-aware preprocessing
+For every GenBank CDS feature:
+
+1. Extract the strand- and location-correct nucleotide sequence.
+2. Read that feature’s `transl_table`; classify codons using that code rather than assuming code 11.
+3. Retain CDSs only if:
+   - length is divisible by 3;
+   - no ambiguous bases occur in codons being counted;
+   - translation is internally valid under the annotated table (no internal stop after accounting for annotation conventions).
+4. Count only **sense codons**. Translation-table-specific stops are excluded from GC3 and codon-usage denominators.
+5. Record every exclusion reason per genome.
+
+Whole-genome GC% should be computed from the full assembled nucleotide sequence as:
+
+\[
+100 \times (G+C)/(A+C+G+T)
+\]
+
+Report treatment of ambiguous genomic bases and plasmids explicitly. A reasonable primary policy is to compute GC% across all unambiguous assembled bases, including plasmids, followed by a chromosome-only sensitivity analysis where applicable.
+
+---
+
+## 3. Primary outcomes (pre-specified)
+
+### Primary association
+**Genome-level association between whole-genome GC% and coding GC3.**
+
+For genome \(i\):
+
+\[
+GC3_i = 100 \times
+\frac{\#\{\text{sense codons with third base G or C}\}}
+{\#\{\text{all analyzed sense codons}\}}
+\]
+
+This is a codon-weighted genome summary and is the main outcome because it directly quantifies synonymous-site compositional bias.
+
+**Primary effect estimate:** Theil–Sen slope of GC3 percentage points per 1 percentage-point increase in whole-genome GC%, with a percentile bootstrap 95% CI resampling genomes. Report Spearman’s \(\rho\) with a permutation p-value as a descriptive association measure.
+
+Why this combination:
+- Theil–Sen is less sensitive than OLS to a few unusual genomes.
+- Spearman captures monotone association without assuming linearity or normal residuals.
+- A genome-level bootstrap/permutation respects the modest panel size and avoids false precision from millions of codons.
+
+### Co-primary codon-usage outcome
+**Association of genome GC% with a prespecified GC-ending synonymous-codon preference index.**
+
+For each synonymous amino-acid family \(f\) with both GC3-ending and AT3-ending sense codons under the relevant translation table:
+
+\[
+P_{i,f}^{GC3} =
+\frac{\text{count of GC-ending codons in family }f}
+{\text{all counted codons in family }f}
+\]
+
+Use a **family-balanced genome index** as the primary codon-preference summary:
+
+\[
+S_i = \frac{1}{|F_i|}\sum_{f \in F_i} P_{i,f}^{GC3}
+\]
+
+where \(F_i\) includes eligible families with adequate counts (e.g., at least 50 family codons per genome, prespecified). This avoids letting leucine, serine, or arginine alone dominate an all-codon statistic.
+
+Analyze \(S_i\) versus genome GC% with the same Theil–Sen / Spearman / permutation framework.
+
+Report the codon-weighted all-family analogue as a secondary summary, but do not rely on it alone.
+
+---
+
+## 4. Secondary and exploratory analyses
+
+### A. Family-specific synonymous preferences
+For each eligible codon family:
+
+- calculate within-family codon proportions;
+- calculate RSCU for individual codons:
+
+\[
+RSCU_{i,c} =
+\frac{\text{observed count}_{i,c}}
+{\text{total family count}_i / k_f}
+\]
+
+where \(k_f\) is the number of synonymous sense codons in that family under the feature’s translation table.
+
+For each family/codon, report:
+- Spearman \(\rho\) of \(P_{i,f}^{GC3}\) or RSCU against genomic GC%;
+- slope and bootstrap CI;
+- family counts and number of contributing genomes.
+
+Treat these as **exploratory**. Adjust their p-values with Benjamini–Hochberg FDR separately within a clearly defined family of tests. Emphasize effect sizes/CIs and plots rather than “significant” individual codons.
+
+### B. Ordination of codon-usage profiles
+Construct genome-by-codon matrices using either:
+
+- within-family codon proportions (recommended), or
+- RSCU values.
+
+Exclude stop codons; make genetic-code comparability explicit. For ordinary bacterial genomes this will largely be code 11, but genomes/features with recoding need either:
+1. exclusion from this common-codon matrix with reporting, or
+2. restriction to codons comparably synonymous across all included codes.
+
+Use:
+- PCA on centered/scaled RSCU or family-proportion features; and
+- Bray–Curtis distance + PCoA as a robustness view.
+
+Plot PC1/PC2 against whole-genome GC% and report the Spearman association of PC1 with GC%. This is exploratory visualization, not an independent confirmation of the primary analysis.
+
+### C. Nonlinearity and influential observations
+Plot raw genome values with:
+- scatter + Theil–Sen line;
+- LOESS smoother only as a visual diagnostic;
+- leave-one-genome-out estimates of Spearman \(\rho\) and Theil–Sen slope.
+
+If the result materially changes when one genome is omitted, state that directly rather than presenting a pooled p-value as robust.
+
+### D. Phylogenetic/taxonomic dependence (if feasible)
+Species are not statistically independent. For a modest panel, use a simple tiered approach:
+
+1. Main analysis: diverse, nonredundant genome panel; explicitly label association as comparative/descriptive.
+2. Sensitivity analysis: repeat after retaining at most one representative per genus (or another predeclared threshold).
+3. If a defensible phylogeny is available, perform phylogenetic generalized least squares or phylogenetically independent contrasts for GC3 versus genome GC%. Treat this as a robustness analysis, not a requirement for the initial reproducible experiment.
+
+Do not fit taxonomic mixed models with many ranks and few genomes; they will be unstable.
+
+---
+
+## 5. Uncertainty, inference, and reporting
+
+With roughly 15–30 genomes, prioritize uncertainty intervals and plot-level transparency:
+
+- Bootstrap **genomes**, not codons, for CIs.
+- Use exact/permutation tests for Spearman correlation, shuffling genome labels. With \(n\) near 15–30, use at least 10,000 permutations or enumerate when feasible.
+- Report \(n\), slope, 95% CI, Spearman \(\rho\), and two-sided permutation p-value.
+- Avoid declaring causality or relying on arbitrary \(p<0.05\) thresholds.
+- Since GC3 is mathematically/compositionally related to genomic GC, frame results as magnitude and consistency of association—not discovery of independent predictors.
+
+A concise primary table should include:
+
+| Genome | accession.version | lineage | genome size | genome GC% | CDS retained / total | sense codons | GC3 | family-balanced GC-ending preference |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+
+Supplement with per-family counts/proportions and an exclusion log.
+
+---
+
+## 6. Quality controls and validation
+
+### Input and parsing QC
+- Verify accession versions, record retrieval success, circular/linear status, and assembly completeness.
+- Detect duplicate or near-duplicate accession/species entries.
+- Preserve multi-contig records accurately; do not silently analyze only the first record/contig.
+- Confirm feature locations, joins, complements, and `codon_start` are honored by the extraction library.
+- Use the feature-level `transl_table`; report the distribution of translation tables and any unusual codes.
+- Exclude pseudo-CDSs, partial CDSs, or malformed annotations under a documented policy; report their counts.
+
+### Sequence/codon QC
+Per genome report:
+- total CDS features;
+- CDSs retained and excluded by each reason;
+- total coding bases, analyzed sense codons, stop codons excluded;
+- ambiguous bases/codons;
+- proportion of genome represented by retained CDS sequence.
+
+Automated assertions:
+- all retained CDS lengths are divisible by 3 after `codon_start`;
+- every counted codon is a sense codon under that CDS’s table;
+- all genome-level proportions fall in \([0,1]\);
+- per-family codon counts sum to the total assigned family count;
+- GC3 numerator never includes stop triplets.
+
+### Independent numerical checks
+For a few genomes spanning low/mid/high GC:
+- manually verify two codon-family proportions from numerator and denominator;
+- independently recompute genome GC% from raw FASTA;
+- verify CDS nucleotide extraction/translation for examples on both strands and a joined feature, if present.
+
+### Sensitivity analyses
+Repeat primary analyses after:
+- excluding genomes with high CDS exclusion fractions (predeclare, e.g. >10%);
+- chromosome-only GC% rather than chromosome-plus-plasmid GC%;
+- using gene-balanced GC3 (mean of gene-level GC3) instead of codon-weighted GC3;
+- excluding annotated mobile-element/prophage/plasmid CDSs if a consistent annotation policy is feasible;
+- restricting to one genome per genus;
+- restricting to common, well-counted codon families.
+
+Agreement in effect direction and approximate magnitude across these checks is more informative than a marginal p-value.
+
+---
+
+## 7. Figures
+1. **Primary scatter:** whole-genome GC% vs GC3, point labels/colors by broad lineage, Theil–Sen fit and bootstrap band if practical.
+2. **Co-primary scatter:** whole-genome GC% vs family-balanced GC-ending preference.
+3. **Family heatmap:** genomes ordered by genome GC%, codon-family GC-ending proportions or RSCU, with family labels.
+4. **Ordination:** PCA/PCoA of family-normalized codon usage, colored by genome GC%.
+5. **Diagnostic panel:** retained-CDS fraction, sense-codon totals, and leave-one-out primary slopes/correlations.
+
+---
+
+## 8. Interpretation boundaries and limitations
+
+- **Non-independence:** closely related bacteria share evolutionary history; a cross-species association is not equivalent to independent replicated experiments.
+- **Compositional coupling:** genome GC%, coding GC, and GC3 are inherently related; strong association supports compositional bias but does not identify its cause.
+- **Causality:** this design cannot distinguish mutation bias from selection, biased gene conversion, tRNA-mediated translational selection, environmental adaptation, or horizontal gene transfer.
+- **Annotation quality:** incomplete/incorrect CDS models, pseudogenes, and inconsistent annotation pipelines can bias coding summaries.
+- **Panel selection:** a deliberately GC-spanning panel improves visual/effect estimation but is not a prevalence-weighted random sample of bacteria; claims should be confined to the sampled comparative panel.
+- **Limited power:** modest \(n\) yields imprecise lineage-adjusted estimates and weak ability to detect nonlinearities or small family-specific effects.
+- **Gene-expression confounding:** highly expressed genes and horizontally acquired loci may have distinctive codon biases; without matched expression/orthology data, their roles remain untested.
+- **Alternative genetic codes:** per-feature handling prevents coding errors, but uncommon code usage complicates direct RSCU comparisons; restrict shared-codon analyses where needed.
+
+**Files modified:** none.  
+**Repository check:** identified the existing bioinformatics guidance and incorporated its feature-level translation-table, sense-codon, GC3, and reporting safeguards.

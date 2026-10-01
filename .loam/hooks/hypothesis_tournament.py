@@ -1,9 +1,10 @@
-"""Run a bounded, workflow-scoped Jnana hypothesis tournament before an LLM call.
+"""Seed and rank a bounded Jnana hypothesis tournament before an LLM call.
 
-This is advisory only.  It never exposes an API key, serializes access to the
-JSON-backed Jnana state with a non-blocking lock, and returns compact rankings
-rather than full hypothesis bodies.  Any unavailable configuration, lock
-contention, or Jnana failure simply produces no injected context.
+This is advisory only. It uses Jnana's internal generation agents to seed an
+empty workflow-scoped state, then runs pairwise rankings under a non-blocking
+state lock. It returns compact rankings rather than full hypothesis bodies.
+Any unavailable configuration, lock contention, or Jnana failure simply
+produces no injected context.
 """
 
 from __future__ import annotations
@@ -11,12 +12,15 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping
+
+# Jnana is intentionally imported only after the configured checkout has been
+# added to sys.path. This keeps Loam inert for profiles that do not opt in.
+CoScientist: Any = None
 
 
 @contextmanager
@@ -91,6 +95,50 @@ def _write_report(reports_dir: Path, payload: Mapping[str, Any], result: Mapping
     return path
 
 
+def _generation_goal(payload: Mapping[str, Any]) -> str:
+    """Return the current user request as Jnana's bounded generation goal."""
+
+    return " ".join(str(payload.get("user_message") or "").split())
+
+
+def _ensure_initial_hypotheses(
+    config: Mapping[str, Any], payload: Mapping[str, Any], llm_config: Any
+) -> dict[str, int | str]:
+    """Populate an empty Jnana state with bounded internal generation agents."""
+
+    global CoScientist
+    goal = _generation_goal(payload)
+    if not goal:
+        return {"status": "skipped", "reason": "missing_research_goal", "generated_hypotheses": 0}
+    if CoScientist is None:
+        from jnana.protognosis.core.coscientist import CoScientist as JnanaCoScientist
+
+        CoScientist = JnanaCoScientist
+
+    initial_hypotheses = _positive(config.get("initial_hypotheses"), 3)
+    coscientist = CoScientist(
+        llm_config=llm_config,
+        storage_path=str(Path(str(config["state_file"])).expanduser()),
+        max_workers=initial_hypotheses,
+    )
+    coscientist.start()
+    try:
+        existing = len(coscientist.get_all_hypotheses())
+        if existing >= 2:
+            return {"status": "not_needed", "generated_hypotheses": 0}
+        requested = max(initial_hypotheses, 2 - existing)
+        coscientist.set_research_goal(goal)
+        coscientist.generate_hypotheses(count=requested)
+        coscientist.wait_for_completion()
+        coscientist.memory.save()
+        return {
+            "status": "completed",
+            "generated_hypotheses": max(0, len(coscientist.get_all_hypotheses()) - existing),
+        }
+    finally:
+        coscientist.stop()
+
+
 def _render(payload: Mapping[str, Any], result: Mapping[str, Any]) -> str:
     if result.get("status") != "completed":
         return ""
@@ -154,11 +202,27 @@ def context_for(payload: Mapping[str, Any]) -> str:
                 "json_max_tokens": _positive(config.get("json_max_tokens"), 1024),
             },
         )
-        result = run_incremental_tournament(
-            state_file=state_file,
-            llm_config=llm_config,
-            match_count=_positive(config.get("matches_per_run"), 1),
-            top_k=_positive(config.get("top_k"), 3),
+        generation_llm_config = LLMConfig(
+            provider=str(config["provider"]),
+            model=str(config["model"]),
+            api_key=api_key,
+            base_url=_base_url(config),
+            model_adapter={
+                "omit_temperature": config.get("omit_temperature") is True,
+                # Generation agents emit a full mechanism plus predictions; give
+                # them more room than compact pairwise ranking responses.
+                "json_max_tokens": max(4096, _positive(config.get("json_max_tokens"), 1024)),
+            },
         )
+        generation = _ensure_initial_hypotheses(config, payload, generation_llm_config)
+        result = dict(
+            run_incremental_tournament(
+                state_file=state_file,
+                llm_config=llm_config,
+                match_count=_positive(config.get("matches_per_run"), 1),
+                top_k=_positive(config.get("top_k"), 3),
+            )
+        )
+        result["generation"] = generation
         _write_report(reports_dir, payload, result)
         return _render(payload, result)

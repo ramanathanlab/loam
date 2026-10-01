@@ -28,6 +28,7 @@ class HypothesisTournamentConfig:
     jnana_root: Path
     state_file: Path
     reports_dir: Path
+    initial_hypotheses: int
     matches_per_run: int
     top_k: int
     timeout_seconds: int
@@ -91,6 +92,7 @@ def _tournament_config(value: Any) -> HypothesisTournamentConfig | None:
         jnana_root=Path(required["jnana_root"]).expanduser(),
         state_file=Path(required["state_file"]).expanduser(),
         reports_dir=Path(required["reports_dir"]).expanduser(),
+        initial_hypotheses=_positive_int(raw.get("initial_hypotheses"), 3),
         matches_per_run=_positive_int(raw.get("matches_per_run"), 1),
         top_k=_positive_int(raw.get("top_k"), 3),
         timeout_seconds=_positive_int(raw.get("timeout_seconds"), 30),
@@ -188,6 +190,7 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "jnana_root": str(tournament.jnana_root),
             "state_file": str(tournament.state_file),
             "reports_dir": str(tournament.reports_dir),
+            "initial_hypotheses": tournament.initial_hypotheses,
             "matches_per_run": tournament.matches_per_run,
             "top_k": tournament.top_k,
             "timeout_seconds": tournament.timeout_seconds,
