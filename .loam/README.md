@@ -55,8 +55,8 @@ hermes plugins enable loam-hooks
 ```
 
 The plugin remains inert unless `LOAM_ENABLED=1` or a Loam runtime variable such
-as `LOAM_LEDGER_PATH`, `LOAM_PARENT_MEMORY_PATH`, or `LOAM_WORKFLOW_ID` is set.
-`run-hermes` sets `LOAM_ENABLED=1` automatically.
+as `LOAM_STATE_DIR`, `LOAM_LEDGER_PATH`, `LOAM_PARENT_MEMORY_PATH`, or
+`LOAM_WORKFLOW_ID` is set. `run-hermes` sets `LOAM_ENABLED=1` automatically.
 
 ## Hook contract
 
@@ -65,13 +65,25 @@ observe-only JSONL lifecycle ledger; the remaining starter hooks are deliberatel
 no-ops, so enabling the adapter remains safe. Replace their bodies with Loam
 policy as it is designed.
 
-- `subagent-start.py` / `subagent-stop.py` — append lifecycle observations to the
-  repo-local `.loam/state/subagent-ledger.jsonl` ledger. `subagent-stop.py` also
-  extracts opt-in structured candidates into `candidate-results.jsonl`; candidates
-  remain unvalidated and receive no findings, evidence, memory, or control credit
-  until explicit reconciliation. The available contracts include the narrow
-  protein-metadata pilot and `hypothesis_provenance_v1`, documented in
-  `reconcile/HYPOTHESIS_PROVENANCE.md`.
+- `subagent-start.py` / `subagent-stop.py` — append lifecycle observations to
+  `$LOAM_STATE_DIR/subagent-ledger.jsonl` when `LOAM_STATE_DIR` is set, otherwise
+  to the selected profile's `state_dir` or the legacy repository-local fallback.
+  `subagent-stop.py` also extracts opt-in structured candidates into
+  `candidate-results.jsonl`; candidates remain unvalidated and receive no
+  findings, evidence, memory, or control credit until explicit reconciliation.
+  The available contracts include the narrow protein-metadata pilot and
+  `hypothesis_provenance_v1`, documented in `reconcile/HYPOTHESIS_PROVENANCE.md`.
+  Set a unique directory per deployment to isolate all hook, orchestration, and
+  tournament artifacts for that run:
+
+  ```bash
+  LOAM_STATE_DIR=/var/tmp/loam/${DEPLOYMENT_ID} .loam/run-hermes
+  ```
+
+  This runtime setting overrides profile `state_dir`; for an enabled tournament,
+  it also writes Jnana state to `jnana-memory.json` and reports to
+  `tournament-reports/` inside that directory.
+
 - `pre-llm.py` runs every **N** turns, independently for each Hermes session.
   The interval is profile-configured as `pre_llm_every` (or defaults to 5 for
   the emergency environment override). The adapter supplies `loam_turn` and
@@ -98,11 +110,11 @@ policy as it is designed.
   credential rather than an OpenAI-specific key.
 ### Hypothesis-subagent orchestration
 
-Set `hypothesis_orchestration.enabled: true` alongside `hypothesis_tournament` to make the harness LLM act as the campaign orchestrator. The pre-LLM hook runs the tournament first, then supplies a directive containing full selected hypotheses from the Jnana state. The harness MUST launch one `hypothesis-validator` per selected hypothesis in a `delegate_task` batch, using an orchestrator role. Validators MAY delegate only to leaf `code-generator` children; only the code generator receives the configured execution/MCP capability.
+Set `hypothesis_orchestration.enabled: true` alongside `hypothesis_tournament` and an `execution` contract to make the harness LLM act as the campaign orchestrator. The pre-LLM hook runs the tournament first, then supplies a directive containing full selected hypotheses from the Jnana state. The harness MUST launch one `hypothesis-validator` per selected hypothesis in a `delegate_task` batch, using an orchestrator role. Validators MAY delegate only to leaf `code-generator` children.
 
-The harness MUST tag validator goals with `[loam-agent-role=hypothesis-validator]`, `[loam-plan-id=…]`, and `[loam-hypothesis-id=…]`. It MUST tag code-generator goals with `[loam-agent-role=code-generator]` and the same plan ID. `subagent-start` and `subagent-stop` persist these lifecycle associations in `hypothesis-orchestration.jsonl`. The pre-tool hook enforces the tags: validators cannot call tools directly or delegate outside their plan's code-generator children; code generators cannot delegate; reasoners cannot call tools. After all validators reach a terminal state, the next orchestrator callback receives one reasoner directive containing their bounded unvalidated reports. The reasoner goal uses `[loam-agent-role=reasoner]` and the same plan ID. Its completed brief is injected into the next Jnana generation goal and pre-LLM context.
+`execution.mode: remote_mcp` requires code generators to use the configured MCP tool; `execution.mode: local` permits their local execution. Validator lifecycle hooks alone append `hypothesis-campaign.jsonl` start/completion records. A reasoner completion appends the round synthesis and its validator results. The structured `evidence_score` and `evidence_score_status` from each validator completion are included in the reasoner directive.
 
-The orchestration record is scheduling state, not evidence. Validator and reasoner summaries remain unvalidated unless the existing explicit reconciliation path accepts source-backed evidence. A missing execution contract blocks the code generator; it must not guess MCP endpoint, function, schema, credentials, or sandbox policy.
+Every run writes `$LOAM_STATE_DIR/run-manifest.json` on its first hook event. It identifies the run, profile, execution configuration, campaign settings, colocated artifacts, and event counts without recording secrets or model summaries.
 
 ```yaml
 enabled: true
@@ -114,6 +126,13 @@ profiles:
     pre_llm_every: 1
     hypothesis_orchestration:
       enabled: true
+    execution:
+      mode: remote_mcp
+      tool_name: globus_execute
+      endpoint: https://compute.example/mcp
+      function_name: run_python
+      input_schema: run-python-v1
+      runtime: python3.11
     hypothesis_tournament:
       enabled: true
       jnana_root: /absolute/path/to/jnana

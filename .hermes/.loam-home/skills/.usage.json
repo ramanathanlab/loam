@@ -173,13 +173,13 @@
     "created_at": "2026-10-01T14:31:11.439020+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": null,
-    "last_viewed_at": null,
+    "last_used_at": "2026-10-02T19:29:10.745292+00:00",
+    "last_viewed_at": "2026-10-02T19:29:10.744284+00:00",
     "patch_count": 0,
     "pinned": false,
     "state": "active",
-    "use_count": 0,
-    "view_count": 0
+    "use_count": 1,
+    "view_count": 1
   },
   "comfyui": {
     "archived_at": null,
@@ -394,13 +394,13 @@
     "created_at": "2026-10-01T14:31:11.452792+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-10-01T16:19:03.609262+00:00",
-    "last_viewed_at": "2026-10-01T16:19:03.607234+00:00",
+    "last_used_at": "2026-10-02T21:14:08.879420+00:00",
+    "last_viewed_at": "2026-10-02T21:14:08.878232+00:00",
     "patch_count": 0,
     "pinned": false,
     "state": "active",
-    "use_count": 2,
-    "view_count": 2
+    "use_count": 5,
+    "view_count": 5
   },
   "hermes-agent-skill-authoring": {
     "archived_at": null,
@@ -719,13 +719,13 @@
     "created_at": "2026-10-01T14:35:53.123161+00:00",
     "created_by": "agent",
     "last_patched_at": "2026-10-01T17:54:12.359080+00:00",
-    "last_used_at": "2026-10-01T17:53:55.317048+00:00",
-    "last_viewed_at": "2026-10-01T17:53:55.315544+00:00",
+    "last_used_at": "2026-10-02T21:13:55.213854+00:00",
+    "last_viewed_at": "2026-10-02T21:13:55.212806+00:00",
     "patch_count": 10,
     "pinned": false,
     "state": "active",
-    "use_count": 15,
-    "view_count": 15
+    "use_count": 16,
+    "view_count": 16
   },
   "python-debugpy": {
     "archived_at": null,
@@ -888,13 +888,13 @@
     "created_at": "2026-10-01T14:31:11.489595+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-10-01T17:26:18.404407+00:00",
-    "last_viewed_at": "2026-10-01T17:26:18.402254+00:00",
+    "last_used_at": "2026-10-02T21:13:56.303882+00:00",
+    "last_viewed_at": "2026-10-02T21:13:56.302430+00:00",
     "patch_count": 0,
     "pinned": false,
     "state": "active",
-    "use_count": 3,
-    "view_count": 3
+    "use_count": 4,
+    "view_count": 4
   },
   "touchdesigner-mcp": {
     "archived_at": null,

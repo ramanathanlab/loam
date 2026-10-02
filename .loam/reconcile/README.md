@@ -29,18 +29,21 @@ Supported source kinds and claims:
 | `rcsb_pdb` | `experimental_method`, `resolution_angstrom`, `chain_ids`, `ligand_component_ids` |
 
 A completed hook appends shape-valid opt-in payloads to
-`.loam/state/candidate-results.jsonl` with `candidate_status: pending`. This is
-not acceptance: candidate fields and summaries remain untrusted until the
-reconciler validates them against the authoritative source.
+`$LOAM_STATE_DIR/candidate-results.jsonl` with `candidate_status: pending` when
+`LOAM_STATE_DIR` is set. This is not acceptance: candidate fields and summaries
+remain untrusted until the reconciler validates them against the authoritative source.
 
 ## Manual reconciliation
 
 Run reconciliation explicitly after a controlled session:
+Set `STATE_DIR` to the deployment's `LOAM_STATE_DIR` before reconciling so the
+outputs remain with the run that produced the candidates.
+
 
 ```bash
 python3 .loam/reconcile/protein_structure_metadata.py \
-  --candidates .loam/state/candidate-results.jsonl \
-  --out .loam/state/validated-findings.jsonl
+  --candidates "$STATE_DIR/candidate-results.jsonl" \
+  --out "$STATE_DIR/validated-findings.jsonl"
 ```
 
 The output is append-only and writes one decision per claimed field:
@@ -62,8 +65,8 @@ Project only accepted validation decisions into a compact per-parent snapshot:
 
 ```bash
 python3 .loam/reconcile/project_parent_memory.py \
-  --decisions .loam/state/validated-findings.jsonl \
-  --out .loam/state/parent-memory.jsonl
+  --decisions "$STATE_DIR/validated-findings.jsonl" \
+  --out "$STATE_DIR/parent-memory.jsonl"
 ```
 
 This command deduplicates by stable `finding_id`, preserves the contributing unit

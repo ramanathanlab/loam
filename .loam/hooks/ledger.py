@@ -66,9 +66,9 @@ def _stable_id(kind: str, **material: str) -> str:
 
 
 def ledger_path(payload: Mapping[str, Any]) -> Path:
-    """Resolve state from the selected profile, then legacy operator overrides."""
+    """Resolve state from the payload, runtime directory, then legacy overrides."""
 
-    state_dir = _text(payload.get("loam_state_dir"))
+    state_dir = _text(payload.get("loam_state_dir")) or os.environ.get("LOAM_STATE_DIR", "").strip()
     if state_dir:
         return Path(state_dir).expanduser() / "subagent-ledger.jsonl"
     configured = os.environ.get("LOAM_LEDGER_PATH", "").strip()

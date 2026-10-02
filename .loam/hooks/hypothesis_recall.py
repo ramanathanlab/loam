@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -11,8 +12,11 @@ DEFAULT_FILENAME = "hypothesis-memory.jsonl"
 
 def _path(payload: Mapping[str, Any]) -> Path:
     state_dir = payload.get("loam_state_dir")
+    runtime_state_dir = os.environ.get("LOAM_STATE_DIR", "").strip()
     if isinstance(state_dir, str) and state_dir.strip():
         return Path(state_dir).expanduser() / DEFAULT_FILENAME
+    if runtime_state_dir:
+        return Path(runtime_state_dir).expanduser() / DEFAULT_FILENAME
     root = payload.get("repo_root")
     return Path(root if isinstance(root, str) and root else ".") / ".loam" / "state" / DEFAULT_FILENAME
 

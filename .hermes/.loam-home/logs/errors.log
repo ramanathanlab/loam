@@ -815,3 +815,118 @@
 2026-10-01 12:54:02,513 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
 2026-10-01 12:54:08,602 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
 2026-10-01 12:54:12,361 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:27:52,831 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-02 14:27:52,833 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-02 14:27:53,215 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-02 14:27:53,216 WARNING tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-10-02 14:27:53,225 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-02 14:27:53,226 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-02 14:27:53,226 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-02 14:27:53,341 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-02 14:28:00,986 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:00,987 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:01,008 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:01,102 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:04,742 WARNING [20261002_142752_00b256] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:06,005 WARNING [20261002_142752_00b256] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:06,005 WARNING [20261002_142752_00b256] agent.tool_executor: Tool read_file returned error (0.22s): {"content": "", "total_lines": 0, "file_size": 0, "truncated": false, "is_binary": false, "is_image": false, "error": "File not found: hooks/hypothesis_orchestration.py"}
+2026-10-02 14:28:07,145 WARNING [20261002_142752_00b256] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:07,145 WARNING [20261002_142752_00b256] agent.tool_executor: Tool read_file returned error (0.09s): {"content": "", "total_lines": 0, "file_size": 0, "truncated": false, "is_binary": false, "is_image": false, "error": "File not found: hooks/subagent_ledger.py"}
+2026-10-02 14:28:08,260 WARNING [20261002_142752_00b256] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:08,260 WARNING [20261002_142752_00b256] agent.tool_executor: Tool read_file returned error (0.07s): {"content": "", "total_lines": 0, "file_size": 0, "truncated": false, "is_binary": false, "is_image": false, "error": "File not found: hooks/tool_policy.py"}
+
+[Tool loop warning: same_tool_failure_war
+2026-10-02 14:28:09,442 WARNING [20261002_142752_00b256] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:13,094 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:13,111 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:13,119 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:13,124 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:13,127 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:13,135 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:13,139 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:19,353 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:19,354 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:19,356 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:19,362 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:19,372 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:19,388 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:23,096 WARNING [20261002_142752_00b256] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:36,383 WARNING [20261002_142752_00b256] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:51,962 WARNING [20261002_142752_00b256] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:28:51,962 WARNING [20261002_142752_00b256] agent.tool_executor: Tool patch returned error (0.00s): {"error": "Refusing to write to Hermes config file: .hermes/.loam-home/config.yaml\nAgent cannot modify security-sensitive configuration. Edit ~/.hermes/config.yaml directly or use 'hermes config' ins
+2026-10-02 14:28:56,448 WARNING [20261002_142752_00b256] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:29:04,535 WARNING [20261002_142752_00b256] tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-02 14:29:04,538 WARNING [20261002_142752_00b256] tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-02 14:29:04,567 WARNING [20261002_142752_00b256] tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-02 14:29:04,567 WARNING [20261002_142752_00b256] tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-10-02 14:29:04,579 WARNING [20261002_142752_00b256] tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-02 14:29:04,579 WARNING [20261002_142752_00b256] tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-02 14:29:04,580 WARNING [20261002_142752_00b256] tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-02 14:29:04,625 WARNING [20261002_142752_00b256] tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-02 14:29:04,783 WARNING [20261002_142752_00b256] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:29:09,380 WARNING [20261002_142752_00b256] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:29:10,746 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:29:10,867 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:29:10,879 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:29:12,500 WARNING [20261002_142752_00b256] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:29:15,939 WARNING [20261002_142904_bf996c] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:29:15,939 WARNING [20261002_142904_bf996c] agent.tool_executor: Tool terminal returned error (0.04s): {"output": "/bin/bash: line 6: codex: command not found", "exit_code": 127, "error": null}
+2026-10-02 14:47:39,971 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-02 14:47:39,972 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-02 14:47:40,224 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-02 14:47:40,225 WARNING tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-10-02 14:47:40,236 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-02 14:47:40,237 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-02 14:47:40,237 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-02 14:47:40,347 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-02 14:48:11,643 WARNING [20261002_144739_4cfb28] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:11,644 WARNING [20261002_144739_4cfb28] agent.tool_executor: Tool skill_view returned error (0.03s): {"success": false, "error": "Skill 'autonomous-ai-agents' not found.", "available_skills": ["computer-use", "dogfood", "yuanbao", "apple-notes", "apple-reminders", "findmy", "imessage", "claude-code",
+2026-10-02 14:48:15,271 WARNING [20261002_144739_4cfb28] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:16,543 WARNING [20261002_144739_4cfb28] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:17,747 WARNING [20261002_144739_4cfb28] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:18,934 WARNING [20261002_144739_4cfb28] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:23,438 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:23,442 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:23,442 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:23,443 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:23,445 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:23,462 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:23,464 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:29,132 WARNING [20261002_144739_4cfb28] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:30,315 WARNING [20261002_144739_4cfb28] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:31,494 WARNING [20261002_144739_4cfb28] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:32,729 WARNING [20261002_144739_4cfb28] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:34,594 WARNING [20261002_144739_4cfb28] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:48:44,067 WARNING [20261002_144739_4cfb28] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:50:59,421 WARNING [20261002_144739_4cfb28] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 14:51:06,385 WARNING [20261002_144739_4cfb28] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:13:55,215 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:13:56,306 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:13:57,539 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:13:58,872 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:02,819 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:08,881 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:08,954 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:08,968 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:08,975 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:08,981 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:08,983 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:08,990 WARNING loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:14,848 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:16,053 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:17,262 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:18,455 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:19,671 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:20,936 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:22,706 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:30,832 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:32,081 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:33,299 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:33,299 WARNING [20261001_110909_e04543] agent.tool_executor: Tool terminal returned error (0.14s): {"output": "", "exit_code": 1, "error": null}
+2026-10-02 16:14:34,563 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:35,788 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:44,066 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:45,235 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:46,469 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:47,639 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-02 16:14:48,949 WARNING [20261001_110909_e04543] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py

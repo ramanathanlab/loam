@@ -32,8 +32,11 @@ def memory_path(payload: Mapping[str, Any]) -> Path:
     """Resolve parent memory from the selected profile, then legacy override."""
 
     state_dir = payload.get("loam_state_dir")
+    runtime_state_dir = os.environ.get("LOAM_STATE_DIR", "").strip()
     if isinstance(state_dir, str) and state_dir.strip():
         return Path(state_dir).expanduser() / DEFAULT_MEMORY_FILENAME
+    if runtime_state_dir:
+        return Path(runtime_state_dir).expanduser() / DEFAULT_MEMORY_FILENAME
     configured = os.environ.get("LOAM_PARENT_MEMORY_PATH", "").strip()
     return Path(configured).expanduser() if configured else ledger_path(payload).with_name(DEFAULT_MEMORY_FILENAME)
 

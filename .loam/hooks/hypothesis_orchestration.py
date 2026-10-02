@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,7 +18,9 @@ from typing import Any, Mapping
 
 AGENT_NAMES = ("reasoner", "hypothesis-validator", "code-generator")
 STATE_FILENAME = "hypothesis-orchestration.jsonl"
+CAMPAIGN_FILENAME = "hypothesis-campaign.jsonl"
 MAX_REASONER_THREAD_CHARS = 6_000
+EVIDENCE_SCORE_HEADING = "### Evidence Score"
 MAX_BRIEF_CHARS = 2_000
 
 
@@ -40,12 +43,16 @@ def _timestamp() -> str:
 
 
 def _state_path(payload: Mapping[str, Any]) -> Path:
-    state_dir = _text(payload.get("loam_state_dir"))
+    state_dir = _text(payload.get("loam_state_dir")) or os.environ.get("LOAM_STATE_DIR", "").strip()
     if state_dir:
         return Path(state_dir).expanduser() / STATE_FILENAME
     root = Path(_text(payload.get("repo_root")) or ".")
     return root / ".loam" / "state" / STATE_FILENAME
 
+
+
+def _campaign_path(payload: Mapping[str, Any]) -> Path:
+    return _state_path(payload).with_name(CAMPAIGN_FILENAME)
 
 def _agent_dir(payload: Mapping[str, Any]) -> Path:
     root = Path(_text(payload.get("repo_root")) or ".")
@@ -111,6 +118,10 @@ def _append(path: Path, row: Mapping[str, Any]) -> None:
         handle.write(json.dumps(dict(row), ensure_ascii=False, sort_keys=True) + "\n")
 
 
+
+def _append_campaign(payload: Mapping[str, Any], row: Mapping[str, Any]) -> None:
+    _append(_campaign_path(payload), row)
+
 def _marker(value: str, key: str) -> str:
     prefix = f"[{key}="
     start = value.find(prefix)
@@ -118,6 +129,20 @@ def _marker(value: str, key: str) -> str:
         return ""
     end = value.find("]", start + len(prefix))
     return value[start + len(prefix) : end] if end >= 0 else ""
+
+
+def _evidence_score(summary: str) -> float | None:
+    """Extract the validator's explicitly formatted calibrated evidence score."""
+
+    section = summary.split(EVIDENCE_SCORE_HEADING, 1)
+    if len(section) != 2:
+        return None
+    value = section[1].lstrip().split(None, 1)[0] if section[1].lstrip() else ""
+    try:
+        score = float(value)
+    except ValueError:
+        return None
+    return score if -1.0 <= score <= 1.0 else None
 
 def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     """Block tool use that violates a tagged orchestration role's boundary."""
@@ -141,6 +166,11 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     if role == "code-generator":
         if tool_name == "delegate_task":
             return {"action": "block", "message": "code-generator must not delegate"}
+        execution = payload.get("loam_execution")
+        if isinstance(execution, Mapping) and execution.get("mode") == "remote_mcp":
+            required_tool = _text(execution.get("tool_name"))
+            if tool_name != required_tool:
+                return {"action": "block", "message": f"code-generator must use remote MCP tool {required_tool}"}
         return None
     if role != "hypothesis-validator":
         return None
@@ -159,6 +189,19 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
             "message": "hypothesis-validator may delegate only tagged code-generator children in its plan",
         }
     return None
+
+
+def is_campaign_child(payload: Mapping[str, Any]) -> bool:
+    """Return whether this callback belongs to a tagged campaign child."""
+
+    session_id = _text(payload.get("session_id"))
+    return bool(
+        session_id
+        and any(
+            row.get("event") == "agent_started" and _text(row.get("child_session_id")) == session_id
+            for row in _read_rows(_state_path(payload))
+        )
+    )
 
 
 def _latest_report(payload: Mapping[str, Any]) -> tuple[Path, Mapping[str, Any]] | None:
@@ -275,19 +318,20 @@ def record_start(payload: Mapping[str, Any]) -> None:
     plan_id = _marker(goal, "loam-plan-id")
     if role not in AGENT_NAMES or not plan_id:
         return
-    _append(
-        _state_path(payload),
-        {
-            "event": "agent_started",
-            "observed_at": _timestamp(),
-            "workflow_id": _text(payload.get("workflow_id")),
-            "plan_id": plan_id,
-            "role": role,
-            "hypothesis_id": _marker(goal, "loam-hypothesis-id"),
-            "child_subagent_id": _text(payload.get("child_subagent_id")),
-            "child_session_id": _text(payload.get("child_session_id")),
-        },
-    )
+    record = {
+        "event": "agent_started",
+        "observed_at": _timestamp(),
+        "run_id": _text(payload.get("loam_run_id")),
+        "workflow_id": _text(payload.get("workflow_id")),
+        "plan_id": plan_id,
+        "role": role,
+        "hypothesis_id": _marker(goal, "loam-hypothesis-id"),
+        "child_subagent_id": _text(payload.get("child_subagent_id")),
+        "child_session_id": _text(payload.get("child_session_id")),
+    }
+    _append(_state_path(payload), record)
+    if role == "hypothesis-validator":
+        _append_campaign(payload, {**record, "event": "hypothesis_validation_started"})
 
 
 def record_stop(payload: Mapping[str, Any]) -> None:
@@ -309,31 +353,56 @@ def record_stop(payload: Mapping[str, Any]) -> None:
         return
     role = _text(start.get("role"))
     event = "reasoner_completed" if role == "reasoner" else "validator_completed" if role == "hypothesis-validator" else "code_generator_completed"
-    _append(
-        _state_path(payload),
-        {
-            "event": event,
-            "observed_at": _timestamp(),
-            "workflow_id": _text(payload.get("workflow_id")),
-            "plan_id": _text(start.get("plan_id")),
-            "role": role,
-            "hypothesis_id": _text(start.get("hypothesis_id")),
-            "child_subagent_id": child_id,
-            "child_session_id": child_session,
-            "status": _text(payload.get("child_status")) or "error",
-            "summary": _text(payload.get("child_summary")),
-        }
-    )
+    summary = _text(payload.get("child_summary"))
+    record = {
+        "event": event,
+        "observed_at": _timestamp(),
+        "run_id": _text(payload.get("loam_run_id")),
+        "workflow_id": _text(payload.get("workflow_id")),
+        "plan_id": _text(start.get("plan_id")),
+        "role": role,
+        "hypothesis_id": _text(start.get("hypothesis_id")),
+        "child_subagent_id": child_id,
+        "child_session_id": child_session,
+        "status": _text(payload.get("child_status")) or "error",
+        "summary": summary,
+    }
+    if role == "hypothesis-validator":
+        score = _evidence_score(summary)
+        record["evidence_score"] = score
+        record["evidence_score_status"] = "reported" if score is not None else "missing_or_invalid"
+    _append(_state_path(payload), record)
+    if role == "hypothesis-validator":
+        _append_campaign(payload, {**record, "event": "hypothesis_validation_completed"})
+    elif role == "reasoner":
+        plan_id = _text(start.get("plan_id"))
+        validations = [
+            row
+            for row in rows
+            if row.get("event") == "validator_completed" and _text(row.get("plan_id")) == plan_id
+        ]
+        _append_campaign(
+            payload,
+            {
+                **record,
+                "event": "hypothesis_campaign_round_completed",
+                "validator_results": validations,
+                "synthesis": summary,
+            },
+        )
 
 
-def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry: Mapping[str, AgentSpec]) -> str:
+def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry: Mapping[str, AgentSpec], payload: Mapping[str, Any]) -> str:
     validator = registry["hypothesis-validator"]
+    execution = payload.get("loam_execution")
     lines = [
         "Loam orchestration directive: launch every selected hypothesis validator now, in one delegate_task batch.",
         f"Each child MUST read and follow {validator.prompt_path}. Use delegate_task role=orchestrator for validators; do not perform experimental code or tool calls yourself.",
         "Pass the complete hypothesis object below, experiment constraints, and the execution contract. Every executable action MUST be delegated by that validator to code-generator as a leaf child; no other child may execute code.",
         f"Tag every validator goal with [loam-agent-role=hypothesis-validator] [loam-plan-id={plan_id}] and [loam-hypothesis-id=<the supplied hypothesis_id>] so lifecycle hooks can collate completion.",
-        "Each validator MUST tag every code-generator goal [loam-agent-role=code-generator] [loam-plan-id=<same plan>] and supply its complete MCP execution contract.",
+        "Each validator MUST tag every code-generator goal [loam-agent-role=code-generator] [loam-plan-id=<same plan>] and supply the execution contract below.",
+        "Execution contract:",
+        json.dumps(execution if isinstance(execution, Mapping) else {}, ensure_ascii=False, sort_keys=True),
         "Selected hypotheses:",
     ]
     for item in selected:
@@ -347,6 +416,8 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
         {
             "hypothesis_id": row.get("hypothesis_id", ""),
             "validator_status": row.get("status"),
+            "evidence_score": row.get("evidence_score"),
+            "evidence_score_status": row.get("evidence_score_status"),
             "validator_report": _text(row.get("summary"))[:MAX_REASONER_THREAD_CHARS],
         }
         for row in completions
@@ -401,4 +472,4 @@ def context_for(payload: dict[str, Any]) -> str:
         if not hypothesis:
             return ""
         selected.append({"rank": rank, "elo_rating": ranking.get("elo_rating"), "hypothesis": hypothesis})
-    return _validator_directive(plan_id, selected, registry)
+    return _validator_directive(plan_id, selected, registry, payload)

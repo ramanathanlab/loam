@@ -15,6 +15,7 @@ from typing import Any
 
 from hypothesis_orchestration import record_stop
 from ledger import write_stop_and_candidate
+from run_manifest import ensure as ensure_run_manifest
 
 
 def _payload() -> dict[str, Any]:
@@ -31,6 +32,7 @@ def _payload() -> dict[str, Any]:
 def main() -> int:
     try:
         payload = _payload()
+        ensure_run_manifest(payload)
         write_stop_and_candidate(payload)
         record_stop(payload)
     except Exception as exc:  # observer failures must not change Hermes behavior

@@ -15,3 +15,5 @@ custom_providers:
 onboarding:
   seen:
     tool_progress_prompt: true
+delegation:
+  max_spawn_depth: 1

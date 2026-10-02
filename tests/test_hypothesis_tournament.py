@@ -41,11 +41,19 @@ class HypothesisTournamentTests(unittest.TestCase):
                     "pre_llm_every": 4,
                     "duplicate_policy": "allow_and_audit",
                     "hypothesis_orchestration": {"enabled": True},
+                    "execution": {
+                        "mode": "remote_mcp",
+                        "tool_name": "globus_execute",
+                        "endpoint": "https://compute.example/mcp",
+                        "function_name": "run_python",
+                        "input_schema": "run-python-v1",
+                        "runtime": "python3.11",
+                    },
                     "hypothesis_tournament": {
                         "enabled": True,
                         "jnana_root": "/tmp/jnana",
-                        "state_file": "/tmp/state/jnana.json",
-                        "reports_dir": "/tmp/state/reports",
+                        "state_file": "/tmp/static-state/jnana.json",
+                        "reports_dir": "/tmp/static-state/reports",
                         "initial_hypotheses": 3,
                         "inference_endpoint": "http://example.test/v1",
                         "model": "test-model",
@@ -69,7 +77,66 @@ class HypothesisTournamentTests(unittest.TestCase):
         self.assertEqual(tournament["matches_per_run"], 1)
         self.assertEqual(tournament["top_k"], 3)
         self.assertTrue(values["loam_hypothesis_orchestration"])
-        self.assertNotIn("api_key", tournament)
+        self.assertEqual(values["loam_state_dir"], "/tmp/state")
+        self.assertEqual(values["loam_execution"]["mode"], "remote_mcp")
+        self.assertEqual(values["loam_execution"]["tool_name"], "globus_execute")
+
+    def test_profile_parses_local_execution_mode(self) -> None:
+        config = _load("loam_config_local_execution", CONFIG)
+        raw = {
+            "enabled": True,
+            "active_profile": "research",
+            "profiles": {
+                "research": {
+                    "workflow_id": "research-v1",
+                    "state_dir": "/tmp/state",
+                    "hypothesis_orchestration": {"enabled": True},
+                    "execution": {"mode": "local", "runtime": "python3.11"},
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "loam.yaml"
+            config_path.write_text(json.dumps(raw), encoding="utf-8")
+            with patch.dict(os.environ, {"LOAM_CONFIG_PATH": str(config_path)}, clear=False):
+                profile = config.load_profile()
+
+        assert profile is not None
+        self.assertEqual(config.payload_values(profile)["loam_execution"], {"mode": "local", "tool_name": "", "endpoint": "", "function_name": "", "input_schema": "", "runtime": "python3.11"})
+
+    def test_runtime_state_directory_overrides_profile_and_enables_emergency_mode(self) -> None:
+        config = _load("loam_config_runtime_state", CONFIG)
+        raw = {
+            "enabled": True,
+            "active_profile": "research",
+            "profiles": {
+                "research": {
+                    "workflow_id": "research-v1",
+                    "hypothesis_tournament": {
+                        "enabled": True,
+                        "jnana_root": "/tmp/jnana",
+                        "inference_endpoint": "http://example.test/v1",
+                        "model": "test-model",
+                    },
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "loam.yaml"
+            config_path.write_text(json.dumps(raw), encoding="utf-8")
+            runtime_state = Path(tmp) / "run-state"
+            with patch.dict(
+                os.environ,
+                {"LOAM_CONFIG_PATH": str(config_path), "LOAM_STATE_DIR": str(runtime_state)},
+                clear=False,
+            ):
+                profile = config.effective_profile()
+
+        assert profile is not None
+        self.assertEqual(profile.state_dir, runtime_state)
+        assert profile.hypothesis_tournament is not None
+        self.assertEqual(profile.hypothesis_tournament.state_file, runtime_state / "jnana-memory.json")
+        self.assertEqual(profile.hypothesis_tournament.reports_dir, runtime_state / "tournament-reports")
 
     def test_context_for_runs_runner_writes_report_and_renders_compact_ranking(self) -> None:
         hook = _load("loam_hypothesis_tournament", HOOKS / "hypothesis_tournament.py")
@@ -267,18 +334,40 @@ class HypothesisTournamentTests(unittest.TestCase):
             report = json.loads(next((root / "reports").glob("tournament-*.json")).read_text())
             self.assertEqual(report["result"]["generation"], {"status": "not_needed", "generated_hypotheses": 0})
 
+    def test_pre_llm_hook_skips_tournament_for_campaign_children(self) -> None:
+        pre_llm = _load("loam_pre_llm_campaign_child", HOOKS / "pre-llm.py")
+        payload = {
+            "event": "pre_llm_call",
+            "session_id": "validator-session",
+            "loam_hypothesis_orchestration": True,
+        }
+        with patch.object(pre_llm, "ensure_run_manifest"), patch.object(
+            pre_llm, "memory_context_for", return_value="Validated memory"
+        ), patch.object(pre_llm, "is_campaign_child", return_value=True), patch.object(
+            pre_llm, "tournament_context_for"
+        ) as tournament:
+            with patch("sys.stdin") as stdin, patch("sys.stdout") as stdout:
+                stdin.read.return_value = json.dumps(payload)
+                self.assertEqual(pre_llm.main(), 0)
+
+        tournament.assert_not_called()
+        emitted = json.loads("".join(call.args[0] for call in stdout.write.call_args_list))
+        self.assertEqual(emitted["context"], "Validated memory")
+
     def test_pre_llm_hook_combines_memory_and_tournament_context(self) -> None:
         pre_llm = _load("loam_pre_llm_tournament", HOOKS / "pre-llm.py")
-        payload = {"event": "pre_llm_call", "session_id": "session"}
-        with patch.object(pre_llm, "memory_context_for", return_value="Validated memory"), patch.object(
-            pre_llm, "tournament_context_for", return_value="Tournament ranking"
+        payload = {"event": "pre_llm_call", "session_id": "session", "loam_hypothesis_orchestration": True}
+        with patch.object(pre_llm, "ensure_run_manifest"), patch.object(
+            pre_llm, "memory_context_for", return_value="Validated memory"
+        ), patch.object(pre_llm, "tournament_context_for", return_value="Tournament ranking"), patch.object(
+            pre_llm, "is_campaign_child", return_value=False
         ):
             with patch("sys.stdin") as stdin, patch("sys.stdout") as stdout:
                 stdin.read.return_value = json.dumps(payload)
                 self.assertEqual(pre_llm.main(), 0)
 
-        emitted = "".join(call.args[0] for call in stdout.write.call_args_list)
-        self.assertIn("Validated memory\\n\\nTournament ranking", emitted)
+        emitted = json.loads("".join(call.args[0] for call in stdout.write.call_args_list))
+        self.assertEqual(emitted["context"], "Validated memory\n\nTournament ranking")
 
     def test_endpoint_normalization_and_no_auth_config(self) -> None:
         hook = _load("loam_hypothesis_tournament_endpoint", HOOKS / "hypothesis_tournament.py")

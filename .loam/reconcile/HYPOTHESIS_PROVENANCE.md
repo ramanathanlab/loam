@@ -71,25 +71,29 @@ evidence exactly before accepting it:
 }
 ```
 
+Set `STATE_DIR` to the deployment's `LOAM_STATE_DIR` before running these
+commands. This keeps reconciliation outputs with the run that produced their
+pending candidates.
+
 Run:
 
 ```bash
 python3 .loam/reconcile/hypothesis_provenance.py \
-  --candidates .loam/state/candidate-results.jsonl \
-  --reviews .loam/state/hypothesis-reviews.jsonl \
-  --hypotheses-out .loam/state/hypothesis-ledger.jsonl \
-  --evidence-out .loam/state/evidence-ledger.jsonl \
-  --credit-out .loam/state/credit-ledger.jsonl
+  --candidates "$STATE_DIR/candidate-results.jsonl" \
+  --reviews "$STATE_DIR/hypothesis-reviews.jsonl" \
+  --hypotheses-out "$STATE_DIR/hypothesis-ledger.jsonl" \
+  --evidence-out "$STATE_DIR/evidence-ledger.jsonl" \
+  --credit-out "$STATE_DIR/credit-ledger.jsonl"
 ```
 
 Project compact read-only pre-LLM context afterward:
 
 ```bash
 python3 .loam/reconcile/project_hypothesis_memory.py \
-  --hypotheses .loam/state/hypothesis-ledger.jsonl \
-  --evidence .loam/state/evidence-ledger.jsonl \
-  --credit .loam/state/credit-ledger.jsonl \
-  --out .loam/state/hypothesis-memory.jsonl
+  --hypotheses "$STATE_DIR/hypothesis-ledger.jsonl" \
+  --evidence "$STATE_DIR/evidence-ledger.jsonl" \
+  --credit "$STATE_DIR/credit-ledger.jsonl" \
+  --out "$STATE_DIR/hypothesis-memory.jsonl"
 ```
 
 The pre-LLM hook injects the projected hypothesis state only for the current
@@ -111,10 +115,10 @@ Build advisory steering state after a Jnana tournament report:
 
 ```bash
 python3 .loam/reconcile/project_hypothesis_steering.py \
-  --hypotheses .loam/state/hypothesis-ledger.jsonl \
-  --evidence .loam/state/evidence-ledger.jsonl \
-  --tournament-reports .loam/state/hypothesis-research/tournament-reports \
-  --out .loam/state/hypothesis-steering.jsonl
+  --hypotheses "$STATE_DIR/hypothesis-ledger.jsonl" \
+  --evidence "$STATE_DIR/evidence-ledger.jsonl" \
+  --tournament-reports "$STATE_DIR/tournament-reports" \
+  --out "$STATE_DIR/hypothesis-steering.jsonl"
 ```
 
 The projection keeps Jnana Elo and evidence rating distinct, then records a

@@ -13,4 +13,8 @@ export HERMES_HOME="$ROOT/.hermes/.loam-home"
 # Invoke `.loam/hooks/pre-llm.py` every N turns of each Hermes session.
 # Override at launch, e.g. `LOAM_PRE_LLM_EVERY=3 .loam/run-hermes`.
 export LOAM_PRE_LLM_EVERY="${LOAM_PRE_LLM_EVERY:-1}"
+# Route all Loam runtime artifacts for this invocation with, for example,
+# `LOAM_STATE_DIR=/var/tmp/loam-run-42 .loam/run-hermes`.
+export LOAM_STATE_DIR="${LOAM_STATE_DIR:-}"
+export LOAM_RUN_ID="${LOAM_RUN_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 exec hermes "$@"

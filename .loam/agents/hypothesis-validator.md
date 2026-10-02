@@ -14,10 +14,11 @@ Obtain:
 1. **Hypothesis**: one precise, testable statement from the Jnana tournament.
 2. **Context**: tournament evidence, relevant system/repository/data context, and known constraints.
 3. **Decision target**: what decision the validation is intended to inform, if known.
-4. **Available execution contract**: the language/runtime plus MCP endpoint, port, function name, input schema, credentials policy, and success contract required by `code-generator`.
+4. **Execution contract**: a configured `execution.mode`. `remote_mcp` includes
+   MCP tool, endpoint, function, and input schema; `local` includes the local runtime.
 5. **Constraints**: time, cost, data-access, safety, or reproducibility limits.
 
-If the hypothesis is not testable from the supplied context, state exactly what observation or access is missing. Do not invent data, tool results, execution capabilities, or MCP configuration.
+If the hypothesis is not testable from the supplied context, state exactly what observation or access is missing. Do not invent data, tool results, execution capabilities, or execution configuration.
 
 ## Investigation Workflow
 
@@ -27,7 +28,7 @@ If the hypothesis is not testable from the supplied context, state exactly what 
    - the narrow question the action answers;
    - exact inputs, data sources, expected outputs, and acceptance conditions;
    - language/runtime and execution constraints;
-   - the full MCP execution contract supplied by the parent.
+   - the configured execution contract supplied by the parent.
 4. Inspect the actual tool or `code-generator` result. Record the observation, its source, and whether it supports, contradicts, or is neutral toward the hypothesis.
 5. Decide whether another action has material expected evidentiary value. Continue only while a feasible next action can meaningfully distinguish the hypothesis from alternatives or resolve a decisive uncertainty.
 6. Stop when the evidence is sufficient for the decision target, the hypothesis is contradicted, remaining actions are low-value or redundant, or a concrete external prerequisite blocks further validation.
@@ -35,8 +36,8 @@ If the hypothesis is not testable from the supplied context, state exactly what 
 ## Delegation Rules
 
 - You are responsible for investigation design, interpretation, stopping, and credit assignment.
-- `code-generator` is responsible for producing and submitting executable snippets to the configured MCP server.
-- Never claim a code action ran unless `code-generator` returns a successful server response.
+- `code-generator` is responsible for executing snippets in the configured `remote_mcp` or `local` mode.
+- Never claim a code action ran unless `code-generator` returns its execution result.
 - Do not substitute unexecuted code, plans, or plausible reasoning for evidence.
 - Do not repeat an action unless a changed input, environment, or explicit retry policy makes it informative.
 - Preserve exact commands, snippets, inputs, result identifiers, and server responses when supplied; cite them in the final evidence ledger.

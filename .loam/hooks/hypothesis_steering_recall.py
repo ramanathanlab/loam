@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -11,9 +12,11 @@ FILENAME = "hypothesis-steering.jsonl"
 
 def context_for(payload: Mapping[str, Any]) -> str:
     state_dir = payload.get("loam_state_dir")
-    if not isinstance(state_dir, str) or not state_dir.strip():
+    runtime_state_dir = os.environ.get("LOAM_STATE_DIR", "").strip()
+    resolved_state_dir = state_dir.strip() if isinstance(state_dir, str) and state_dir.strip() else runtime_state_dir
+    if not resolved_state_dir:
         return ""
-    path = Path(state_dir).expanduser() / FILENAME
+    path = Path(resolved_state_dir).expanduser() / FILENAME
     if not path.is_file():
         return ""
     workflow_id = str(payload.get("workflow_id") or "")

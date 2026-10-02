@@ -18,6 +18,15 @@ Set `LOAM_PRE_LLM_EVERY` to change that interval; for example, run it every thre
 LOAM_PRE_LLM_EVERY=3 .loam/run-hermes
 ```
 
+Set `LOAM_STATE_DIR` for deployment-specific outputs; it overrides the configured
+state directory and keeps lifecycle, orchestration, Jnana state, and tournament
+reports isolated:
+
+```bash
+LOAM_STATE_DIR=/var/tmp/loam/${DEPLOYMENT_ID} .loam/run-hermes
+```
+
+
 The hook integration and its runtime state are under `.loam/`. See `.loam/README.md` for lifecycle-hook behavior and optional global Hermes installation.
 ## Verify Loam orchestration
 

@@ -5,9 +5,10 @@ name: loam-lifecycle
 
 wire_protocol:
   stdin: |
-    One JSON object. Every payload contains `event` and `repo_root`; adapters
-    add event-specific fields such as `tool_name`, `arguments`, `session_id`,
-    or `child_summary`.
+    One JSON object. Every payload contains `event` and `repo_root`; active Loam
+    profiles additionally provide `workflow_id`, `loam_state_dir`, `loam_run_id`,
+    and `loam_execution`. Adapters add event-specific fields such as `tool_name`,
+    `arguments`, `session_id`, or `child_summary`.
   stdout: |
     Optional JSON object. Empty stdout means no action. Supported portable
     response forms: `{ "action": "block", "message": "..." }` for a
