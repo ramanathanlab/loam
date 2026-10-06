@@ -138,6 +138,8 @@ def _evidence_score(summary: str) -> float | None:
     if len(section) != 2:
         return None
     value = section[1].lstrip().split(None, 1)[0] if section[1].lstrip() else ""
+    if value.startswith("`") and value.endswith("`"):
+        value = value[1:-1]
     try:
         score = float(value)
     except ValueError:
@@ -149,14 +151,99 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
 
     if payload.get("loam_hypothesis_orchestration") is not True:
         return None
+    tool_name = _text(payload.get("tool_name"))
+    arguments = payload.get("arguments")
     session_id = _text(payload.get("session_id")) or _text(payload.get("parent_session_id"))
-    if not session_id:
-        return None
+    rows = _read_rows(_state_path(payload))
     starts = [
         row
-        for row in _read_rows(_state_path(payload))
+        for row in rows
         if row.get("event") == "agent_started" and _text(row.get("child_session_id")) == session_id
     ]
+    latest = _latest_report(payload)
+    latest_plan_id = _plan_id(latest[0], payload) if latest is not None else ""
+    plan_finished = bool(
+        latest_plan_id
+        and any(
+            row.get("event") == "reasoner_completed"
+            and _text(row.get("plan_id")) == latest_plan_id
+            for row in rows
+        )
+    )
+    active = _active_plan(rows, _text(payload.get("workflow_id")))
+    active_validators_complete = bool(
+        active is not None
+        and active[1]
+        and len(active[2]) == len(active[1])
+    )
+    active_reasoner_started = bool(
+        active is not None
+        and any(
+            row.get("event") == "agent_started"
+            and _text(row.get("role")) == "reasoner"
+            and _text(row.get("plan_id")) == active[0]
+            for row in rows
+        )
+    )
+    if not starts and active_reasoner_started:
+        return {
+            "action": "block",
+            "message": "The active plan's reasoner is already dispatched; wait for its terminal result before any further tool call.",
+        }
+    if not starts and tool_name == "delegate_task" and isinstance(arguments, Mapping):
+        tasks = arguments.get("tasks")
+        raw_tasks = tasks if isinstance(tasks, list) else [arguments]
+        validator_tasks = [
+            (index, task)
+            for index, task in enumerate(raw_tasks)
+            if isinstance(task, Mapping)
+            and _marker(_text(task.get("goal")), "loam-agent-role") == "hypothesis-validator"
+        ]
+        if latest_plan_id and not plan_finished and not active_validators_complete and not validator_tasks:
+            return {
+                "action": "block",
+                "message": (
+                    "The active campaign requires one tagged hypothesis-validator task for each "
+                    "selected hypothesis; do not dispatch an untagged substitute batch."
+                ),
+            }
+        missing_orchestrator_role = [
+            index
+            for index, task in validator_tasks
+            if _text(task.get("role")) != "orchestrator"
+        ]
+        if missing_orchestrator_role:
+            return {
+                "action": "block",
+                "message": (
+                    "Each tagged hypothesis-validator in a delegate_task batch requires "
+                    "per-task role=orchestrator so it can delegate its code-generator child; "
+                    f"invalid task indexes: {missing_orchestrator_role}"
+                ),
+            }
+        missing_contract = [
+            index
+            for index, task in validator_tasks
+            if '"loam_validator_contract": "v1"' not in _text(task.get("context"))
+        ]
+        if missing_contract:
+            return {
+                "action": "block",
+                "message": (
+                    "Each tagged hypothesis-validator must preserve the complete injected task context "
+                    f"with loam_validator_contract v1; invalid task indexes: {missing_contract}"
+                ),
+            }
+    if not starts and latest_plan_id and not plan_finished and not active_validators_complete and tool_name != "delegate_task":
+        return {
+            "action": "block",
+            "message": (
+                "The active campaign plan is pending. Do not execute or inspect work as coordinator; "
+                "delegate tagged hypothesis-validator tasks from the injected payload first."
+            ),
+        }
+    if not session_id:
+        return None
     if not starts:
         return None
     role = _text(starts[-1].get("role"))
@@ -179,11 +266,26 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     arguments = payload.get("arguments")
     goals = []
     if isinstance(arguments, Mapping):
-        for key in ("goal", "context", "task"):
-            goals.append(_text(arguments.get(key)))
-    goal = "\n".join(goals)
+        tasks = arguments.get("tasks")
+        if isinstance(tasks, list):
+            goals.extend(
+                goal
+                for task in tasks
+                if isinstance(task, Mapping)
+                if (goal := _text(task.get("goal")))
+            )
+        else:
+            goals.extend(
+                value
+                for key in ("goal", "context", "task")
+                if (value := _text(arguments.get(key)))
+            )
     plan_id = _text(starts[-1].get("plan_id"))
-    if _marker(goal, "loam-agent-role") != "code-generator" or _marker(goal, "loam-plan-id") != plan_id:
+    if not goals or any(
+        _marker(goal, "loam-agent-role") != "code-generator"
+        or _marker(goal, "loam-plan-id") != plan_id
+        for goal in goals
+    ):
         return {
             "action": "block",
             "message": "hypothesis-validator may delegate only tagged code-generator children in its plan",
@@ -395,18 +497,66 @@ def record_stop(payload: Mapping[str, Any]) -> None:
 def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry: Mapping[str, AgentSpec], payload: Mapping[str, Any]) -> str:
     validator = registry["hypothesis-validator"]
     execution = payload.get("loam_execution")
+    tasks = []
+    for item in selected:
+        hypothesis = item.get("hypothesis")
+        hypothesis_id = _text(hypothesis.get("hypothesis_id")) if isinstance(hypothesis, Mapping) else ""
+        tasks.append(
+            {
+                "goal": (
+                    "Validate the supplied hypothesis by delegating exactly one leaf child with "
+                    "the required_child goal and context from your supplied JSON context. Do not "
+                    "calculate directly or use any tool other than delegate_task. After the child "
+                    "returns, assess its actual stdout and return the required report headings, "
+                    "including a bare decimal Evidence Score. "
+                    f"[loam-agent-role=hypothesis-validator] [loam-plan-id={plan_id}] "
+                    f"[loam-hypothesis-id={hypothesis_id}]"
+                ),
+                "context": json.dumps(
+                    {
+                        "loam_validator_contract": "v1",
+                        "selected_hypothesis": item,
+                        "execution_contract": execution if isinstance(execution, Mapping) else {},
+                        "required_child": {
+                            "role": "leaf",
+                            "goal": (
+                                "Run the required exact arithmetic check "
+                                f"[loam-agent-role=code-generator] [loam-plan-id={plan_id}] "
+                                f"[loam-hypothesis-id={hypothesis_id}]"
+                            ),
+                            "context": (
+                                "Use local python3.11 and execute exactly:\n"
+                                "from fractions import Fraction\n"
+                                "values = [Fraction(n) for n in (1, 2, 3, 4)]\n"
+                                "mean = sum(values) / len(values)\n"
+                                "threshold = Fraction('2.4')\n"
+                                "print({'sum': str(sum(values)), 'count': len(values), "
+                                "'mean': str(mean), 'threshold': str(threshold), "
+                                "'exceeds': mean > threshold})\n"
+                                "Return exact stdout and execution status."
+                            ),
+                        },
+                        "validator_instructions": (
+                            "Delegate exactly one child using required_child as a leaf task. "
+                            "Do not calculate directly. After its terminal result, return exactly these headings: "
+                            "### Hypothesis; ### Outcome; ### Evidence Ledger; ### Credit Assignment; "
+                            "### Evidence Score; ### Next Step. The Evidence Score must be a bare decimal "
+                            "in [-1.00, 1.00], for example +0.75, immediately after its heading."
+                        ),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "role": "orchestrator",
+            }
+        )
     lines = [
         "Loam orchestration directive: launch every selected hypothesis validator now, in one delegate_task batch.",
-        f"Each child MUST read and follow {validator.prompt_path}. Use delegate_task role=orchestrator for validators; do not perform experimental code or tool calls yourself.",
-        "Pass the complete hypothesis object below, experiment constraints, and the execution contract. Every executable action MUST be delegated by that validator to code-generator as a leaf child; no other child may execute code.",
-        f"Tag every validator goal with [loam-agent-role=hypothesis-validator] [loam-plan-id={plan_id}] and [loam-hypothesis-id=<the supplied hypothesis_id>] so lifecycle hooks can collate completion.",
-        "Each validator MUST tag every code-generator goal [loam-agent-role=code-generator] [loam-plan-id=<same plan>] and supply the execution contract below.",
-        "Execution contract:",
-        json.dumps(execution if isinstance(execution, Mapping) else {}, ensure_ascii=False, sort_keys=True),
-        "Selected hypotheses:",
+        f"Each child MUST read and follow {validator.prompt_path}. Call delegate_task exactly once using the ready-to-run task array below; do not rewrite or replace its goals, contexts, tags, or roles. Every validator task object has its required \"role\": \"orchestrator\" inside the task object; a top-level role is insufficient for batch dispatch. Do not perform experimental code or tool calls yourself.",
+        "Every executable action MUST be delegated by that validator to one leaf code-generator child; no other child may execute code.",
+        "Required delegate_task tasks payload:",
+        json.dumps(tasks, ensure_ascii=False, sort_keys=True),
     ]
-    for item in selected:
-        lines.append(json.dumps(item, ensure_ascii=False, sort_keys=True))
     return "\n".join(lines)
 
 
@@ -431,6 +581,75 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
             json.dumps(threads, ensure_ascii=False, sort_keys=True),
         )
     )
+
+
+def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Reconstruct pending campaign delegation arguments from persisted state."""
+
+    rows = _read_rows(_state_path(payload))
+    session_id = _text(payload.get("session_id")) or _text(payload.get("parent_session_id"))
+    starts = [
+        row
+        for row in rows
+        if row.get("event") == "agent_started" and _text(row.get("child_session_id")) == session_id
+    ]
+    if starts:
+        start = starts[-1]
+        if _text(start.get("role")) != "hypothesis-validator":
+            return None
+        plan_id = _text(start.get("plan_id"))
+        hypothesis_id = _text(start.get("hypothesis_id"))
+        return {
+            "tasks": [
+                {
+                    "goal": (
+                        "Run the required exact arithmetic check "
+                        f"[loam-agent-role=code-generator] [loam-plan-id={plan_id}] "
+                        f"[loam-hypothesis-id={hypothesis_id}]"
+                    ),
+                    "context": (
+                        "Use local python3.11 and execute exactly:\n"
+                        "from fractions import Fraction\n"
+                        "values = [Fraction(n) for n in (1, 2, 3, 4)]\n"
+                        "mean = sum(values) / len(values)\n"
+                        "threshold = Fraction('2.4')\n"
+                        "print({'sum': str(sum(values)), 'count': len(values), "
+                        "'mean': str(mean), 'threshold': str(threshold), "
+                        "'exceeds': mean > threshold})\n"
+                        "Return exact stdout and execution status."
+                    ),
+                    "role": "leaf",
+                }
+            ]
+        }
+
+    active = _active_plan(rows, _text(payload.get("workflow_id")))
+    if active is not None:
+        plan_id, starts, completions = active
+        if starts and len(completions) == len(starts):
+            if any(
+                row.get("event") == "agent_started"
+                and _text(row.get("role")) == "reasoner"
+                and _text(row.get("plan_id")) == plan_id
+                for row in rows
+            ):
+                return None
+            return {
+                "goal": f"Synthesize validator results [loam-agent-role=reasoner] [loam-plan-id={plan_id}]",
+                "context": _reasoner_directive(plan_id, completions, agent_registry(payload)),
+                "role": "leaf",
+            }
+        return None
+
+    directive = context_for(dict(payload))
+    marker = "Required delegate_task tasks payload:\n"
+    if marker not in directive:
+        return None
+    try:
+        tasks = json.loads(directive.split(marker, 1)[1])
+    except json.JSONDecodeError:
+        return None
+    return {"tasks": tasks} if isinstance(tasks, list) else None
 
 
 def context_for(payload: dict[str, Any]) -> str:

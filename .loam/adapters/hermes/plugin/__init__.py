@@ -126,6 +126,35 @@ def pre_tool_call(tool_name: str, args: dict[str, Any], **kwargs: Any) -> dict[s
     )
 
 
+def canonicalize_campaign_delegation(tool_name: str, args: dict[str, Any], **kwargs: Any) -> dict[str, Any] | None:
+    """Replace model-reconstructed campaign delegation with persisted canonical work."""
+
+    if tool_name != "delegate_task":
+        return None
+    profile = _profile()
+    if profile is None or not profile.hypothesis_orchestration:
+        return None
+    values = dict(kwargs)
+    values.update(payload_values(profile))
+    values.setdefault("session_id", values.get("parent_session_id", ""))
+    try:
+        if str(HOOKS_DIR) not in sys.path:
+            sys.path.insert(0, str(HOOKS_DIR))
+        from hypothesis_orchestration import canonical_delegation_args
+
+        canonical = canonical_delegation_args(_payload("tool_request", **values))
+    except Exception as exc:
+        logger.warning("Loam campaign delegation canonicalization failed: %s", exc)
+        return None
+    if canonical is None:
+        return None
+    return {
+        "args": canonical,
+        "source": "loam-campaign",
+        "reason": "canonical persisted campaign delegation",
+    }
+
+
 def post_tool_call(tool_name: str, args: dict[str, Any], result: str, **kwargs: Any) -> None:
     profile = _profile()
     if profile is None:
@@ -214,6 +243,7 @@ def subagent_stop(**kwargs: Any) -> None:
 
 
 def register(ctx: Any) -> None:
+    ctx.register_middleware("tool_request", canonicalize_campaign_delegation)
     ctx.register_hook("pre_tool_call", pre_tool_call)
     ctx.register_hook("post_tool_call", post_tool_call)
     ctx.register_hook("pre_llm_call", pre_llm_call)
