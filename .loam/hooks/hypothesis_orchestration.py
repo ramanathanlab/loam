@@ -122,6 +122,48 @@ def _append(path: Path, row: Mapping[str, Any]) -> None:
 def _append_campaign(payload: Mapping[str, Any], row: Mapping[str, Any]) -> None:
     _append(_campaign_path(payload), row)
 
+
+def _code_generator_context(execution: Mapping[str, Any] | None) -> str:
+    """Render the required exact-arithmetic action for the configured backend."""
+
+    if isinstance(execution, Mapping) and _text(execution.get("mode")) == "remote_mcp":
+        tool_name = _text(execution.get("tool_name"))
+        endpoint = _text(execution.get("endpoint"))
+        function_name = _text(execution.get("function_name"))
+        input_schema = _text(execution.get("input_schema"))
+        runtime = _text(execution.get("runtime"))
+        if not all((tool_name, endpoint, function_name, input_schema)):
+            return "Remote execution contract is incomplete; report blocked without local execution."
+        payload = "\n".join((
+            "from fractions import Fraction",
+            "import json, os, socket",
+            "values = [Fraction(n) for n in (1, 2, 3, 4)]",
+            "mean = sum(values) / len(values)",
+            "threshold = Fraction('2.4')",
+            "print(json.dumps({'hostname': socket.gethostname(), 'pbs_jobid': os.environ.get('PBS_JOBID'), "
+            "'cuda_visible_devices': os.environ.get('CUDA_VISIBLE_DEVICES'), 'sum': str(sum(values)), "
+            "'count': len(values), 'mean': str(mean), 'threshold': str(threshold), "
+            "'exceeds': mean > threshold}, sort_keys=True))",
+        ))
+        return "\n".join((
+            f"Use only the remote MCP tool `{tool_name}`; do not execute code locally.",
+            f"Remote target: endpoint={endpoint}; function={function_name}; input_schema={input_schema}; runtime={runtime}.",
+            "Call it exactly once with `payload` equal to this complete Python program:",
+            payload,
+            "Report full returned stdout, stderr, returncode, remote hostname, PBS job ID, and CUDA_VISIBLE_DEVICES. "
+            "A nonzero returncode, missing remote placement fields, or missing exact Fraction values is blocked evidence.",
+        ))
+    return "\n".join((
+        "Use local python3.11 and execute exactly:",
+        "from fractions import Fraction",
+        "values = [Fraction(n) for n in (1, 2, 3, 4)]",
+        "mean = sum(values) / len(values)",
+        "threshold = Fraction('2.4')",
+        "print({'sum': str(sum(values)), 'count': len(values), 'mean': str(mean), "
+        "'threshold': str(threshold), 'exceeds': mean > threshold})",
+        "Return exact stdout and execution status.",
+    ))
+
 def _marker(value: str, key: str) -> str:
     prefix = f"[{key}="
     start = value.find(prefix)
@@ -524,17 +566,7 @@ def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry:
                                 f"[loam-agent-role=code-generator] [loam-plan-id={plan_id}] "
                                 f"[loam-hypothesis-id={hypothesis_id}]"
                             ),
-                            "context": (
-                                "Use local python3.11 and execute exactly:\n"
-                                "from fractions import Fraction\n"
-                                "values = [Fraction(n) for n in (1, 2, 3, 4)]\n"
-                                "mean = sum(values) / len(values)\n"
-                                "threshold = Fraction('2.4')\n"
-                                "print({'sum': str(sum(values)), 'count': len(values), "
-                                "'mean': str(mean), 'threshold': str(threshold), "
-                                "'exceeds': mean > threshold})\n"
-                                "Return exact stdout and execution status."
-                            ),
+                            "context": _code_generator_context(execution if isinstance(execution, Mapping) else None),
                         },
                         "validator_instructions": (
                             "Delegate exactly one child using required_child as a leaf task. "
@@ -599,6 +631,7 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
             return None
         plan_id = _text(start.get("plan_id"))
         hypothesis_id = _text(start.get("hypothesis_id"))
+        execution = payload.get("loam_execution")
         return {
             "tasks": [
                 {
@@ -607,17 +640,7 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
                         f"[loam-agent-role=code-generator] [loam-plan-id={plan_id}] "
                         f"[loam-hypothesis-id={hypothesis_id}]"
                     ),
-                    "context": (
-                        "Use local python3.11 and execute exactly:\n"
-                        "from fractions import Fraction\n"
-                        "values = [Fraction(n) for n in (1, 2, 3, 4)]\n"
-                        "mean = sum(values) / len(values)\n"
-                        "threshold = Fraction('2.4')\n"
-                        "print({'sum': str(sum(values)), 'count': len(values), "
-                        "'mean': str(mean), 'threshold': str(threshold), "
-                        "'exceeds': mean > threshold})\n"
-                        "Return exact stdout and execution status."
-                    ),
+                    "context": _code_generator_context(execution if isinstance(execution, Mapping) else None),
                     "role": "leaf",
                 }
             ]

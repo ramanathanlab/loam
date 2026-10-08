@@ -26,6 +26,196 @@ def _load(name: str):
 
 
 class HypothesisOrchestrationTests(unittest.TestCase):
+    def test_coordinator_rejects_untagged_batch_while_validator_plan_is_pending(self) -> None:
+        orchestration = _load("loam_orchestration_coordinator_batch_guard")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            blocked = orchestration.tool_policy(
+                {
+                    **payload,
+                    "loam_hypothesis_orchestration": True,
+                    "tool_name": "delegate_task",
+                    "arguments": {"tasks": [{"goal": "Validate the arithmetic claim.", "role": "orchestrator"}]},
+                }
+            )
+
+        self.assertEqual(blocked["action"], "block")
+        self.assertIn("tagged hypothesis-validator", blocked["message"])
+
+    def test_coordinator_rejects_untagged_single_validator_delegation(self) -> None:
+        orchestration = _load("loam_orchestration_coordinator_single_guard")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            blocked = orchestration.tool_policy(
+                {
+                    **payload,
+                    "loam_hypothesis_orchestration": True,
+                    "tool_name": "delegate_task",
+                    "arguments": {"goal": "Validate the arithmetic claim.", "role": "orchestrator"},
+                }
+            )
+
+        self.assertEqual(blocked["action"], "block")
+        self.assertIn("tagged hypothesis-validator", blocked["message"])
+
+    def test_coordinator_cannot_execute_while_validator_plan_is_pending(self) -> None:
+        orchestration = _load("loam_orchestration_coordinator_execution_guard")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            blocked = orchestration.tool_policy(
+                {
+                    **payload,
+                    "loam_hypothesis_orchestration": True,
+                    "tool_name": "terminal",
+                    "arguments": {"command": "python3 -c 'print(2.5 > 2.4)'"},
+                }
+            )
+
+        self.assertEqual(blocked["action"], "block")
+        self.assertIn("delegate tagged hypothesis-validator", blocked["message"])
+
+    def test_validator_batch_requires_per_task_orchestrator_role(self) -> None:
+        orchestration = _load("loam_orchestration_validator_batch_role")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            goal = (
+                "Validate [loam-agent-role=hypothesis-validator] "
+                "[loam-plan-id=plan-1] [loam-hypothesis-id=h-1]"
+            )
+            missing = orchestration.tool_policy(
+                {
+                    **payload,
+                    "loam_hypothesis_orchestration": True,
+                    "tool_name": "delegate_task",
+                    "arguments": {"tasks": [{"goal": goal}]},
+                }
+            )
+            accepted = orchestration.tool_policy(
+                {
+                    **payload,
+                    "loam_hypothesis_orchestration": True,
+                    "tool_name": "delegate_task",
+                    "arguments": {
+                        "tasks": [
+                            {
+                                "goal": goal,
+                                "role": "orchestrator",
+                                "context": '{"loam_validator_contract": "v1"}',
+                            }
+                        ]
+                    },
+                }
+            )
+
+        self.assertEqual(missing["action"], "block")
+        self.assertIn("per-task role=orchestrator", missing["message"])
+        self.assertIsNone(accepted)
+
+    def test_validator_batch_requires_complete_injected_contract(self) -> None:
+        orchestration = _load("loam_orchestration_validator_contract")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            goal = (
+                "Validate [loam-agent-role=hypothesis-validator] "
+                "[loam-plan-id=plan-1] [loam-hypothesis-id=h-1]"
+            )
+            blocked = orchestration.tool_policy(
+                {
+                    **payload,
+                    "loam_hypothesis_orchestration": True,
+                    "tool_name": "delegate_task",
+                    "arguments": {
+                        "tasks": [{"goal": goal, "role": "orchestrator", "context": "{}"}]
+                    },
+                }
+            )
+
+        self.assertEqual(blocked["action"], "block")
+        self.assertIn("loam_validator_contract v1", blocked["message"])
+
+    def test_evidence_score_accepts_markdown_code_span(self) -> None:
+        orchestration = _load("loam_orchestration_markdown_evidence_score")
+
+        self.assertEqual(orchestration._evidence_score("### Evidence Score\n`0.00` — inconclusive"), 0.0)
+
+    def test_validator_directive_renders_ready_tagged_task_payload(self) -> None:
+        orchestration = _load("loam_orchestration_ready_validator_tasks")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            directive = orchestration.context_for(payload)
+
+        tasks = json.loads(directive.split("Required delegate_task tasks payload:\n", 1)[1])
+        self.assertEqual(len(tasks), 2)
+        self.assertEqual({task["role"] for task in tasks}, {"orchestrator"})
+        self.assertTrue(all("[loam-agent-role=hypothesis-validator]" in task["goal"] for task in tasks))
+        self.assertEqual(
+            {"h-1", "h-2"},
+            {task["goal"].split("[loam-hypothesis-id=", 1)[1].split("]", 1)[0] for task in tasks},
+        )
+        contexts = [json.loads(task["context"]) for task in tasks]
+        self.assertTrue(
+            all("[loam-agent-role=code-generator]" in context["required_child"]["goal"] for context in contexts)
+        )
+        self.assertTrue(all(context["required_child"]["role"] == "leaf" for context in contexts))
+        self.assertTrue(all("Fraction" in context["required_child"]["context"] for context in contexts))
+        self.assertTrue(all("### Evidence Score" in context["validator_instructions"] for context in contexts))
+
+    def test_canonical_delegation_reconstructs_validator_code_generator(self) -> None:
+        orchestration = _load("loam_orchestration_canonical_delegation")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            validator = {
+                **payload,
+                "child_subagent_id": "validator-1",
+                "child_session_id": "validator-session-1",
+                "child_goal": (
+                    "Validate [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-1] "
+                    "[loam-hypothesis-id=h-1]"
+                ),
+            }
+            orchestration.record_start(validator)
+            canonical = orchestration.canonical_delegation_args(
+                {**payload, "session_id": "validator-session-1"}
+            )
+
+        self.assertEqual(canonical["tasks"][0]["role"], "leaf")
+        self.assertIn("[loam-agent-role=code-generator]", canonical["tasks"][0]["goal"])
+        self.assertIn("Fraction", canonical["tasks"][0]["context"])
+
+    def test_canonical_remote_delegation_requires_the_configured_mcp_tool(self) -> None:
+        orchestration = _load("loam_orchestration_canonical_remote_delegation")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = {
+                **self._payload(Path(temporary)),
+                "loam_execution": {
+                    "mode": "remote_mcp",
+                    "tool_name": "mcp_hpc_execution_run_code",
+                    "endpoint": "http://127.0.0.1:8000/mcp",
+                    "function_name": "run_code",
+                    "input_schema": "hpc-run-code-v1",
+                    "runtime": "python3.12",
+                },
+            }
+            validator = {
+                **payload,
+                "child_subagent_id": "validator-1",
+                "child_session_id": "validator-session-1",
+                "child_goal": (
+                    "Validate [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-1] "
+                    "[loam-hypothesis-id=h-1]"
+                ),
+            }
+            orchestration.record_start(validator)
+            canonical = orchestration.canonical_delegation_args(
+                {**payload, "session_id": "validator-session-1"}
+            )
+
+        context = canonical["tasks"][0]["context"]
+        self.assertIn("mcp_hpc_execution_run_code", context)
+        self.assertIn("do not execute code locally", context)
+        self.assertIn("pbs_jobid", context)
+        self.assertNotIn("Use local python3.11", context)
+
     def _payload(self, root: Path) -> dict:
         state_file = root / "jnana.json"
         reports_dir = root / "reports"
@@ -60,7 +250,14 @@ class HypothesisOrchestrationTests(unittest.TestCase):
                 "state_file": str(state_file),
                 "reports_dir": str(reports_dir),
             },
-            "loam_execution": {"mode": "remote_mcp", "tool_name": "globus_execute"},
+            "loam_execution": {
+                "mode": "remote_mcp",
+                "tool_name": "globus_execute",
+                "endpoint": "https://compute.example/mcp",
+                "function_name": "run_python",
+                "input_schema": "run-python-v1",
+                "runtime": "python3.11",
+            },
         }
 
     def test_registry_enforces_validator_execution_boundary(self) -> None:
@@ -94,6 +291,20 @@ class HypothesisOrchestrationTests(unittest.TestCase):
                     "arguments": {"goal": "Execute [loam-agent-role=code-generator] [loam-plan-id=plan-1]"},
                 }
             )
+            allowed_batch = orchestration.tool_policy(
+                {
+                    **base,
+                    "tool_name": "delegate_task",
+                    "arguments": {
+                        "tasks": [
+                            {
+                                "goal": "Execute [loam-agent-role=code-generator] [loam-plan-id=plan-1]",
+                                "role": "leaf",
+                            }
+                        ]
+                    },
+                }
+            )
             wrong_child = orchestration.tool_policy(
                 {**base, "tool_name": "delegate_task", "arguments": {"goal": "Delegate a researcher."}}
             )
@@ -115,6 +326,7 @@ class HypothesisOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(blocked["action"], "block")
         self.assertIsNone(allowed)
+        self.assertIsNone(allowed_batch)
         self.assertEqual(wrong_child["action"], "block")
         self.assertEqual(wrong_execution_tool["action"], "block")
         self.assertIsNone(remote_execution)
@@ -150,6 +362,7 @@ class HypothesisOrchestrationTests(unittest.TestCase):
             payload = self._payload(Path(temporary))
             first = orchestration.context_for(payload)
             self.assertIn("launch every selected hypothesis validator", first)
+            self.assertIn('"role": "orchestrator"', first)
             plan_id = first.split("[loam-plan-id=", 1)[1].split("]", 1)[0]
 
             for index, hypothesis_id in enumerate(("h-1", "h-2"), start=1):
@@ -186,7 +399,17 @@ class HypothesisOrchestrationTests(unittest.TestCase):
             scores = {row["hypothesis_id"]: row["evidence_score"] for row in rows if row["event"] == "validator_completed"}
             self.assertEqual(scores, {"h-1": 0.75, "h-2": 0.75})
             self.assertIn('"evidence_score": 0.75', reasoner)
-            self.assertIn('"mode": "remote_mcp"', first)
+            self.assertIn('\\"mode\\": \\"remote_mcp\\"', first)
+            self.assertIsNone(
+                orchestration.tool_policy(
+                    {
+                        **payload,
+                        "loam_hypothesis_orchestration": True,
+                        "tool_name": "delegate_task",
+                        "arguments": {"goal": f"Synthesize [loam-agent-role=reasoner] [loam-plan-id={plan_id}]"},
+                    }
+                )
+            )
             campaign_rows = [
                 json.loads(line)
                 for line in (Path(payload["loam_state_dir"]) / "hypothesis-campaign.jsonl").read_text().splitlines()
