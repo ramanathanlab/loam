@@ -1,0 +1,15 @@
+- **Outcome:** The Polaris Globus Compute endpoint and its PBS worker are healthy; I found no endpoint-side crash, failed registration, or scheduler failure that would explain Academy agents never becoming healthy.
+- **Direct probe path is proven:** Current job `7728046` is running on `x3001c0s19b1n0` (64 CPUs, no GPUs). The current Parsl worker registered successfully with the interchange at `18:06:37`, then completed executor tasks:
+  - task 1: `18:06:37` → `18:33:00`
+  - task 2: `18:37:52` → `18:47:04`
+  - task 3 began `18:48:16` and was still in progress when inspected.
+  These correspond with the endpoint’s active/idle state transitions and the successful direct work.
+- **Submit script is functioning as intended:**  
+  `~/.globus_compute/uep...dac812d2.../submit_scripts/parsl...1791481890.477428`
+  sets `TMPDIR=/tmp`, proxy variables, activates `/grand/FRAME-IDP/msinclair/envs/agent`, sets the remediation-repo `PYTHONPATH`, and its preflight emitted:
+  `worker ok: python 3.12.11 globus-compute-endpoint 4.15.0`.  
+  PBS stderr is empty. The manager discovers and connects to `tcp://10.140.56.123:54475`; `worker_0.log` shows the worker starting normally. The prior AF_UNIX TMPDIR failure is therefore not present in this run.
+- **Exact failure boundary found:** academy is **not reaching the endpoint’s task execution path**. The endpoint only sees standard executor tasks (the direct fraction jobs); there is **no Academy-specific exception or agent startup failure** in endpoint, manager, worker, PBS stdout, or PBS stderr logs. The registered worker environment explicitly has `academy-py 0.5.0`, so import/package absence is not the observed failure.
+- **Most concrete location:** the failure is upstream of Globus task dispatch—in the Academy/MCP client-side launch/health path (the process hosting `mcp_server.py` / `Manager.launch()`), not PBS/Parsl. At inspection time, `polaris` had no running `mcp_server` or `academy` process under `msinclair`; therefore there was no client-side Academy log/process state available on Polaris to identify a deeper exception. Per the checked-in implementation, agent health only occurs after `PoolManager.ensure_pool()` calls `manager.launch(HpcAgent())` and then `Handle.action("probe")`; the endpoint logs contain no evidence that this launch/probe ever made it through.
+- **Files modified:** none. No endpoint, scheduler, or repository changes were made.
+- **Inspection limitation:** direct SSH to the allocated compute hostname is not DNS-resolvable from this environment, and `pbsdsh` did not return process output; file-backed worker logs supplied the execution evidence.

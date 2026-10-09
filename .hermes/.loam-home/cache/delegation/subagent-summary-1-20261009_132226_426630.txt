@@ -1,0 +1,136 @@
+- **Acceptance contract:** `CAMPAIGN_TEST.md` is authoritative. It requires **five real coordinator rounds** for the arithmetic claim, with coordinator → validator (`orchestrator`) → code-generator (`leaf`) → one reasoner, and rejects partial rounds.
+- **Launcher:** top-level `/Users/msinclair/github/loam/run-hermes` (not `.loam/run-hermes`). It preserves a supplied isolated `HERMES_HOME`:
+  ```bash
+  export HERMES_HOME="${HERMES_HOME:-$ROOT/.hermes/.loam-home}"
+  ```
+  I verified its syntax and verified `HERMES_HOME=/tmp/... ./run-hermes config path` resolves to that supplied home.
+- **No launch and no edits:** I did not start Hermes, create a campaign root, or modify repository files.
+
+## Five-round procedure (existing local-execution acceptance test)
+
+`CAMPAIGN_TEST.md` requires a fresh root containing `loam.yaml`, `hermes-home/config.yaml`, and one shared `state/` directory. Use one fixed ID for all five turns:
+
+```bash
+REPO=/Users/msinclair/github/loam
+ROOT_CAMPAIGN="$(mktemp -d /tmp/loam-five-round.XXXXXX)"
+RUN_ID="local-arithmetic-five-round-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+
+mkdir -p "$ROOT_CAMPAIGN"/{hermes-home,state}
+
+# Create $ROOT_CAMPAIGN/loam.yaml using the exact local-campaign profile
+# in CAMPAIGN_TEST.md, replacing state_dir with:
+#   state_dir: $ROOT_CAMPAIGN/state
+#
+# Create $ROOT_CAMPAIGN/hermes-home/config.yaml with:
+# plugins:
+#   enabled: [loam-hooks]
+# delegation:
+#   max_spawn_depth: 2
+# plus the selected local OpenAI-compatible model/provider configuration.
+
+cd "$REPO"
+env \
+  HERMES_HOME="$ROOT_CAMPAIGN/hermes-home" \
+  LOAM_CONFIG_PATH="$ROOT_CAMPAIGN/loam.yaml" \
+  LOAM_STATE_DIR="$ROOT_CAMPAIGN/state" \
+  LOAM_RUN_ID="$RUN_ID" \
+  LOAM_ENABLED=1 \
+  HERMES_ENABLE_PROJECT_PLUGINS=1 \
+  LOAM_PRE_LLM_EVERY=1 \
+  ./run-hermes --cli
+```
+
+In that **single persistent interactive coordinator session**, submit the following exact bounded task once per round, only after the preceding round’s reasoner has completed:
+
+```text
+Determine whether the arithmetic mean of [1, 2, 3, 4] exceeds 2.4.
+```
+
+For each turn, the injected directive/canonical middleware is designed to dispatch a batch whose validator tasks each carry:
+
+```json
+{
+  "role": "orchestrator",
+  "goal": "... [loam-agent-role=hypothesis-validator] [loam-plan-id=...] ..."
+}
+```
+
+Each validator’s canonical child is a `leaf` code-generator with the exact-Fraction local Python contract. Do not issue the next task until the state ledger proves both validators terminal and exactly one reasoner terminal.
+
+## Important live-MCP conflict / gate
+
+The checked-in five-round acceptance contract is explicitly **local execution**:
+
+```yaml
+execution:
+  mode: local
+  runtime: python3.11
+```
+
+Its acceptance condition also requires:
+
+```text
+run-manifest.identity.execution.mode == "local"
+```
+
+So an “all code generation via live MCP” campaign is **not the same existing acceptance test**. A remote-MCP profile is supported by `loam_config.py`, but must specify all of:
+
+```yaml
+execution:
+  mode: remote_mcp
+  tool_name: <configured tool>
+  endpoint: <endpoint>
+  function_name: <function>
+  input_schema: <schema>
+  runtime: <runtime>
+```
+
+The repository does **not** provide those concrete live MCP values. Further, `HANDOFF.md` says not to start the five-round campaign until one real MCP `run_code` call returns the exact Fraction output plus hostname, `PBS_JOBID`, `CUDA_VISIBLE_DEVICES`, Python version, `HPC_CAMPAIGN_ID`, stdout/stderr, and return code. Thus, no exact runnable five-round **remote-MCP** command can be responsibly established from the current repo alone.
+
+## Audit artifacts and formats
+
+All campaign audit artifacts live solely under `$ROOT_CAMPAIGN/state`:
+
+- `run-manifest.json`
+  - schema: `loam_run_manifest_v1`
+  - identity includes `run_id`, `state_dir`, `workflow_id`, profile, and execution contract.
+  - identity must remain unchanged; mismatch raises `run manifest identity mismatch`.
+
+- `jnana-memory.json`
+
+- `tournament-reports/tournament-<UTC timestamp>-<uuid>.json`
+  - schema: `loam_jnana_tournament_v1`
+  - contains `workflow_id`, coordinator `session_id`, `loam_turn`, and `result`.
+  - accepted report requires `result.status == "completed"` and matching `matches_completed` / `matches_requested`.
+
+- `subagent-ledger.jsonl`
+  - append-only JSONL, schema marker `loam_subagent_ledger_v1`.
+  - start/stop records include child/parent session identities, `agent_role`, `task_goal`, status, observation status, child summary, elapsed time, and failure class.
+  - use it to prove the nested validator → code-generator lifecycle and terminal completion.
+
+- `hypothesis-orchestration.jsonl`
+  - append-only role/lifecycle records: `agent_started`, `validator_completed`, `code_generator_completed`, `reasoner_completed`.
+  - validator records include `plan_id`, `hypothesis_id`, terminal `status`, parsed `evidence_score`, and `evidence_score_status`.
+
+- `hypothesis-campaign.jsonl`
+  - append-only campaign projection.
+  - accepted completion event:
+    ```json
+    {
+      "event": "hypothesis_campaign_round_completed",
+      "plan_id": "...",
+      "validator_results": [...],
+      "synthesis": "..."
+    }
+    ```
+  - acceptance requires exactly five of these events.
+
+## Verified implementation details
+
+- The plugin runs pre-LLM on every configured coordinator turn, but skips tournament scheduling for tagged campaign children.
+- The reasoner brief is injected into the next coordinator task’s Jnana generation goal via `prepare_payload()`.
+- Delegation is canonicalized from persisted state: it reconstructs validator batches, validator code-generator children, and the single reasoner dispatch rather than trusting a model-rewritten payload.
+- Current default repo Hermes config has `max_spawn_depth: 1`; an isolated campaign config must override it to **2**.
+
+**Files created/modified:** none.  
+**Issue encountered:** no ready, concrete remote-MCP execution profile exists in the repository, and the existing five-round contract specifically accepts only local execution.

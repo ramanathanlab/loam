@@ -1,0 +1,176 @@
+{# ===========================================================================
+   user_config_template.yaml.j2  --  ALCF POLARIS, endpoint `flex-scaling`
+
+   General-purpose, elastically-scaling endpoint. Queue, node count,
+   walltime, and block counts are all passed per-submission via
+
+       Executor(endpoint_id=..., user_endpoint_config={
+           "queue": "preemptable",
+           "nodes_per_block": 4,
+           "walltime": "04:00:00",
+           "max_blocks": 2,
+       })
+
+   -- nothing here is pinned to one job shape. Every default below is safe
+   to leave untouched for a quick debug-queue task.
+
+   Inherits the hard-won fixes already proven on this account in the
+   `qmagent` / `polaris-gpu-academy` templates; see those files for the
+   failures behind each one. Summary:
+
+     * 4x NVIDIA A100 40GB/node -> 4 workers/node, CUDA_VISIBLE_DEVICES
+       (parsl), not ZE_AFFINITY_MASK.
+     * bond0, not hsn0, for the login<->compute interchange address. A wrong
+       ifname does not error -- it reports online and tasks just hang.
+     * 64 HW threads/node -> --depth=16 for 4 workers (16 threads/worker).
+       If you override `available_accelerators`/`max_workers_per_node`,
+       override `depth` and `omp_num_threads` to match (64 / workers).
+     * filesystems=home:grand (not flare), or the job fails to start.
+     * ALCF compute nodes have no direct route off-site -- the proxy vars
+       below are required for anything in worker_init/task code that
+       reaches the public internet. Internal worker<->interchange traffic
+       is ZMQ over bond0 and is unaffected.
+
+   walltime quoting: the service's `_sanitize_user_json` JSON-encodes every
+   caller-supplied STRING option before Jinja ever sees it -- a caller
+   passing user_endpoint_config={"walltime": "04:00:00"} (a normal JSON
+   string, no special handling needed on the caller's side) arrives inside
+   this template as the 10-character string `"04:00:00"`, quotes included.
+   That is why the default below also embeds its own quote characters
+   (`default('"01:00:00"')`) instead of relying on static quotes around the
+   expression -- static quotes here would double up into `""04:00:00""`
+   and fail YAML parsing the moment a caller overrides it. Do NOT add
+   `walltime: "{{ walltime|... }}"`-style static quoting; match the
+   `default('"...."')` pattern for any new string field that needs to stay
+   quoted in YAML.
+
+   Known Polaris queues -- verify current limits with `qstat -Qf <queue>`
+   before relying on them, they do change:
+     debug          1-2   nodes, <= 1h    (interactive bring-up)
+     debug-scaling  1-10  nodes, <= 1h    (multi-node worker_init bring-up)
+     preemptable    1-10  nodes, <= 72h   (killable, cheap)
+     prod           ROUTE queue, resources_min.nodect=10 -- a <10 node job
+                    is REJECTED at qsub time, never reaches an exec queue.
+     demand         small/short, higher priority, costs more
+     capacity       project-allocation-specific; confirmed present on
+                    FRAME-IDP (resources_max.walltime=168h, nodect<=4,
+                    max_run=1/project) -- may not exist on every account.
+   =========================================================================== #}
+
+display_name: {{ display_name|default("flex-scaling") }}
+
+engine:
+  type: GlobusComputeEngine
+
+  max_workers_per_node: {{ max_workers_per_node|default(4) }}
+  available_accelerators: {{ available_accelerators|default(4) }}
+
+  {# ALCF's documented Polaris setting: pairs each worker with the CPU cores
+     on the NUMA node nearest its GPU. #}
+  cpu_affinity: {{ cpu_affinity|default("block-reverse") }}
+  prefetch_capacity: {{ prefetch_capacity|default(0) }}
+
+  {# A rejected qsub (queue limits, transient scheduler error) logs and
+     retries instead of tearing down the whole endpoint. Matters more here
+     than on a single-shape endpoint: callers can request queues/sizes close
+     to their limits (e.g. `prod` below 10 nodes), and one bad request
+     should not take the endpoint down for everyone else using it. #}
+  block_error_handler: {{ block_error_handler|default(false)|lower }}
+
+  {# This is the "flex" in flex-scaling: add/drop PBS blocks based on queued
+     task pressure and idle time, instead of holding a fixed block count.
+
+     `strategy` is a plain string key into parsl's Strategy registry (e.g.
+     "simple") on GlobusComputeEngine -- NOT a nested {type, max_idletime}
+     object like vanilla Parsl executors use. A dict here reaches
+     `parsl.jobs.strategy.Strategy.strategies[strategy]` and dies with
+     `TypeError: unhashable type: 'dict'` before any block is requested.
+     max_idletime lives in the separate `job_status_kwargs` engine arg. #}
+  strategy: {{ strategy|default('"simple"') }}
+  job_status_kwargs:
+    max_idletime: {{ max_idletime|default(300) }}
+
+  {# Address COMPUTE-node workers use to reach the interchange on the LOGIN
+     node. bond0 is ALCF's documented Polaris value. #}
+  address:
+    type: address_by_interface
+    ifname: {{ ifname|default("bond0") }}
+
+  provider:
+    type: PBSProProvider
+    account: {{ account|default("FRAME-IDP") }}
+    queue: {{ queue|default("debug") }}
+
+    {# Caller passes a plain "HH:MM:SS" (e.g. "04:00:00") -- no embedded
+       quotes needed on the caller's side; see header note on why the
+       default literal below embeds its own quotes instead of this line
+       adding static ones. #}
+    walltime: {{ walltime|default('"01:00:00"') }}
+
+    {# 1x AMD EPYC Milan: 32 cores / 64 HW threads -- hardware constant, not
+       templated. #}
+    cpus_per_node: 64
+    nodes_per_block: {{ nodes_per_block|default(1) }}
+
+    {# Elastic defaults: request nothing until a task actually arrives
+       (init_blocks/min_blocks 0), scale up to `max_blocks` on demand, and
+       give the allocation back once idle. Override min_blocks if you need
+       to hold a reservation across idle gaps (costs queue time back if you
+       let it drop). #}
+    init_blocks: {{ init_blocks|default(0) }}
+    min_blocks: {{ min_blocks|default(0) }}
+    max_blocks: {{ max_blocks|default(1) }}
+
+    {# `#PBS -l select=<n>:system=polaris` is emitted by PBSProProvider
+       itself; filesystems and placement go here. grand must be listed or
+       the job fails to start with a filesystem error. #}
+    scheduler_options: "#PBS -l filesystems={{ filesystems|default('home:grand') }}\n#PBS -l place=scatter"
+
+    launcher:
+      type: MpiExecLauncher
+      bind_cmd: --cpu-bind
+      overrides: --depth={{ depth|default(16) }} --ppn 1
+
+    {# Runs on EVERY node before its workers start. Managers launch in a
+       fresh login shell: modules, venv, env vars and cwd do NOT carry over.
+       Ordering below is load-bearing. #}
+    worker_init: |
+      # MUST be first. PBS sets TMPDIR=/var/tmp/pbs.<jobid>.<fqdn> (~60+
+      # chars); the worker pool's AF_UNIX socket lives under it and exceeds
+      # the ~108-char limit -> every worker dies before registering,
+      # surfacing at the client as a bare EOFError with no diagnostic.
+      export TMPDIR=/tmp
+
+      # ALCF compute nodes have no direct route off-site. Required for any
+      # worker_init/task code that reaches the public internet. Keep
+      # internal traffic (ZMQ worker<->interchange) off the proxy.
+      export HTTP_PROXY=http://proxy.alcf.anl.gov:3128
+      export HTTPS_PROXY=http://proxy.alcf.anl.gov:3128
+      export http_proxy=$HTTP_PROXY
+      export https_proxy=$HTTPS_PROXY
+      export NO_PROXY=localhost,127.0.0.1,*.alcf.anl.gov,*.cm.polaris.alcf.anl.gov
+      export no_proxy=$NO_PROXY
+
+      module use /soft/modulefiles
+      module load cudatoolkit-standalone/12.4.1
+
+      # AFTER module load, so this python wins.
+      source /grand/FRAME-IDP/msinclair/envs/agent/bin/activate
+
+      # One GPU per worker; keep OMP threads from oversubscribing the node.
+      # 16 = 64 HW threads / 4 workers -- match to `depth` above if you
+      # override max_workers_per_node.
+      export OMP_NUM_THREADS={{ omp_num_threads|default(16) }}
+
+      # `cd` alone does not make submission-directory code importable.
+      cd {{ base_dir|default("$PBS_O_WORKDIR") }}
+      export PYTHONPATH={{ base_dir|default("$PBS_O_WORKDIR") }}:$PYTHONPATH
+
+      python -c "import sys, globus_compute_endpoint as gce; print('worker ok: python', sys.version.split()[0], 'globus-compute-endpoint', gce.__version__)"
+
+{# Flex-scaling should give resources back, not hold them -- shut the UEP
+   process itself down when idle (unlike qmagent/polaris-gpu-academy, which
+   zero this out to hold a multi-day reservation). 30s/heartbeat default:
+   soft=10 -> ~300s idle before shutdown, hard=5760 -> ~48h ceiling. #}
+idle_heartbeats_soft: {{ idle_heartbeats_soft|default(10) }}
+idle_heartbeats_hard: {{ idle_heartbeats_hard|default(5760) }}

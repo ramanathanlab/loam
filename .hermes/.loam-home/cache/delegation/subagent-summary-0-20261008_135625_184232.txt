@@ -1,0 +1,59 @@
+- **Conclusion:** A raw `globus_compute_sdk.Executor` **does satisfy Academy 1.0.0’s Manager executor contract** at the interface level. Installed versions are `academy-py 1.0.0` and `globus-compute-sdk 4.15.0`.
+  - Academy imports `concurrent.futures.Executor` and accepts an executor via `isinstance(executors, Executor)`.
+  - `globus_compute_sdk.Executor` subclasses `concurrent.futures.Executor`.
+  - Its `submit(self, fn, *args, **kwargs)` returns `ComputeFuture`, itself a `concurrent.futures.Future`, so `asyncio.wrap_future()` accepts it.
+  - Its `shutdown(wait=True, *, cancel_futures=False)` accepts the exact call Academy makes.
+
+- **Exact Academy Manager execution semantics** (`academy/manager.py`):
+  1. `Manager.launch()` registers the agent and immediately returns a `Handle`; it creates an internal background task.
+  2. That task calls:
+     ```python
+     executor.submit(
+         academy.manager._run_agent_on_worker,
+         spec,
+         **spec.submit_kwargs,
+     )
+     ```
+     then awaits the returned future:
+     ```python
+     await asyncio.wrap_future(future, loop=loop)
+     ```
+  3. Worker target is:
+     ```python
+     _run_agent_on_worker(
+         spec: _RunSpec,
+         academy_debug_mode: bool = False,
+         **kwargs,
+     )
+     ```
+     It does `asyncio.run(_run_agent_async(spec))`.
+  4. `_run_agent_async()` constructs the agent (or uses the supplied instance), enters `Runtime(...)`, and waits until that agent receives shutdown.
+  5. Manager owns the executor and on exit calls:
+     ```python
+     executor.shutdown(wait=True, cancel_futures=True)
+     ```
+     The deployment additionally calls `gc_executor.shutdown(...)` afterward; Globus shutdown is idempotent, so this is not the startup failure.
+
+- **Important implication:** This is intentionally a **long-lived Globus Compute task**. A successful `manager.launch()` only proves agent registration/task submission, not health. `CampaignPool` then calls `Handle.action("probe")`; its observed `new Academy agent did not become healthy` means the probe did not return within `HPC_AGENT_START_TIMEOUT` (or returned an error), not that `Manager.launch()` necessarily failed.
+
+- **Likely failure domain, not executor ABC compatibility:** The submitted `spec` includes the agent class/instance, `HttpExchangeFactory`, registration, args, and config. It must serialize and run in the endpoint worker environment. The endpoint must also be able to import `academy.manager` (for the registered `_run_agent_on_worker`) and the deployment’s `hpc_agent.HpcAgent` module, then reach/authenticate to `ACADEMY_EXCHANGE_URL`. A direct simple Fraction/function probe does **not** validate that code-shipping/import/Academy-exchange path.
+
+- **Minimal diagnostic (one controlled launch; does create one task/agent, so only run deliberately):**
+  1. Enable client-side DEBUG logging for `academy.manager` and `globus_compute_sdk`.
+  2. Start the MCP server with `POOL_SIZE=1`, avoiding concurrent pool provisioning.
+  3. Invoke exactly one `run_code` request with a trivial payload such as `print("ok")`.
+  4. On timeout/failure, inspect the Manager background task—not only the pool’s generic exception:
+     ```python
+     # After manager.launch() returned handle:
+     acb = manager._acbs[handle.agent_id]  # diagnostic/private API
+     if acb.task.done():
+         exc = acb.task.exception()
+         print(type(exc).__name__, exc)
+     ```
+     This distinguishes:
+     - Globus task/serialization/import failure (Manager task completes with exception),
+     - worker starts but cannot contact/register with Academy exchange (probe times out),
+     - worker starts and exchange works but agent action fails (remote action exception).
+  5. Correlate the Globus `ComputeFuture.task_id` from debug logs with Polaris allocation/job 7728046 and inspect that task’s worker logs. The decisive evidence will be worker-side import/serialization traceback or exchange connectivity/authentication error.
+
+- **No files or remote state changed.** I performed installed-source and offline interface inspection only; no Executor submission, agent launch, or job mutation.

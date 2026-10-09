@@ -15,6 +15,16 @@ Use for research tasks that divide into independent source-verification workstre
 4. After the batch completes, provide the requested compact parent synthesis. Identify each child's completion status and its reported identifiers/URLs.
 5. If asked whether a lifecycle ledger was written, verify the actual ledger/state record before answering. State a direct yes/no first, then give the minimum relevant evidence (for example, count and event/status types). Do not answer a narrower question about *who* wrote it when the user asked only whether it was written.
 
+## Nested Delegation and Role-Gated Workflows
+
+For campaigns that require a parent → validator → executor chain, validate the *effective* delegation capability before dispatching the validator batch. A declared configuration value is not sufficient: confirm that validator children receive `delegate_task` and that the configured spawn depth permits the executor layer.
+
+1. Dispatch validators in the requested batch with their required role/plan/hypothesis markers and state the exact executor contract in each brief.
+2. Require each validator to delegate its tagged executor child before interpreting results. The validator must not substitute parent-side execution or plausible arithmetic/reasoning for the child’s observed output.
+3. Treat a terminal validator that could not create its executor child as blocked/inconclusive, not as empirical support or contradiction. Preserve the reported score/status exactly; do not manufacture evidence from the hypothesis or ranking.
+4. Only after every validator is terminal, dispatch the single requested synthesis/reasoner agent. Give it the structured reports and distinguish comparative ranking signals (such as Elo) from empirical evidence scores.
+5. Do not state a campaign conclusion as execution-backed until lifecycle records show the required nested executor completions and their actual outputs.
+
 ## Reporting conventions
 
 - Label source-derived fields as reported metadata where applicable.

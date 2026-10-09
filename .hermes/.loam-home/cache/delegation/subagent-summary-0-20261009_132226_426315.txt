@@ -1,0 +1,42 @@
+- **Concrete execution path:**  
+  1. Hermes plugin registers `tool_request` middleware and lifecycle hooks in `.loam/adapters/hermes/plugin/__init__.py:245-251`.  
+  2. `pre_llm.py` injects `hypothesis_orchestration.context_for()` only for the coordinator, yielding tagged validator tasks.  
+  3. `_validator_directive()` in `.loam/hooks/hypothesis_orchestration.py:539-592` creates `orchestrator` validator tasks, each with one tagged leaf `code-generator` requirement.  
+  4. `canonicalize_campaign_delegation()` → `canonical_delegation_args()` reconstructs the validator’s child task from persisted lifecycle state (`__init__.py:129-155`, `hypothesis_orchestration.py:618-675`), so the model cannot substitute a different child payload.  
+  5. The leaf code generator’s tool call reaches `pre_tool.py` → `tool_policy()` (`hypothesis_orchestration.py:191-335`). In `remote_mcp` mode, it blocks every tool except configured `loam_execution.tool_name`.
+
+- **Minimal MCP integration point:** configure the campaign profile’s `execution` object as:
+  ```yaml
+  execution:
+    mode: remote_mcp
+    tool_name: mcp_hpc_execution_run_code
+    endpoint: http://127.0.0.1:8000/mcp
+    function_name: run_code
+    input_schema: hpc-run-code-v1
+    runtime: python3.12
+  ```
+  The config parser already propagates this into every hook payload via `payload_values()` in `.loam/adapters/hermes/plugin/loam_config.py:235-279`. The existing `_code_generator_context()` then emits an MCP-only task and explicitly prohibits local execution (`hypothesis_orchestration.py:126-165`).
+
+- **What must change for “every execution” / fail closed:**  
+  The present global profile at `/Users/msinclair/.hermes/loam.yaml` lacks both `hypothesis_orchestration.enabled` and `execution`; consequently the live default profile will not activate this remote policy. Enable orchestration and configure the exact MCP tool there (or campaign-local `LOAM_CONFIG_PATH`).  
+  Also remove/forbid `local` from campaign execution configuration if remote execution is mandatory: `loam_config.py:57` explicitly permits it, and `tool_policy()` intentionally allows any code-generator tool in local mode (`hypothesis_orchestration.py:299-303`). Prompt text is not a security boundary.
+
+- **Provenance gap:** tool admission is fail-closed in remote mode, but *evidence acceptance is not*. `record_stop()` stores only model-written child summary/status (`hypothesis_orchestration.py:481-536`), while `ledger.py` likewise records summary as explicitly unvalidated audit material. There is no post-tool result capture or schema validation tying the actual `mcp_hpc_execution_run_code` response to the code-generator lifecycle record. Thus a code generator can call the right tool but its claimed hostname/PBS/job/CUDA/Fraction output is not independently verified before validator completion / reasoner dispatch.
+
+- **Recommended narrow enforcement seam:** extend the existing `pre_tool_call` policy plus a new result-recording hook at the plugin boundary:
+  - In `tool_policy()` code-generator remote branch, require the exact tool name **and** reject malformed/non-`run_code` arguments (at least non-empty `payload`, controlled `workdir`/timeout if applicable).
+  - In plugin `post_tool_call()` (currently invokes a nonexistent `hooks/post-tool.py`), persist the raw MCP result keyed by code-generator `child_session_id`, plan/hypothesis ID, invocation nonce, tool name, endpoint, payload hash, and timestamps.
+  - On code-generator `record_stop()`, require exactly one successful persisted MCP invocation for remote mode; parse its returned `stdout` JSON and require `returncode == "0"` plus required provenance fields: hostname, `PBS_JOBID`, `CUDA_VISIBLE_DEVICES`, campaign ID, runtime/version, exact Fraction values. Missing/malformed/duplicate/mismatched provenance must yield `blocked` / non-crediting completion. Validators/reasoner must not advance on it.
+  - Bind the task’s expected MCP endpoint/function/schema and an execution nonce into canonical child context, not merely a model-visible prose instruction.
+
+- **Existing relevant coverage:**  
+  - `tests/test_hypothesis_orchestration.py`: canonical leaf task rendering, remote-only tool gate, local-mode exception, validator/reasoner lifecycle.  
+  - `tests/test_hypothesis_tournament.py`: profile parsing and payload propagation.  
+  - `tests/test_subagent_ledger.py`: lifecycle persistence.  
+  Add tests for no `execution`/local rejection in remote campaigns; wrong tool and malformed payload rejection; one-call-only invariant; missing/invalid/failed/non-JSON MCP results; missing provenance fields; returned provenance persisted and bound to the code-generator/validator record; duplicate result rejection.
+
+- **Remote server contract found:** `skills/hpc-deployment/scripts/mcp_server.py:67-83` exposes `run_code(payload, workdir=None, timeout=300)` and returns `{stdout, stderr, returncode}`. `hpc_agent.py:67-125` performs the subprocess. `EXECUTION.md` specifies the intended minimum provenance fields and notes that a complete Fraction-plus-PBS result was not yet captured in the previously documented run.
+
+- **Verification / changes:** no repository files modified; no campaign run. Focused source tests passed:  
+  `python3 -m unittest tests.test_hypothesis_orchestration tests.test_hypothesis_tournament tests.test_subagent_ledger` → **34 tests, OK**.  
+  Repository `.loam` and `tests` paths had no diff/status changes from this inspection.

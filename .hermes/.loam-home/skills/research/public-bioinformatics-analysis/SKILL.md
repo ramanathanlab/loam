@@ -56,7 +56,7 @@ Use the tournament as an **advisory hypothesis-discovery and prioritization laye
 7. The composite pre-LLM hook recalls steering before it runs the current tournament. Regenerate the read-only steering projection after each completed tournament if the next turn must see its Elo update; otherwise that steering snapshot is intentionally one iteration behind.
 8. A later ranking turn with at least two persistent Jnana hypotheses must not require `user_message`; a current generation goal is necessary only for an underpopulated state. Verify later reports record `generation.status == "not_needed"`.
 
-For the implementation boundary and live verification recipe, see `references/loam-jnana-hypothesis-tournament.md`, `references/loam-jnana-multiturn-steering-probe.md`, and `references/loam-jnana-multiturn-campaign.md`.
+For the implementation boundary and live verification recipe, see `references/loam-jnana-hypothesis-tournament.md`, `references/loam-jnana-multiturn-steering-probe.md`, and `references/loam-jnana-multiturn-campaign.md`. For a real local Hermes nested-delegation campaign, run the one-round gate in `references/loam-hermes-local-campaign-preflight.md` before attempting all rounds.
 
 ### Multi-turn exploration campaign contract
 

@@ -1,1 +1,42 @@
-[]
+[
+  {
+    "session_id": "proc_0aeb73ee2aea",
+    "command": "set -euo pipefail\nexport HPC_GLOBUS_ENDPOINT_ID=d4750971-32a7-4fe8-8c76-65f9687829fe\nexport HPC_POOL_SIZE=1\nexport HPC_ENDPOINT_CONFIG_JSON='{\"queue\":\"debug\",\"nodes_per_block\":1,\"max_workers_per_node\":4,\"available_accelerators\":4,\"depth\":16,\"omp_num_threads\":16,\"init_blocks\":1,\"min_blocks\":1,\"max_blocks\":1,\"walltime\":\"00:30:00\",\"display_name\":\"loam-hpc-academy-debug-v4\",\"base_dir\":\"/grand/FRAME-IDP/msinclair/loam-hpc-campaigns/loam-hpc-arithmetic-d38fc287-3f45-4f97-a408-bd4d5ec86ab4\"}'\nexport HPC_BASE_DIR=/grand/FRAME-IDP/msinclair/loam-hpc-campaigns/loam-hpc-arithmetic-d38fc287-3f45-4f97-a408-bd4d5ec86ab4\nexport HPC_CAMPAIGN_ID=loam-hpc-academy-debug-v4\nexport ACADEMY_EXCHANGE_URL=https://exchange.academy-agents.org/v1\nexport HPC_AGENT_START_TIMEOUT=1200\nexport HPC_AGENT_DISCOVERY_TIMEOUT=15\nexport HPC_MCP_TRANSPORT=streamable-http\n/tmp/loam-hpc-mcp/venv/bin/python /tmp/loam-hpc-mcp/server/mcp_server.py --host 127.0.0.1 --port 8000",
+    "pid": 20364,
+    "pid_scope": "host",
+    "host_start_time": 179156903599,
+    "cwd": "/tmp/loam-hpc-mcp/server",
+    "started_at": 1791569035.990607,
+    "task_id": "default",
+    "session_key": "20261009_125346_4e5e6d",
+    "watcher_platform": "",
+    "watcher_chat_id": "",
+    "watcher_user_id": "",
+    "watcher_user_name": "",
+    "watcher_thread_id": "",
+    "watcher_message_id": "",
+    "watcher_interval": 0,
+    "notify_on_complete": false,
+    "watch_patterns": []
+  },
+  {
+    "session_id": "proc_49fc09d30049",
+    "command": "set -euo pipefail\nROOT=/tmp/loam-polaris-campaign-retry.4eKGWN\nTRANSCRIPT=\"$ROOT/coordinator.transcript\"\n: > \"$TRANSCRIPT\"\nexport HERMES_HOME=\"$ROOT/hermes-home\"\nexport LOAM_CONFIG_PATH=\"$ROOT/loam.yaml\"\nexport LOAM_STATE_DIR=\"$ROOT/state\"\nexport LOAM_RUN_ID=polaris-mcp-campaign-retry-20261009\nexport LOAM_ENABLED=1\nexport LOAM_PRE_LLM_EVERY=1\nexport HERMES_ENABLE_PROJECT_PLUGINS=1\nexec /usr/bin/script -q \"$TRANSCRIPT\" hermes chat --cli --pass-session-id --max-turns 90",
+    "pid": 32095,
+    "pid_scope": "host",
+    "host_start_time": 179157043482,
+    "cwd": "/Users/msinclair/github/loam",
+    "started_at": 1791570434.816113,
+    "task_id": "default",
+    "session_key": "20261009_125346_4e5e6d",
+    "watcher_platform": "",
+    "watcher_chat_id": "",
+    "watcher_user_id": "",
+    "watcher_user_name": "",
+    "watcher_thread_id": "",
+    "watcher_message_id": "",
+    "watcher_interval": 0,
+    "notify_on_complete": false,
+    "watch_patterns": []
+  }
+]

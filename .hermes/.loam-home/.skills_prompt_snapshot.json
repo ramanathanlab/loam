@@ -34,8 +34,8 @@
       2985
     ],
     "research/public-bioinformatics-analysis/SKILL.md": [
-      1790877252357855625,
-      9808
+      1790975959802212628,
+      9969
     ],
     "research/llm-wiki/SKILL.md": [
       1783604587756728112,
@@ -46,8 +46,8 @@
       10085
     ],
     "research/delegated-research/SKILL.md": [
-      1789037656778093035,
-      2133
+      1790975878998493289,
+      3492
     ],
     "research/research-paper-writing/SKILL.md": [
       1783604587757388572,
@@ -73,6 +73,10 @@
       1783604587740057413,
       5285
     ],
+    "software-development/distributed-agent-triage/SKILL.md": [
+      1791485810802967683,
+      5250
+    ],
     "software-development/test-driven-development/SKILL.md": [
       1783604587764990170,
       10306
@@ -85,9 +89,25 @@
       1783604587764236877,
       8974
     ],
+    "software-development/hpc-remote-execution/SKILL.md": [
+      1791569530585471522,
+      5737
+    ],
+    "software-development/distributed-python-integration-debugging/SKILL.md": [
+      1791485731463347913,
+      6377
+    ],
+    "software-development/agent-campaign-testing/SKILL.md": [
+      1791475904863499660,
+      8924
+    ],
     "software-development/hermes-agent-skill-authoring/SKILL.md": [
       1783604587763990877,
       10651
+    ],
+    "software-development/multi-agent-campaigns/SKILL.md": [
+      1791570168099826156,
+      5488
     ],
     "software-development/python-debugpy/SKILL.md": [
       1783604587764369752,
@@ -97,9 +117,17 @@
       1783604587764731586,
       8730
     ],
+    "software-development/campaign-execution/SKILL.md": [
+      1791478328016689498,
+      4402
+    ],
     "software-development/requesting-code-review/SKILL.md": [
       1783604587764488378,
       8465
+    ],
+    "software-development/remote-hpc-execution/SKILL.md": [
+      1791568613557140169,
+      6026
     ],
     "software-development/simplify-code/SKILL.md": [
       1783604587764610711,
@@ -1436,6 +1464,62 @@
       }
     },
     {
+      "skill_name": "agent-campaign-testing",
+      "category": "software-development",
+      "frontmatter_name": "agent-campaign-testing",
+      "description": "Run and debug isolated multi-round Hermes/Loam agent camp...",
+      "platforms": [],
+      "conditions": {
+        "fallback_for_toolsets": [],
+        "requires_toolsets": [],
+        "fallback_for_tools": [],
+        "requires_tools": []
+      }
+    },
+    {
+      "skill_name": "campaign-execution",
+      "category": "software-development",
+      "frontmatter_name": "campaign-execution",
+      "description": "Run strict multi-round agent campaigns end-to-end with is...",
+      "platforms": [],
+      "conditions": {
+        "fallback_for_toolsets": [],
+        "requires_toolsets": [],
+        "fallback_for_tools": [],
+        "requires_tools": []
+      }
+    },
+    {
+      "skill_name": "distributed-agent-triage",
+      "category": "software-development",
+      "frontmatter_name": "distributed-agent-triage",
+      "description": "Use when a scheduler-backed remote executor can run ordin...",
+      "platforms": [],
+      "conditions": {
+        "fallback_for_toolsets": [],
+        "requires_toolsets": [],
+        "fallback_for_tools": [],
+        "requires_tools": []
+      }
+    },
+    {
+      "skill_name": "distributed-python-integration-debugging",
+      "category": "software-development",
+      "frontmatter_name": "distributed-python-integration-debugging",
+      "description": "Investigate Python distributed-execution integration fail...",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "conditions": {
+        "fallback_for_toolsets": [],
+        "requires_toolsets": [],
+        "fallback_for_tools": [],
+        "requires_tools": []
+      }
+    },
+    {
       "skill_name": "hermes-agent-skill-authoring",
       "category": "software-development",
       "frontmatter_name": "hermes-agent-skill-authoring",
@@ -1445,6 +1529,32 @@
         "macos",
         "windows"
       ],
+      "conditions": {
+        "fallback_for_toolsets": [],
+        "requires_toolsets": [],
+        "fallback_for_tools": [],
+        "requires_tools": []
+      }
+    },
+    {
+      "skill_name": "hpc-remote-execution",
+      "category": "software-development",
+      "frontmatter_name": "hpc-remote-execution",
+      "description": "Deploy, debug, and verify remote code execution through a...",
+      "platforms": [],
+      "conditions": {
+        "fallback_for_toolsets": [],
+        "requires_toolsets": [],
+        "fallback_for_tools": [],
+        "requires_tools": []
+      }
+    },
+    {
+      "skill_name": "multi-agent-campaigns",
+      "category": "software-development",
+      "frontmatter_name": "multi-agent-campaigns",
+      "description": "Run and debug isolated multi-round agent campaigns that r...",
+      "platforms": [],
       "conditions": {
         "fallback_for_toolsets": [],
         "requires_toolsets": [],
@@ -1495,6 +1605,19 @@
         "linux",
         "macos"
       ],
+      "conditions": {
+        "fallback_for_toolsets": [],
+        "requires_toolsets": [],
+        "fallback_for_tools": [],
+        "requires_tools": []
+      }
+    },
+    {
+      "skill_name": "remote-hpc-execution",
+      "category": "software-development",
+      "frontmatter_name": "remote-hpc-execution",
+      "description": "Debug and verify stateful remote code-execution paths spa...",
+      "platforms": [],
       "conditions": {
         "fallback_for_toolsets": [],
         "requires_toolsets": [],
