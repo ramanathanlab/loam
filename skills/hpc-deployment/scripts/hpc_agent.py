@@ -12,9 +12,26 @@ from __future__ import annotations
 
 import asyncio
 import os
+import uuid
 from pathlib import Path
+from typing import Literal
 
 from academy.agent import Agent, action
+
+try:
+    from ensemble_launcher import EnsembleLauncher
+    from ensemble_launcher.config import (
+        LauncherConfig,
+        PolicyConfig,
+        SystemConfig,
+        aurora_config,
+        polaris_config,
+    )
+    from ensemble_launcher.ensemble import Task
+    from ensemble_launcher.orchestrator import ClusterClient
+    EL_AVAILABLE=True
+except ModuleNotFoundError:
+    EL_AVAILABLE=False
 
 _MAX_ENTRIES = 200
 _MAX_LINES = 200
@@ -56,6 +73,94 @@ class HpcAgent(Agent):
         return await asyncio.get_running_loop().run_in_executor(
             None, _inspect, operation, path, offset, limit, self.base_dir, self.inspect_roots
         )
+
+
+
+class HpcClusterAgent(Agent):
+    """
+    Agent to manage the lifecyle of EL cluster
+    """
+    def __init__(self, 
+                 base_dir: str, 
+                 ckpt_dir: str,
+                 nnodes: int,
+                 system: Literal["aurora", "polaris"],
+                 task_executor_name : list[str] = ["async_processpool"]
+                  
+                 ):
+        super().__init__()
+        self.ckpt_dir = str(Path(base_dir, ckpt_dir))
+        if system == "aurora":
+            self.system_config = aurora_config
+            gpu_selector = "ZE_AFFINITY_MASK"
+        elif system == "polaris":
+            self.system_config = polaris_config
+            gpu_selector = "CUDA_VISIBLE_DEVICES"
+        else:
+            self.system_config = SystemConfig(name="cluster")
+
+        self.launcher_config = LauncherConfig(
+            child_executor_name="async_mpi",
+            task_executor_name=task_executor_name,
+            cluster=True,
+            checkpoint_dir=self.ckpt_dir,
+            task_flush_interval=0.5,
+            result_flush_interval=0.5,
+            gpu_selector=gpu_selector,
+            master_logs=True,
+            children_scheduler_policy="fixed_leafs_children_policy",
+            policy_config=PolicyConfig(nlevels=2, leaf_nodes=nnodes),
+        )
+        self._el = None
+
+    async def agent_on_startup(self):
+        self._el = EnsembleLauncher(ensemble_file={},
+                                    system_config=self.system_config, 
+                                    launcher_config=self.launcher_config)
+        self._el.start()
+
+    @action
+    async def probe(self) -> dict[str, str]:
+        """Health check"""
+        return {
+            "pid": str(os.getpid()),
+            "campaign_id": self.campaign_id,
+            "device_pin": os.environ.get("ZE_AFFINITY_MASK", os.environ.get("CUDA_VISIBLE_DEVICES", "")),
+        }
+        
+    async def agent_on_shutdown(self):
+        self._el.stop()
+
+class HpcClientAgent(HpcAgent):
+    def __init__(self, campaign_id: str, base_dir: str, ckpt_dir: str, inspect_roots: list[str] | None = None) -> None:
+        super().__init__(campaign_id, base_dir, inspect_roots)
+        self.ckpt_dir = str(Path(self.base_dir, ckpt_dir))
+        self._client = None
+
+    async def agent_on_startup(self):
+        assert EL_AVAILABLE, "EL is not available"
+        self._client = ClusterClient(checkpoint_dir=self.ckpt_dir,checkpoint_timeout=300)
+        self._client.start()
+
+
+    def _create_task(self, payload: str, workdir: str, timeout: float):
+        return Task(
+            task_id=uuid.uuid4().hex,
+            nnodes=1,
+            ppn=1,
+            ngpus_per_process=1,
+            executable=_run_subprocess,
+            args=(payload, workdir or self.base_dir, timeout)
+        )   
+        
+    @action
+    async def run_code(self, payload: str, workdir: str | None = None,
+                       timeout: float = 300.0) -> dict[str, str]:
+        self._inflight += 1
+        try:
+            return await asyncio.wrap_future(self._client.submit(self._create_task(payload, workdir, timeout)))
+        finally:
+            self._inflight -= 1
 
 
 def _roots(base_dir: str, inspect_roots: list[str]) -> list[Path]:

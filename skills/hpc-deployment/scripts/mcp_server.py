@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 import sys
+import uuid
 from contextlib import asynccontextmanager
 
 from academy.exchange import HttpExchangeFactory
@@ -22,8 +23,7 @@ from academy.manager import Manager
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from globus_compute_sdk import Executor
-
-from hpc_agent import HpcAgent
+from hpc_agent import HpcAgent, HpcClientAgent, HpcClusterAgent
 from pool_manager import CampaignPool
 
 
@@ -53,7 +53,12 @@ def make_executor() -> Executor:
     return Executor(endpoint_id=ENDPOINT_ID, user_endpoint_config=ENDPOINT_CONFIG)
 
 
-def create_server() -> FastMCP:
+def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) -> FastMCP:
+    if cluster and ckpt_dir is None:
+        ckpt_dir = f"ckpt_{uuid.uuid4().hex}"
+    if cluster:
+        assert nnodes is not None, "create server needs nnodes when using a EL cluster"
+
     @asynccontextmanager
     async def lifespan(server: FastMCP):
         # Values are serialized into every agent constructor; worker-side setup
@@ -67,11 +72,23 @@ def create_server() -> FastMCP:
             async def launch_one() -> Handle:
                 # The agent process is submitted through GCExecutor. This is
                 # deliberately not a local executor and has no PBS commands.
-                handle = await manager.launch(
-                    HpcAgent(CAMPAIGN_ID, BASE_DIR, INSPECT_ROOTS),
-                    executor="globus", name=f"{CAMPAIGN_ID}-agent"
-                )
+                if cluster:
+                    handle = await manager.launch(
+                                            HpcClientAgent(CAMPAIGN_ID, BASE_DIR, ckpt_dir, INSPECT_ROOTS),
+                                            executor="globus", name=f"{CAMPAIGN_ID}-agent"
+                                        )
+                else:
+                    handle = await manager.launch(
+                        HpcAgent(CAMPAIGN_ID, BASE_DIR, INSPECT_ROOTS),
+                        executor="globus", name=f"{CAMPAIGN_ID}-agent"
+                    )
                 return Handle(handle.agent_id, exchange=manager.exchange_client)
+
+            async def launch_cluster() -> Handle:
+                handle = await manager.launch(HpcClusterAgent(
+                    BASE_DIR, ckpt_dir, nnodes, "polaris",
+                ))
+                return handle
 
             async def run_code(payload: str, workdir: str | None = None, timeout: float = 300.0) -> dict[str, str]:
                 """Run Python on one campaign-owned, GPU/tile-pinned Academy agent."""
@@ -89,6 +106,9 @@ def create_server() -> FastMCP:
                 except Exception as exc:
                     raise ToolError(f"inspect_filesystem failed: {type(exc).__name__}: {exc}") from exc
 
+            cluster_handle = await launch_cluster()
+            asyncio.wait_for(cluster_handle.action("probe"), timeout=300)
+            
             server.add_tool(run_code)
             server.add_tool(inspect_filesystem)
             yield
