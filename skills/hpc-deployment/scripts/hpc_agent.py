@@ -57,11 +57,11 @@ class HpcAgent(Agent):
 
     @action
     async def run_code(self, payload: str, workdir: str | None = None,
-                       timeout: float = 300.0) -> dict[str, str]:
+                       timeout: float = 300.0, venv_path: str | None = None) -> dict[str, str]:
         self._inflight += 1
         try:
             return await asyncio.get_running_loop().run_in_executor(
-                None, _run_subprocess, payload, workdir or self.base_dir, timeout
+                None, _run_subprocess, payload, workdir or self.base_dir, timeout, venv_path
             )
         finally:
             self._inflight -= 1
@@ -232,7 +232,7 @@ def _inspect(operation: str, raw_path: str, offset: int, limit: int,
             "lines": [{"number": first + i, "text": text} for i, text in enumerate(selected)]}
 
 
-def _run_subprocess(payload: str, workdir: str | None, timeout: float) -> dict[str, str]:
+def _run_subprocess(payload: str, workdir: str | None, timeout: float, venv_path: str | None = None) -> dict[str, str]:
     import subprocess
     import sys
     import tempfile
@@ -242,8 +242,13 @@ def _run_subprocess(payload: str, workdir: str | None, timeout: float) -> dict[s
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, dir=cwd) as handle:
         handle.write(payload)
         script = Path(handle.name)
+    if venv_path is not None:
+        exec = str(Path(venv_path, "bin/python"))
+    else:
+        exec = sys.executable
+
     try:
-        proc = subprocess.run([sys.executable, str(script)], cwd=cwd, env=os.environ.copy(),
+        proc = subprocess.run([exec, str(script)], cwd=cwd, env=os.environ.copy(),
                               capture_output=True, timeout=timeout)
         return {"stdout": proc.stdout.decode(errors="replace"),
                 "stderr": proc.stderr.decode(errors="replace"),

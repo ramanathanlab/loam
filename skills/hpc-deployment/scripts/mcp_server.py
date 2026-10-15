@@ -90,11 +90,11 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
                 ))
                 return handle
 
-            async def run_code(payload: str, workdir: str | None = None, timeout: float = 300.0) -> dict[str, str]:
+            async def run_code(payload: str, workdir: str | None = None, timeout: float = 300.0, venv_path: str | None = None) -> dict[str, str]:
                 """Run Python on one campaign-owned, GPU/tile-pinned Academy agent."""
                 try:
                     agent = await pool.next_agent(launch_one)
-                    return await agent.handle.action("run_code", payload, workdir=workdir or BASE_DIR, timeout=timeout)
+                    return await agent.handle.action("run_code", payload, workdir=workdir or BASE_DIR, timeout=timeout, venv_path = venv_path)
                 except Exception as exc:
                     raise ToolError(f"run_code failed: {type(exc).__name__}: {exc}") from exc
 
