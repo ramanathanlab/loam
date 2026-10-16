@@ -143,22 +143,24 @@ class HpcClientAgent(HpcAgent):
         self._client.start()
 
 
-    def _create_task(self, payload: str, workdir: str, timeout: float):
+    def _create_task(self, payload: str, workdir: str, timeout: float, venv_path: str | None = None):
         return Task(
             task_id=uuid.uuid4().hex,
             nnodes=1,
             ppn=1,
             ngpus_per_process=1,
             executable=_run_subprocess,
-            args=(payload, workdir or self.base_dir, timeout)
-        )   
-        
+            args=(payload, workdir or self.base_dir, timeout, venv_path)
+        )
+
     @action
     async def run_code(self, payload: str, workdir: str | None = None,
-                       timeout: float = 300.0) -> dict[str, str]:
+                       timeout: float = 300.0, venv_path: str | None = None) -> dict[str, str]:
         self._inflight += 1
         try:
-            return await asyncio.wrap_future(self._client.submit(self._create_task(payload, workdir, timeout)))
+            return await asyncio.wrap_future(
+                self._client.submit(self._create_task(payload, workdir, timeout, venv_path))
+            )
         finally:
             self._inflight -= 1
 
