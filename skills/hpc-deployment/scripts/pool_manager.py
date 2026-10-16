@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from dataclasses import dataclass
 
 from academy.handle import Handle
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -17,23 +20,33 @@ class AgentInfo:
 class CampaignPool:
     """Discover/adopt only this campaign's agents; then launch a shortfall."""
 
-    def __init__(self, manager, agent_class, campaign_id: str, want: int, timeout_s: float = 60.0):
+    def __init__(self, manager, agent_class, campaign_id: str, want: int, timeout_s: float = 60.0,
+                 startup_timeout_s: float | None = None):
         self.manager = manager
         self.agent_class = agent_class
         self.campaign_id = campaign_id
         self.want = want
+        # Liveness probes of pool members must fail fast. A freshly launched
+        # agent instead has to clear scheduler wait and agent_on_startup (the
+        # EL ClusterClient checkpoint handshake), so it gets a longer deadline.
         self.timeout_s = timeout_s
+        self.startup_timeout_s = startup_timeout_s if startup_timeout_s is not None else float(
+            os.environ.get("HPC_AGENT_STARTUP_TIMEOUT", "600")
+        )
         self._agents: list[AgentInfo] = []
         self._lock = asyncio.Lock()
         self._cursor = 0
 
-    async def _probe(self, handle: Handle) -> AgentInfo | None:
+    async def _probe(self, handle: Handle, timeout_s: float | None = None) -> AgentInfo | None:
         try:
-            result = await asyncio.wait_for(handle.action("probe"), timeout=self.timeout_s)
+            result = await asyncio.wait_for(handle.action("probe"), timeout=timeout_s or self.timeout_s)
             if result.get("campaign_id") != self.campaign_id or not result.get("device_pin"):
+                logger.warning("agent %s rejected: campaign_id=%r device_pin=%r",
+                               handle.agent_id, result.get("campaign_id"), result.get("device_pin"))
                 return None
             return AgentInfo(handle, result["device_pin"])
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - an unhealthy agent must never propagate
+            logger.warning("probe of agent %s failed: %s: %s", handle.agent_id, type(exc).__name__, exc)
             return None
 
     async def _discover(self) -> list[AgentInfo]:
@@ -53,9 +66,12 @@ class CampaignPool:
                     break
             while len(survivors) < self.want:
                 handle = await launch_one()
-                checked = await self._probe(handle)
+                checked = await self._probe(handle, timeout_s=self.startup_timeout_s)
                 if checked is None:
-                    raise RuntimeError("new Academy agent did not become healthy")
+                    raise RuntimeError(
+                        "new Academy agent did not become healthy within "
+                        f"{self.startup_timeout_s}s (see probe warnings above)"
+                    )
                 survivors.append(checked)
             pins = [agent.pin for agent in survivors]
             if len(set(pins)) != len(pins):
