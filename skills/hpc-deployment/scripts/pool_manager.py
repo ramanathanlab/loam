@@ -21,11 +21,16 @@ class CampaignPool:
     """Discover/adopt only this campaign's agents; then launch a shortfall."""
 
     def __init__(self, manager, agent_class, campaign_id: str, want: int, timeout_s: float = 60.0,
-                 startup_timeout_s: float | None = None):
+                 startup_timeout_s: float | None = None, require_pin: bool = True):
         self.manager = manager
         self.agent_class = agent_class
         self.campaign_id = campaign_id
         self.want = want
+        # Direct mode: Parsl pins one accelerator per worker and the agent runs
+        # the payload itself, so a unique non-empty pin is required. Cluster
+        # mode: EL owns placement (gpu_selector/ngpus_per_process) and the
+        # client agent only submits tasks, so it holds no accelerator at all.
+        self.require_pin = require_pin
         # Liveness probes of pool members must fail fast. A freshly launched
         # agent instead has to clear scheduler wait and agent_on_startup (the
         # EL ClusterClient checkpoint handshake), so it gets a longer deadline.
@@ -40,11 +45,15 @@ class CampaignPool:
     async def _probe(self, handle: Handle, timeout_s: float | None = None) -> AgentInfo | None:
         try:
             result = await asyncio.wait_for(handle.action("probe"), timeout=timeout_s or self.timeout_s)
-            if result.get("campaign_id") != self.campaign_id or not result.get("device_pin"):
-                logger.warning("agent %s rejected: campaign_id=%r device_pin=%r",
-                               handle.agent_id, result.get("campaign_id"), result.get("device_pin"))
+            if result.get("campaign_id") != self.campaign_id:
+                logger.warning("agent %s rejected: campaign_id=%r (want %r)",
+                               handle.agent_id, result.get("campaign_id"), self.campaign_id)
                 return None
-            return AgentInfo(handle, result["device_pin"])
+            if self.require_pin and not result.get("device_pin"):
+                logger.warning("agent %s rejected: empty device_pin; endpoint config must set "
+                               "available_accelerators", handle.agent_id)
+                return None
+            return AgentInfo(handle, result.get("device_pin", ""))
         except Exception as exc:  # noqa: BLE001 - an unhealthy agent must never propagate
             logger.warning("probe of agent %s failed: %s: %s", handle.agent_id, type(exc).__name__, exc)
             return None
@@ -74,7 +83,7 @@ class CampaignPool:
                     )
                 survivors.append(checked)
             pins = [agent.pin for agent in survivors]
-            if len(set(pins)) != len(pins):
+            if self.require_pin and len(set(pins)) != len(pins):
                 raise RuntimeError(f"agent device pins are not unique: {pins}")
             self._agents = survivors
             return survivors

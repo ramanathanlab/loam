@@ -67,7 +67,9 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
         factory = HttpExchangeFactory(EXCHANGE_URL, auth_method="globus")
         gc_executor = make_executor()
         async with await Manager.from_exchange_factory(factory=factory, executors={"globus": gc_executor}, default_executor="globus") as manager:
-            pool = CampaignPool(manager, HpcAgent, CAMPAIGN_ID, POOL_SIZE)
+            # In cluster mode EL assigns GPUs to tasks, so the client agent
+            # itself is unpinned and must not be rejected for an empty pin.
+            pool = CampaignPool(manager, HpcAgent, CAMPAIGN_ID, POOL_SIZE, require_pin=not cluster)
 
             async def launch_one() -> Handle:
                 # The agent process is submitted through GCExecutor. This is
