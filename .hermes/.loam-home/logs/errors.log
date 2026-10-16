@@ -3984,3 +3984,88 @@
 2026-10-09 13:34:27,337 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
 2026-10-09 13:34:28,406 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
 2026-10-09 13:34:28,409 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:31,981 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:31,983 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:33,039 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:33,188 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:34,261 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:34,263 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:38,194 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:38,196 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:39,263 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:39,411 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:40,477 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:40,479 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:47,270 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:47,272 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:48,320 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:48,464 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:49,513 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:49,515 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:53,375 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:53,377 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:54,458 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:54,643 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:55,724 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:55,726 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:35:01,679 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:35:01,682 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:35:02,744 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:35:02,747 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:35:03,831 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:35:05,622 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:35:25,044 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:35:25,053 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:37:23,487 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:37:23,691 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-16 14:05:40,630 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:40,633 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,221 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,223 WARNING tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,233 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,234 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,234 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,333 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,471 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,471 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,472 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,478 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,478 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,478 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,484 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,484 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,487 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,064 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,066 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,566 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,567 WARNING tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,576 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,577 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,577 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,676 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,680 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,680 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,680 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,686 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,686 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,686 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,691 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,691 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,694 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:42,747 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:42,749 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,261 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,262 WARNING tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,272 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,272 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,272 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,373 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,377 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,377 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,377 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,383 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,383 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,384 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,388 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,389 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,392 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn

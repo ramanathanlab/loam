@@ -12799,3 +12799,234 @@ Verify
 2026-10-09 13:34:28,406 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
 2026-10-09 13:34:28,409 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
 2026-10-09 13:34:28,409 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool process completed (0.00s, 2172 chars)
+2026-10-09 13:34:28,446 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-5809 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:34:31,926 INFO run_agent: OpenAI client closed (stream_request_complete, shared=False, tcp_force_closed=0) thread=Thread-5809 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:34:31,927 INFO [20261009_125346_4e5e6d] agent.conversation_loop: API call #115: model=argo:gpt-5.6-terra provider=custom in=123223 out=139 total=123362 latency=3.5s
+2026-10-09 13:34:31,981 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:31,983 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:31,983 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool process completed (0.00s, 788 chars)
+2026-10-09 13:34:33,039 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:33,188 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:33,188 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool read_file completed (0.15s, 6383 chars)
+2026-10-09 13:34:34,261 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:34,263 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:34,264 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool process completed (0.00s, 2172 chars)
+2026-10-09 13:34:34,301 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-5814 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:34:38,136 INFO run_agent: OpenAI client closed (stream_request_complete, shared=False, tcp_force_closed=0) thread=Thread-5814 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:34:38,136 INFO [20261009_125346_4e5e6d] agent.conversation_loop: API call #116: model=argo:gpt-5.6-terra provider=custom in=126658 out=159 total=126817 latency=3.9s cache=12783/126658 (10%)
+2026-10-09 13:34:38,194 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:38,196 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:38,196 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool process completed (0.00s, 1035 chars)
+2026-10-09 13:34:39,263 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:39,411 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:39,411 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool read_file completed (0.15s, 6383 chars)
+2026-10-09 13:34:40,477 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:40,479 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:40,479 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool process completed (0.00s, 2172 chars)
+2026-10-09 13:34:40,517 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-5819 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:34:47,219 INFO run_agent: OpenAI client closed (stream_request_complete, shared=False, tcp_force_closed=0) thread=Thread-5819 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:34:47,219 INFO [20261009_125346_4e5e6d] agent.conversation_loop: API call #117: model=argo:gpt-5.6-terra provider=custom in=130170 out=165 total=130335 latency=6.7s cache=12783/130170 (10%)
+2026-10-09 13:34:47,270 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:47,272 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:47,272 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool process completed (0.00s, 1187 chars)
+2026-10-09 13:34:48,320 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:48,464 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:48,464 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool read_file completed (0.14s, 6415 chars)
+2026-10-09 13:34:49,513 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:49,515 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:49,515 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool process completed (0.00s, 2172 chars)
+2026-10-09 13:34:49,549 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-5824 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:34:53,297 INFO run_agent: OpenAI client closed (stream_request_complete, shared=False, tcp_force_closed=0) thread=Thread-5824 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:34:53,297 INFO [20261009_125346_4e5e6d] agent.conversation_loop: API call #118: model=argo:gpt-5.6-terra provider=custom in=133518 out=154 total=133672 latency=3.8s cache=12783/133518 (10%)
+2026-10-09 13:34:53,375 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:53,377 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:53,377 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool process completed (0.00s, 692 chars)
+2026-10-09 13:34:54,458 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:54,643 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:54,643 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool read_file completed (0.18s, 2583 chars)
+2026-10-09 13:34:55,724 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:34:55,726 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:34:55,726 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool process completed (0.00s, 2172 chars)
+2026-10-09 13:34:55,760 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-5829 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:35:01,620 INFO run_agent: OpenAI client closed (stream_request_complete, shared=False, tcp_force_closed=0) thread=Thread-5829 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:35:01,620 INFO [20261009_125346_4e5e6d] agent.conversation_loop: API call #119: model=argo:gpt-5.6-terra provider=custom in=135532 out=398 total=135930 latency=5.9s cache=12783/135532 (9%)
+2026-10-09 13:35:01,679 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:35:01,682 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:35:01,682 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool process completed (0.00s, 1263 chars)
+2026-10-09 13:35:02,744 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:35:02,747 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:35:02,747 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool process completed (0.00s, 2172 chars)
+2026-10-09 13:35:03,831 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:35:05,622 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:35:05,623 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool terminal completed (1.79s, 869 chars)
+2026-10-09 13:35:13,468 INFO [20261009_125346_4e5e6d] agent.conversation_loop: Turn ended: reason=max_iterations_reached(90/90) model=argo:gpt-5.6-terra api_calls=90/90 budget=90/90 tool_turns=92 last_msg_role=assistant response_len=2488 session=20261009_125346_4e5e6d
+2026-10-09 13:35:13,535 INFO run_agent: OpenAI client created (agent_init, shared=True) thread=bg-review:6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:35:13,688 INFO [20261009_125346_4e5e6d] agent.turn_context: conversation turn: session=20261009_125346_4e5e6d model=argo:gpt-5.6-terra provider=custom platform=cli history=370 msg='[ASYNC DELEGATION BATCH COMPLETE — deleg_809b4798] A background fan-out of 2 sub...'
+2026-10-09 13:35:13,742 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-5832 (_call):6396112896 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:35:13,835 INFO agent.model_metadata: Could not detect context length for model 'argo:gpt-5.6-terra' at http://localhost:61612/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-10-09 13:35:13,835 INFO agent.model_metadata: Using hardcoded context length 400,000 for model 'argo:gpt-5.6-terra' (custom endpoint, catalog match on 'gpt-5')
+2026-10-09 13:35:13,836 INFO [20261009_125346_4e5e6d] agent.turn_context: conversation turn: session=20261009_125346_4e5e6d model=argo:gpt-5.6-terra provider=custom platform=cli history=370 msg='Review the conversation above and update the skill library. Be ACTIVE — most ses...'
+2026-10-09 13:35:13,872 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-5833 (_call):6412939264 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:35:19,573 INFO run_agent: OpenAI client closed (stream_request_complete, shared=False, tcp_force_closed=0) thread=Thread-5832 (_call):6396112896 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:35:19,574 INFO [20261009_125346_4e5e6d] agent.conversation_loop: API call #120: model=argo:gpt-5.6-terra provider=custom in=139653 out=317 total=139970 latency=5.9s cache=12783/139653 (9%)
+2026-10-09 13:35:19,578 INFO [20261009_125346_4e5e6d] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=argo:gpt-5.6-terra api_calls=1/90 budget=1/90 tool_turns=92 last_msg_role=assistant response_len=1010 session=20261009_125346_4e5e6d
+2026-10-09 13:35:24,980 INFO run_agent: OpenAI client closed (stream_request_complete, shared=False, tcp_force_closed=0) thread=Thread-5833 (_call):6412939264 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:35:24,980 INFO [20261009_125346_4e5e6d] agent.conversation_loop: API call #1: model=argo:gpt-5.6-terra provider=custom in=139461 out=1041 total=140502 latency=11.1s cache=12783/139461 (9%)
+2026-10-09 13:35:25,044 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:35:25,053 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:35:25,053 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool skill_manage completed (0.01s, 253 chars)
+2026-10-09 13:35:25,089 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-5834 (_call):6311981056 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:35:31,042 INFO run_agent: OpenAI client closed (stream_request_complete, shared=False, tcp_force_closed=0) thread=Thread-5834 (_call):6311981056 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:35:31,042 INFO [20261009_125346_4e5e6d] agent.conversation_loop: API call #2: model=argo:gpt-5.6-terra provider=custom in=140246 out=298 total=140544 latency=6.0s cache=12783/140246 (9%)
+2026-10-09 13:35:31,044 INFO [20261009_125346_4e5e6d] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=argo:gpt-5.6-terra api_calls=2/16 budget=2/16 tool_turns=93 last_msg_role=assistant response_len=494 session=20261009_125346_4e5e6d
+2026-10-09 13:35:31,046 INFO [20261009_125346_4e5e6d] run_agent: OpenAI client closed (agent_close, shared=True, tcp_force_closed=0) thread=bg-review:6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:37:18,695 INFO [20261009_125346_4e5e6d] agent.turn_context: conversation turn: session=20261009_125346_4e5e6d model=argo:gpt-5.6-terra provider=custom platform=cli history=372 msg='Where is the location of the hpc-deployment skill you are using'
+2026-10-09 13:37:18,746 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-5836 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:37:23,376 INFO run_agent: OpenAI client closed (stream_request_complete, shared=False, tcp_force_closed=0) thread=Thread-5836 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:37:23,376 INFO [20261009_125346_4e5e6d] agent.conversation_loop: API call #121: model=argo:gpt-5.6-terra provider=custom in=139882 out=154 total=140036 latency=4.7s cache=12783/139882 (9%)
+2026-10-09 13:37:23,487 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
+2026-10-09 13:37:23,691 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-09 13:37:23,691 INFO [20261009_125346_4e5e6d] agent.tool_executor: tool terminal completed (0.20s, 95 chars)
+2026-10-09 13:37:23,728 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-5838 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:37:26,788 INFO run_agent: OpenAI client closed (stream_request_complete, shared=False, tcp_force_closed=0) thread=Thread-5838 (_call):6362460160 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-09 13:37:26,789 INFO [20261009_125346_4e5e6d] agent.conversation_loop: API call #122: model=argo:gpt-5.6-terra provider=custom in=140022 out=21 total=140043 latency=3.1s cache=12783/140022 (9%)
+2026-10-09 13:37:26,812 INFO [20261009_125346_4e5e6d] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=argo:gpt-5.6-terra api_calls=2/90 budget=2/90 tool_turns=93 last_msg_role=assistant response_len=52 session=20261009_125346_4e5e6d
+2026-10-09 13:40:18,931 INFO tools.terminal_tool: Manually cleaned up environment for task: default
+2026-10-09 13:40:18,931 INFO tools.terminal_tool: Cleaned 1 environments
+2026-10-09 13:40:18,933 INFO cli: CLI cleanup calling memory shutdown for session 20261009_125346_4e5e6d with 376 message(s)
+2026-10-16 14:05:40,212 INFO hermes_cli.plugins: Plugin 'browser-browser-use' registered browser provider: browser-use
+2026-10-16 14:05:40,213 INFO hermes_cli.plugins: Plugin 'browser-browserbase' registered browser provider: browserbase
+2026-10-16 14:05:40,213 INFO hermes_cli.plugins: Plugin 'browser-firecrawl' registered browser provider: firecrawl
+2026-10-16 14:05:40,253 INFO hermes_cli.plugins: Plugin 'fal' registered image_gen provider: fal
+2026-10-16 14:05:40,254 INFO hermes_cli.plugins: Plugin 'krea' registered image_gen provider: krea
+2026-10-16 14:05:40,254 INFO hermes_cli.plugins: Plugin 'openai' registered image_gen provider: openai
+2026-10-16 14:05:40,254 INFO hermes_cli.plugins: Plugin 'openai-codex' registered image_gen provider: openai-codex
+2026-10-16 14:05:40,254 INFO hermes_cli.plugins: Plugin 'openrouter' registered image_gen provider: openrouter
+2026-10-16 14:05:40,254 INFO hermes_cli.plugins: Plugin 'openrouter' registered image_gen provider: nous
+2026-10-16 14:05:40,255 INFO hermes_cli.plugins: Plugin 'xai' registered image_gen provider: xai
+2026-10-16 14:05:40,257 INFO hermes_cli.plugins: Plugin 'fal' registered video_gen provider: fal
+2026-10-16 14:05:40,257 INFO hermes_cli.plugins: Plugin 'xai' registered video_gen provider: xai
+2026-10-16 14:05:40,258 INFO hermes_cli.plugins: Plugin 'web-brave-free' registered web provider: brave-free
+2026-10-16 14:05:40,258 INFO hermes_cli.plugins: Plugin 'web-ddgs' registered web provider: ddgs
+2026-10-16 14:05:40,258 INFO hermes_cli.plugins: Plugin 'web-exa' registered web provider: exa
+2026-10-16 14:05:40,259 INFO hermes_cli.plugins: Plugin 'web-firecrawl' registered web provider: firecrawl
+2026-10-16 14:05:40,259 INFO hermes_cli.plugins: Plugin 'web-parallel' registered web provider: parallel
+2026-10-16 14:05:40,260 INFO hermes_cli.plugins: Plugin 'web-searxng' registered web provider: searxng
+2026-10-16 14:05:40,260 INFO hermes_cli.plugins: Plugin 'web-tavily' registered web provider: tavily
+2026-10-16 14:05:40,260 INFO hermes_cli.plugins: Plugin 'web-xai' registered web provider: xai
+2026-10-16 14:05:40,264 INFO hermes_cli.plugins: Plugin discovery complete: 51 found, 44 enabled
+2026-10-16 14:05:40,630 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:40,633 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,221 INFO agent.auxiliary_client: Vision auto-detect: using main provider custom (argo:gpt-5.6-terra)
+2026-10-16 14:05:41,221 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,223 WARNING tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,233 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,234 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,234 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,322 INFO agent.auxiliary_client: Vision auto-detect: using main provider custom (argo:gpt-5.6-terra)
+2026-10-16 14:05:41,333 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,471 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,471 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,472 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,478 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,478 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,478 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,484 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,484 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,487 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:05:41,692 INFO run_agent: No .env file found. Using system environment variables.
+2026-10-16 14:05:41,829 INFO agent.curator_backup: Curator snapshot created: 2026-10-16T19-05-41Z (pre-curator-run)
+2026-10-16 14:07:22,667 INFO hermes_cli.plugins: Plugin 'browser-browser-use' registered browser provider: browser-use
+2026-10-16 14:07:22,667 INFO hermes_cli.plugins: Plugin 'browser-browserbase' registered browser provider: browserbase
+2026-10-16 14:07:22,668 INFO hermes_cli.plugins: Plugin 'browser-firecrawl' registered browser provider: firecrawl
+2026-10-16 14:07:22,708 INFO hermes_cli.plugins: Plugin 'fal' registered image_gen provider: fal
+2026-10-16 14:07:22,708 INFO hermes_cli.plugins: Plugin 'krea' registered image_gen provider: krea
+2026-10-16 14:07:22,709 INFO hermes_cli.plugins: Plugin 'openai' registered image_gen provider: openai
+2026-10-16 14:07:22,709 INFO hermes_cli.plugins: Plugin 'openai-codex' registered image_gen provider: openai-codex
+2026-10-16 14:07:22,709 INFO hermes_cli.plugins: Plugin 'openrouter' registered image_gen provider: openrouter
+2026-10-16 14:07:22,709 INFO hermes_cli.plugins: Plugin 'openrouter' registered image_gen provider: nous
+2026-10-16 14:07:22,709 INFO hermes_cli.plugins: Plugin 'xai' registered image_gen provider: xai
+2026-10-16 14:07:22,712 INFO hermes_cli.plugins: Plugin 'fal' registered video_gen provider: fal
+2026-10-16 14:07:22,712 INFO hermes_cli.plugins: Plugin 'xai' registered video_gen provider: xai
+2026-10-16 14:07:22,713 INFO hermes_cli.plugins: Plugin 'web-brave-free' registered web provider: brave-free
+2026-10-16 14:07:22,713 INFO hermes_cli.plugins: Plugin 'web-ddgs' registered web provider: ddgs
+2026-10-16 14:07:22,713 INFO hermes_cli.plugins: Plugin 'web-exa' registered web provider: exa
+2026-10-16 14:07:22,714 INFO hermes_cli.plugins: Plugin 'web-firecrawl' registered web provider: firecrawl
+2026-10-16 14:07:22,714 INFO hermes_cli.plugins: Plugin 'web-parallel' registered web provider: parallel
+2026-10-16 14:07:22,714 INFO hermes_cli.plugins: Plugin 'web-searxng' registered web provider: searxng
+2026-10-16 14:07:22,715 INFO hermes_cli.plugins: Plugin 'web-tavily' registered web provider: tavily
+2026-10-16 14:07:22,715 INFO hermes_cli.plugins: Plugin 'web-xai' registered web provider: xai
+2026-10-16 14:07:22,722 INFO hermes_cli.plugins: Plugin discovery complete: 52 found, 45 enabled
+2026-10-16 14:07:23,064 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,066 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,565 INFO agent.auxiliary_client: Vision auto-detect: using main provider custom (argo:gpt-5.6-terra)
+2026-10-16 14:07:23,566 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,567 WARNING tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,576 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,577 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,577 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,665 INFO agent.auxiliary_client: Vision auto-detect: using main provider custom (argo:gpt-5.6-terra)
+2026-10-16 14:07:23,676 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,680 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,680 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,680 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,686 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,686 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,686 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,691 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,691 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,694 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:23,897 INFO run_agent: No .env file found. Using system environment variables.
+2026-10-16 14:07:42,357 INFO hermes_cli.plugins: Plugin 'browser-browser-use' registered browser provider: browser-use
+2026-10-16 14:07:42,358 INFO hermes_cli.plugins: Plugin 'browser-browserbase' registered browser provider: browserbase
+2026-10-16 14:07:42,358 INFO hermes_cli.plugins: Plugin 'browser-firecrawl' registered browser provider: firecrawl
+2026-10-16 14:07:42,399 INFO hermes_cli.plugins: Plugin 'fal' registered image_gen provider: fal
+2026-10-16 14:07:42,400 INFO hermes_cli.plugins: Plugin 'krea' registered image_gen provider: krea
+2026-10-16 14:07:42,400 INFO hermes_cli.plugins: Plugin 'openai' registered image_gen provider: openai
+2026-10-16 14:07:42,400 INFO hermes_cli.plugins: Plugin 'openai-codex' registered image_gen provider: openai-codex
+2026-10-16 14:07:42,400 INFO hermes_cli.plugins: Plugin 'openrouter' registered image_gen provider: openrouter
+2026-10-16 14:07:42,400 INFO hermes_cli.plugins: Plugin 'openrouter' registered image_gen provider: nous
+2026-10-16 14:07:42,401 INFO hermes_cli.plugins: Plugin 'xai' registered image_gen provider: xai
+2026-10-16 14:07:42,403 INFO hermes_cli.plugins: Plugin 'fal' registered video_gen provider: fal
+2026-10-16 14:07:42,404 INFO hermes_cli.plugins: Plugin 'xai' registered video_gen provider: xai
+2026-10-16 14:07:42,404 INFO hermes_cli.plugins: Plugin 'web-brave-free' registered web provider: brave-free
+2026-10-16 14:07:42,404 INFO hermes_cli.plugins: Plugin 'web-ddgs' registered web provider: ddgs
+2026-10-16 14:07:42,405 INFO hermes_cli.plugins: Plugin 'web-exa' registered web provider: exa
+2026-10-16 14:07:42,405 INFO hermes_cli.plugins: Plugin 'web-firecrawl' registered web provider: firecrawl
+2026-10-16 14:07:42,406 INFO hermes_cli.plugins: Plugin 'web-parallel' registered web provider: parallel
+2026-10-16 14:07:42,406 INFO hermes_cli.plugins: Plugin 'web-searxng' registered web provider: searxng
+2026-10-16 14:07:42,406 INFO hermes_cli.plugins: Plugin 'web-tavily' registered web provider: tavily
+2026-10-16 14:07:42,407 INFO hermes_cli.plugins: Plugin 'web-xai' registered web provider: xai
+2026-10-16 14:07:42,412 INFO hermes_cli.plugins: Plugin discovery complete: 52 found, 45 enabled
+2026-10-16 14:07:42,747 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:42,749 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,260 INFO agent.auxiliary_client: Vision auto-detect: using main provider custom (argo:gpt-5.6-terra)
+2026-10-16 14:07:43,261 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,262 WARNING tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,272 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,272 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,272 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,361 INFO agent.auxiliary_client: Vision auto-detect: using main provider custom (argo:gpt-5.6-terra)
+2026-10-16 14:07:43,373 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,377 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,377 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,377 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,383 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,383 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,384 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,388 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,389 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,392 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn
+2026-10-16 14:07:43,596 INFO run_agent: No .env file found. Using system environment variables.
+2026-10-16 14:07:44,729 INFO run_agent: OpenAI client created (agent_init, shared=True) thread=Thread-5 (process_loop):6234386432 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-16 14:07:44,903 INFO agent.model_metadata: Could not detect context length for model 'argo:gpt-5.6-terra' at http://localhost:61612/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-10-16 14:07:44,903 INFO agent.model_metadata: Using hardcoded context length 400,000 for model 'argo:gpt-5.6-terra' (custom endpoint, catalog match on 'gpt-5')
+2026-10-16 14:07:44,909 INFO [20261016_140742_e2facf] agent.turn_context: conversation turn: session=20261016_140742_e2facf model=argo:gpt-5.6-terra provider=custom platform=cli history=0 msg='Hi'
+2026-10-16 14:07:45,237 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-8 (_call):6301691904 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-16 14:07:47,488 INFO run_agent: OpenAI client closed (stream_request_complete, shared=False, tcp_force_closed=0) thread=Thread-8 (_call):6301691904 provider=custom base_url=http://localhost:61612/v1 model=argo:gpt-5.6-terra
+2026-10-16 14:07:47,488 INFO [20261016_140742_e2facf] agent.conversation_loop: API call #1: model=argo:gpt-5.6-terra provider=custom in=16880 out=13 total=16893 latency=2.3s
+2026-10-16 14:07:47,493 INFO [20261016_140742_e2facf] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=argo:gpt-5.6-terra api_calls=1/90 budget=1/90 tool_turns=0 last_msg_role=assistant response_len=36 session=20261016_140742_e2facf
+2026-10-16 14:07:47,684 INFO agent.auxiliary_client: Auxiliary auto-detect: using main provider custom (argo:gpt-5.6-terra)
+2026-10-16 14:07:47,685 INFO agent.auxiliary_client: Auxiliary title_generation: using auto (argo:gpt-5.6-terra) at http://localhost:61612/v1/
+2026-10-16 14:07:48,498 INFO agent.auxiliary_client: Auxiliary title_generation: provider rejected temperature; retrying once without it
+2026-10-16 14:07:49,915 INFO cli: CLI cleanup calling memory shutdown for session 20261016_140742_e2facf with 2 message(s)

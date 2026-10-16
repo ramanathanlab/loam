@@ -2,20 +2,17 @@
 # Launch Hermes with this repository's Loam project plugin discoverable.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
-
 export HERMES_ENABLE_PROJECT_PLUGINS=1
 # The globally installed Loam plugin is inert unless a Loam activation variable
 # is set. Keep this explicit for project-local launches.
-export LOAM_ENABLED="${LOAM_ENABLED:-1}"
+export LOAM_ENABLED=1
 # Permit an isolated campaign to supply its own Hermes home/configuration.
-export HERMES_HOME="${HERMES_HOME:-$ROOT/.hermes/.loam-home}"
+export HERMES_HOME="${HERMES_HOME:-.hermes/.loam-home}"
 # Invoke `.loam/hooks/pre-llm.py` every N turns of each Hermes session.
 # Override at launch, e.g. `LOAM_PRE_LLM_EVERY=3 .loam/run-hermes`.
-export LOAM_PRE_LLM_EVERY="${LOAM_PRE_LLM_EVERY:-1}"
+export LOAM_PRE_LLM_EVERY=1
 # Route all Loam runtime artifacts for this invocation with, for example,
 # `LOAM_STATE_DIR=/var/tmp/loam-run-42 .loam/run-hermes`.
-export LOAM_STATE_DIR="${LOAM_STATE_DIR:-}"
+export LOAM_STATE_DIR="${LOAM_STATE_DIR:-loam_state/}"
 export LOAM_RUN_ID="${LOAM_RUN_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 exec hermes "$@"
