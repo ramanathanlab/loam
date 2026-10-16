@@ -108,7 +108,9 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
 
             if cluster:
                 cluster_handle = await launch_cluster()
-                await asyncio.wait_for(cluster_handle.action("probe"), timeout=3000)
+                print("launching cluster")
+                result = await asyncio.wait_for(cluster_handle.action("probe"), timeout=3000)
+                print(f"result from probe:{result}")
             
             server.add_tool(run_code)
             server.add_tool(inspect_filesystem)

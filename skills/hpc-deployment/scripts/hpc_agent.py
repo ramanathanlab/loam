@@ -110,6 +110,7 @@ class HpcClusterAgent(Agent):
             master_logs=True,
             children_scheduler_policy="fixed_leafs_children_policy",
             policy_config=PolicyConfig(nlevels=2, leaf_nodes=nnodes),
+            log_dir=str(Path(base_dir,"logs")),
         )
         self._el = None
 
