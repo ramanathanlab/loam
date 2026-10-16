@@ -32,6 +32,39 @@ Never guess, hard-code, or inherit these from an earlier campaign:
 | `HPC_ENDPOINT_CONFIG_JSON` | JSON object accepted by the endpoint user-config schema; defines PBSPro resources. |
 | `HPC_BASE_DIR` | Campaign directory visible to all workers. |
 | `HPC_CAMPAIGN_ID` | Immutable ID used to isolate agent discovery/adoption. |
+| `ACADEMY_EXCHANGE_URL` | Academy exchange the manager and agents rendezvous through. |
+
+Optional: `HPC_INSPECT_ROOTS` (colon-separated extra `inspect_filesystem` roots)
+and `HPC_MCP_TRANSPORT` (`http` or `stdio`, default `stdio`).
+
+### Setting them: `set_env.sh`
+
+Define all of them in `set_env.sh` and `source` it into the shell that runs
+every later step:
+
+```bash
+source skills/hpc-deployment/set_env.sh
+```
+
+`mcp_server.py` reads the process environment and fails fast via `required()` on
+anything missing, so make this file the single definition point rather than
+exporting values by hand. A variable set in one shell and forgotten in the next
+is the usual cause of a campaign that starts against the wrong endpoint or
+adopts another campaign's agents.
+
+`set_env.sh` is campaign-specific — edit it per deployment and keep the endpoint
+UUID, queue, walltime, and `HPC_CAMPAIGN_ID` together in it so the whole
+configuration is reviewable in one place.
+
+Two couplings belong in the file itself, not in the operator's head:
+
+- **Worker count.** The endpoint needs one worker slot per client agent *plus*
+  one for the long-running `HpcClusterAgent`, which holds its slot for the life
+  of the allocation. Derive it rather than typing a literal:
+  `"workers": '"$((HPC_POOL_SIZE + 1))"'`.
+- **Worker environment.** `worker_init` must activate the environment and put
+  `HPC_BASE_DIR` on `PYTHONPATH`, or the agent modules will not import on the
+  worker.
 
 Example only—pass keys only when the supplied endpoint's user-config schema permits them:
 
@@ -83,14 +116,27 @@ See `references/polaris-globus-compute-flex-scaling.md` for the concise Polaris 
 
 1. On the endpoint host, inspect the live endpoint user-config schema/template. Confirm that it accepts the requested allocation keys, activates the intended environment, makes `HPC_BASE_DIR` importable, and sets accelerator pinning.
 2. Create/reuse a local uv environment containing `fastmcp`, `globus-compute-sdk`, and `academy-py`.
-3. Run `scripts/preflight.py`. It validates local dependencies/configuration and emits the exact worker-side import/pinning prerequisites without submitting a job.
-4. Start `scripts/mcp_server.py`. Its Academy launch manager uses the Globus Compute `Executor` created with the supplied UUID and endpoint configuration. A local `ThreadPoolExecutor` is invalid: it launches agents locally.
-5. Launch exactly `HPC_POOL_SIZE` `HpcAgent`s. Each bootstrap reports hostname, `HPC_CAMPAIGN_ID`, and device pin; returned handles are rebound to their exchange client before serving MCP calls.
-6. Run `scripts/smoke_test_client.py` against the server. It requires both `run_code` and `inspect_filesystem`, a normal code result, and bounded worker filesystem output.
-7. Submit `HPC_POOL_SIZE` concurrent cheap calls and verify unique `(hostname, device pin)` pairs. If pins duplicate or an agent is absent, stop and repair placement.
-8. On server restart, discover and adopt only agents returning the exact campaign ID; revalidate, prune, and top up only the missing agents through the same Executor/configuration.
+3. Edit `set_env.sh` for this campaign and `source` it. Run every later step in that same shell — the server inherits its configuration from the process environment and nowhere else.
+4. Run `scripts/preflight.py`. It validates local dependencies/configuration and emits the exact worker-side import/pinning prerequisites without submitting a job.
+5. Start `scripts/mcp_server.py`. Its Academy launch manager uses the Globus Compute `Executor` created with the supplied UUID and endpoint configuration. A local `ThreadPoolExecutor` is invalid: it launches agents locally.
+6. Launch exactly `HPC_POOL_SIZE` `HpcAgent`s. Each bootstrap reports hostname, `HPC_CAMPAIGN_ID`, and device pin; returned handles are rebound to their exchange client before serving MCP calls.
+7. Run `scripts/smoke_test_client.py` against the server. It requires both `run_code` and `inspect_filesystem`, a normal code result, and bounded worker filesystem output.
+8. Submit `HPC_POOL_SIZE` concurrent cheap calls and verify unique `(hostname, device pin)` pairs. If pins duplicate or an agent is absent, stop and repair placement.
+9. On server restart, discover and adopt only agents returning the exact campaign ID; revalidate, prune, and top up only the missing agents through the same Executor/configuration.
 
-The skill supplies `scripts/hpc_agent.py`, `scripts/pool_manager.py`, `scripts/mcp_server.py`, `scripts/preflight.py`, and `scripts/smoke_test_client.py`. A deployment is not considered ready until steps 6–7 succeed against the live endpoint.
+The skill supplies `scripts/hpc_agent.py`, `scripts/pool_manager.py`, `scripts/mcp_server.py`, `scripts/preflight.py`, and `scripts/smoke_test_client.py`, plus the campaign's `set_env.sh`. A deployment is not considered ready until steps 7–8 succeed against the live endpoint.
+
+### Shutting the server down
+
+Stop the server with `SIGINT` (`Ctrl-C`, or `kill -INT`). A clean exit is what
+runs `Manager.close()`, which asks every launched agent to shut down; for
+`HpcClusterAgent` that is what calls `el.stop()` and releases the cluster.
+`mcp_server.py` installs `signal.default_int_handler` for `SIGTERM` so that
+signal unwinds the same way — without it uvicorn re-raises `SIGTERM` after
+`serve()` returns, the default handler kills the process before the FastMCP
+lifespan resumes past its `yield`, and the EL cluster is orphaned until
+walltime. Never stop the server with `kill -9`: no agent is told to shut down
+and the allocation leaks.
 
 ## Timeouts and failures
 

@@ -11,12 +11,18 @@ and accelerator pinning before this process starts.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import time
 import uuid
+from contextlib import aclosing
 from pathlib import Path
 from typing import Literal
 
+import aiohttp
 from academy.agent import Agent, action
+
+logger = logging.getLogger(__name__)
 
 try:
     from ensemble_launcher import EnsembleLauncher
@@ -36,6 +42,71 @@ except ModuleNotFoundError:
 _MAX_ENTRIES = 200
 _MAX_LINES = 200
 _MAX_BYTES = 64 * 1024
+
+# A dropped exchange stream must not read as "the agent is gone".
+_TRANSIENT_LISTEN_ERRORS = (aiohttp.ClientPayloadError, aiohttp.ClientConnectionError)
+_LISTEN_MAX_RETRIES = 10
+# A stream that lasted this long before dropping was genuinely working, so its
+# drop starts a fresh retry budget. Judging health by "did a message arrive"
+# instead would let a stream that delivers one message per drop reset the
+# budget forever and never give up.
+_LISTEN_HEALTHY_S = 30.0
+
+
+def _harden_exchange_listener() -> None:
+    """Reconnect the exchange stream instead of dying on a transient drop.
+
+    HttpExchangeTransport.listen already reconnects after each clean stream
+    expiry (the server closes it every request_timeout_s), but it reads the
+    response body *inside* the request context manager, so a truncated stream
+    raises ClientPayloadError past the reconnect loop. That kills the listener
+    task, which shuts down the agent runtime, which runs agent_on_shutdown.
+    For HpcClusterAgent that calls el.stop(), so a momentary network blip
+    tears down a live EL cluster and its allocation.
+
+    Cluster lifetime is deliberately tied to agent lifetime, so the fix is to
+    make agent death mean something: ride out blips, but still propagate once
+    the exchange is persistently unreachable and the agent really is lost.
+    """
+    from academy.exchange.cloud.client import HttpExchangeTransport
+
+    original = HttpExchangeTransport.listen
+    if getattr(original, '_hpc_hardened', False):
+        return
+
+    async def listen(self, timeout: float | None = None):
+        failures = 0
+        while True:
+            started = time.monotonic()
+            try:
+                # aclosing: the inner generator owns an open HTTP response, so
+                # it must be finalized if our consumer abandons us mid-stream.
+                async with aclosing(original(self, timeout=timeout)) as stream:
+                    async for message in stream:
+                        yield message
+                return
+            except _TRANSIENT_LISTEN_ERRORS as exc:
+                if time.monotonic() - started >= _LISTEN_HEALTHY_S:
+                    failures = 0
+                failures += 1
+                if failures > _LISTEN_MAX_RETRIES:
+                    logger.error(
+                        'exchange stream unrecoverable after %d retries: %s: %s',
+                        _LISTEN_MAX_RETRIES, type(exc).__name__, exc,
+                    )
+                    raise
+                backoff = min(2 ** (failures - 1), 8)
+                logger.warning(
+                    'exchange stream dropped (%s: %s); reconnecting in %ss [%d/%d]',
+                    type(exc).__name__, exc, backoff, failures, _LISTEN_MAX_RETRIES,
+                )
+                await asyncio.sleep(backoff)
+
+    listen._hpc_hardened = True
+    HttpExchangeTransport.listen = listen
+
+
+_harden_exchange_listener()
 
 
 class HpcAgent(Agent):
@@ -139,7 +210,12 @@ class HpcClientAgent(HpcAgent):
 
     async def agent_on_startup(self):
         assert EL_AVAILABLE, "EL is not available"
-        self._client = ClusterClient(checkpoint_dir=self.ckpt_dir,checkpoint_timeout=300)
+        # ClusterClient takes no log_dir; EL resolves one from EL_LOGDIR, else
+        # <cwd>/logs. A Globus Compute worker's cwd is the endpoint's
+        # tasks_working_dir, so without this the client log lands there instead
+        # of beside the master's, which HpcClusterAgent places under base_dir.
+        os.environ.setdefault("EL_LOGDIR", str(Path(self.base_dir, "logs")))
+        self._client = ClusterClient(checkpoint_dir=self.ckpt_dir, checkpoint_timeout=300)
         self._client.start()
 
 

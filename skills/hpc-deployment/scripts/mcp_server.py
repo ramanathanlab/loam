@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import sys
 import uuid
 from contextlib import asynccontextmanager
@@ -125,4 +126,13 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
 
 
 if __name__ == "__main__":
+    # uvicorn's capture_signals restores the original SIGTERM handler and then
+    # re-raises the signal once serve() returns. Python's default SIGTERM
+    # handler kills the process on the spot, so the FastMCP lifespan never
+    # resumes past its yield: Manager.close() is skipped, no agent is asked to
+    # shut down, and HpcClusterAgent.agent_on_shutdown never calls el.stop() --
+    # orphaning a live EL cluster that keeps its allocation until walltime.
+    # Raising KeyboardInterrupt instead lets that re-raise unwind the lifespan
+    # stack, so the cluster still dies with its agent. SIGINT already does this.
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     create_server(cluster=True, nnodes=1).run(transport=os.environ.get("HPC_MCP_TRANSPORT", "stdio"))
