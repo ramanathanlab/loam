@@ -124,7 +124,6 @@ class HpcClusterAgent(Agent):
         """Health check"""
         return {
             "pid": str(os.getpid()),
-            "campaign_id": self.campaign_id,
             "device_pin": os.environ.get("ZE_AFFINITY_MASK", os.environ.get("CUDA_VISIBLE_DEVICES", "")),
         }
         

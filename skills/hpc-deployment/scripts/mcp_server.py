@@ -106,8 +106,9 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
                 except Exception as exc:
                     raise ToolError(f"inspect_filesystem failed: {type(exc).__name__}: {exc}") from exc
 
-            cluster_handle = await launch_cluster()
-            asyncio.wait_for(cluster_handle.action("probe"), timeout=300)
+            if cluster:
+                cluster_handle = await launch_cluster()
+                await asyncio.wait_for(cluster_handle.action("probe"), timeout=3000)
             
             server.add_tool(run_code)
             server.add_tool(inspect_filesystem)
@@ -120,4 +121,4 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
 
 
 if __name__ == "__main__":
-    create_server().run(transport=os.environ.get("HPC_MCP_TRANSPORT", "stdio"))
+    create_server(cluster=True, nnodes=1).run(transport=os.environ.get("HPC_MCP_TRANSPORT", "stdio"))
