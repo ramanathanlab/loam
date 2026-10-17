@@ -17,7 +17,7 @@ This skill does exactly this, and nothing else:
 1. Start a **local FastMCP server** with two public tools: `run_code` and bounded, read-only `inspect_filesystem`. The second tool exists solely to provide `ls`/`cat`/`tail`-equivalent worker visibility without SSH.
 2. The server uses a **Globus Compute `Executor`** targeting the **endpoint UUID supplied by the user**.
 3. The submitted endpoint job uses its **Parsl `PBSProProvider`** to request the **user-supplied allocation** (`account`, `queue`, `walltime`, `nodes_per_block`, block count, filesystem/place settings, and worker environment).
-4. Within that allocation, start **one Academy `HpcAgent` per pinned GPU/tile**. Every agent exposes `run_code` plus one constrained, read-only `inspect_filesystem` action. `run_code` executes submitted Python in a subprocess and returns `{stdout, stderr, returncode}`; `inspect_filesystem` supports `ls`, `cat`, and `tail` without giving the harness SSH.
+4. Within that allocation, start Academy agents in one of two modes. **Direct mode** starts one `HpcAgent` per pinned GPU/tile, and the agent runs the payload itself. **Cluster mode** (`create_server(cluster=True)`, what `set_env.sh` configures) starts one `HpcClusterAgent` that runs an Ensemble Launcher cluster, plus `HPC_POOL_SIZE` `HpcClientAgent`s that submit into it; EL owns GPU placement, so the client agents are deliberately unpinned. Every agent exposes `run_code` plus one constrained, read-only `inspect_filesystem` action. `run_code` executes submitted Python in a subprocess and returns `{stdout, stderr, returncode}`; `inspect_filesystem` supports `ls`, `cat`, and `tail` without giving the harness SSH.
 
 The harness never uses SSH, `qsub`, `qstat`, `sbatch`, or a campaign-local scheduler wrapper to execute campaign work. The endpoint and its Parsl provider own scheduling. The agent has no domain-specific actions and no arbitrary shell action.
 
@@ -28,14 +28,21 @@ Never guess, hard-code, or inherit these from an earlier campaign:
 | Input | Meaning |
 |---|---|
 | `HPC_GLOBUS_ENDPOINT_ID` | Globus Compute endpoint/manager UUID addressed by the local server. |
-| `HPC_POOL_SIZE` | Number of agents to launch; equal to requested addressable GPU/tile count. |
+| `HPC_POOL_SIZE` | Agents to launch. Direct mode: equal to requested addressable GPU/tile count. Cluster mode: number of client agents submitting into the EL cluster. |
 | `HPC_ENDPOINT_CONFIG_JSON` | JSON object accepted by the endpoint user-config schema; defines PBSPro resources. |
 | `HPC_BASE_DIR` | Campaign directory visible to all workers. |
 | `HPC_CAMPAIGN_ID` | Immutable ID used to isolate agent discovery/adoption. |
 | `ACADEMY_EXCHANGE_URL` | Academy exchange the manager and agents rendezvous through. |
+| `HPC_SYSTEM` | `aurora` or `polaris`. Selects the EL `SystemConfig` and the GPU-pinning variable (`ZE_AFFINITY_MASK` / `CUDA_VISIBLE_DEVICES`). Cluster mode only. |
+| `HPC_NNODES` | Nodes in the allocation. Must match `nodes` in `HPC_ENDPOINT_CONFIG_JSON`: it sets the EL policy's leaf count, not the allocation size. Cluster mode only. |
 
 Optional: `HPC_INSPECT_ROOTS` (colon-separated extra `inspect_filesystem` roots)
 and `HPC_MCP_TRANSPORT` (`http` or `stdio`, default `stdio`).
+
+Cluster-mode health checking (see "Self-healing" below) reads `HPC_POOL_PROBE_INTERVAL`
+(60s), `HPC_POOL_PROBE_TIMEOUT` (30s), `HPC_CLUSTER_PROBE_STRIKES` (3),
+`HPC_CLUSTER_MAX_RESTARTS` (3), `HPC_CLUSTER_STARTUP_TIMEOUT` (3000s),
+`HPC_AGENT_STARTUP_TIMEOUT` (600s), and `HPC_POOL_WAIT_TIMEOUT` (unset).
 
 ### Setting them: `set_env.sh`
 
@@ -95,8 +102,10 @@ MCP harness
                             user_endpoint_config=HPC_ENDPOINT_CONFIG_JSON)
   → endpoint manager / user endpoint
   → Parsl PBSProProvider allocation
-  → one worker per pinned GPU/tile
-  → one Academy HpcAgent per worker
+  → direct mode:  one worker per pinned GPU/tile
+                  → one Academy HpcAgent per worker
+  → cluster mode: HpcClusterAgent → EL cluster (owns GPU placement)
+                  → HPC_POOL_SIZE HpcClientAgents submit into it
   → run_code(payload)
 ```
 
@@ -119,10 +128,10 @@ See `references/polaris-globus-compute-flex-scaling.md` for the concise Polaris 
 3. Edit `set_env.sh` for this campaign and `source` it. Run every later step in that same shell — the server inherits its configuration from the process environment and nowhere else.
 4. Run `scripts/preflight.py`. It validates local dependencies/configuration and emits the exact worker-side import/pinning prerequisites without submitting a job.
 5. Start `scripts/mcp_server.py`. Its Academy launch manager uses the Globus Compute `Executor` created with the supplied UUID and endpoint configuration. A local `ThreadPoolExecutor` is invalid: it launches agents locally.
-6. Launch exactly `HPC_POOL_SIZE` `HpcAgent`s. Each bootstrap reports hostname, `HPC_CAMPAIGN_ID`, and device pin; returned handles are rebound to their exchange client before serving MCP calls.
+6. Launch the agents. Direct mode launches exactly `HPC_POOL_SIZE` `HpcAgent`s, each reporting hostname, `HPC_CAMPAIGN_ID`, and a unique device pin. Cluster mode launches the `HpcClusterAgent` first, then `HPC_POOL_SIZE` `HpcClientAgent`s against that cluster's checkpoint dir; clients report an empty device pin by design. All handles are rebound to their exchange client before serving MCP calls — the pool probes them for the life of the server.
 7. Run `scripts/smoke_test_client.py` against the server. It requires both `run_code` and `inspect_filesystem`, a normal code result, and bounded worker filesystem output.
-8. Submit `HPC_POOL_SIZE` concurrent cheap calls and verify unique `(hostname, device pin)` pairs. If pins duplicate or an agent is absent, stop and repair placement.
-9. On server restart, discover and adopt only agents returning the exact campaign ID; revalidate, prune, and top up only the missing agents through the same Executor/configuration.
+8. Submit concurrent cheap calls and confirm they **overlap** rather than running one at a time. In direct mode also verify unique `(hostname, device pin)` pairs; if pins duplicate or an agent is absent, stop and repair placement. Pins are empty and identical in cluster mode, so they are not a valid acceptance signal there — EL owns placement.
+9. Agents do not outlive the server. `Manager.close()` shuts down everything it launched, so a restarted server builds a fresh pool rather than adopting one. Within a run, cluster mode repairs itself (below).
 
 The skill supplies `scripts/hpc_agent.py`, `scripts/pool_manager.py`, `scripts/mcp_server.py`, `scripts/preflight.py`, and `scripts/smoke_test_client.py`, plus the campaign's `set_env.sh`. A deployment is not considered ready until steps 7–8 succeed against the live endpoint.
 
@@ -138,6 +147,37 @@ lifespan resumes past its `yield`, and the EL cluster is orphaned until
 walltime. Never stop the server with `kill -9`: no agent is told to shut down
 and the allocation leaks.
 
+In cluster mode the lifespan calls `pool.stop()` before `Manager.close()`. That
+ordering is load-bearing: the health-check task must stop before the manager
+starts shutting agents down, or it sees them die during teardown and rebuilds
+the cluster on the way out.
+
+## Self-healing (cluster mode)
+
+`ClusterPool` owns the cluster agent and the client agents, and re-probes them
+every `HPC_POOL_PROBE_INTERVAL`. Repair runs on that timer, never inside a tool
+call — reconciling per call is what serializes concurrent `run_code` requests.
+
+- **A client agent dies** → it is dropped from rotation immediately and replaced
+  on its own. The cluster is untouched.
+- **The cluster agent dies** → the EL cluster died with it, so every client is
+  holding a `ClusterClient` bound to nothing. After `HPC_CLUSTER_PROBE_STRIKES`
+  consecutive failed probes the pool shuts the stale agents down (freeing their
+  worker slots), mints a **fresh `ckpt_dir`**, and rebuilds the cluster and all
+  clients. A new generation never reuses the dead master's checkpoint record.
+- **During a rebuild** a tool call waits rather than failing, bounded by the MCP
+  client's own timeout unless `HPC_POOL_WAIT_TIMEOUT` is set.
+- **After `HPC_CLUSTER_MAX_RESTARTS` consecutive failed rebuilds** healing stops
+  for good. The MCP server stays up and every tool call reports the terminal
+  error; restart the server to try again.
+
+The MCP server, its client sessions, and the Globus/Academy plumbing survive all
+of this — a failed cluster is no longer a restart-everything event.
+
+Known gap: `HpcClusterAgent.probe` reports only that the *agent* is alive. An EL
+master that dies under a live agent reads as healthy, and tasks hang until their
+own timeout instead of triggering a rebuild.
+
 ## Timeouts and failures
 
 Distinguish:
@@ -145,6 +185,7 @@ Distinguish:
 - **Submit rejection:** no endpoint task was accepted—inspect UUID, auth, and endpoint configuration.
 - **Scheduler wait:** PBS block is queued—do not blindly resubmit. Scheduler-wait allowance is independent of payload timeout.
 - **Payload failure:** an agent returned a normal result with nonzero `returncode`—use stderr to fix/retry only that payload.
+- **Cluster loss (cluster mode):** the cluster agent stopped answering—the pool rebuilds it automatically; see "Self-healing". Do not restart the server unless healing has reported itself unrecoverable.
 
 Never alter queue or resource values outside the endpoint user-config schema. Never call scheduler commands from the harness.
 

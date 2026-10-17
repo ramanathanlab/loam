@@ -10,12 +10,10 @@ approved Globus Compute code-shipping serializer.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import signal
 import sys
-import uuid
 from contextlib import asynccontextmanager
 
 from academy.exchange import HttpExchangeFactory
@@ -25,7 +23,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from globus_compute_sdk import Executor
 from hpc_agent import HpcAgent, HpcClientAgent, HpcClusterAgent
-from pool_manager import CampaignPool
+from pool_manager import CampaignPool, ClusterPool
 
 
 def required(name: str) -> str:
@@ -46,6 +44,11 @@ if not isinstance(ENDPOINT_CONFIG, dict):
 if POOL_SIZE < 1:
     raise RuntimeError("HPC_POOL_SIZE must be positive")
 INSPECT_ROOTS = [item for item in os.environ.get("HPC_INSPECT_ROOTS", "").split(":") if item]
+# Selects the EL SystemConfig and the GPU-pinning variable the cluster agent
+# hands to tasks: ZE_AFFINITY_MASK on Aurora, CUDA_VISIBLE_DEVICES on Polaris.
+SYSTEM = os.environ.get("HPC_SYSTEM", "polaris")
+if SYSTEM not in ("aurora", "polaris"):
+    raise RuntimeError("HPC_SYSTEM must be 'aurora' or 'polaris'")
 
 
 # The GC executor is the only allocation launcher. Passing the user endpoint
@@ -55,8 +58,9 @@ def make_executor() -> Executor:
 
 
 def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) -> FastMCP:
-    if cluster and ckpt_dir is None:
-        ckpt_dir = f"ckpt_{uuid.uuid4().hex}"
+    # ckpt_dir only seeds the first cluster generation; ClusterPool mints a
+    # fresh one for every rebuild so a new ClusterClient can never bind to the
+    # dead master's checkpoint record.
     if cluster:
         assert nnodes is not None, "create server needs nnodes when using a EL cluster"
 
@@ -68,30 +72,36 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
         factory = HttpExchangeFactory(EXCHANGE_URL, auth_method="globus")
         gc_executor = make_executor()
         async with await Manager.from_exchange_factory(factory=factory, executors={"globus": gc_executor}, default_executor="globus") as manager:
-            # In cluster mode EL assigns GPUs to tasks, so the client agent
-            # itself is unpinned and must not be rejected for an empty pin.
-            pool = CampaignPool(manager, HpcAgent, CAMPAIGN_ID, POOL_SIZE, require_pin=not cluster)
+            # In cluster mode EL owns placement and fanout, so the pool is a
+            # fixed set of interchangeable submitters built once at startup;
+            # the client agents are unpinned by design. Direct mode keeps
+            # CampaignPool, which pins one accelerator per agent.
+            pool = ClusterPool(CAMPAIGN_ID, POOL_SIZE, ckpt_dir) if cluster else CampaignPool(
+                manager, HpcAgent, CAMPAIGN_ID, POOL_SIZE)
 
+            # Handles are rebound to the exchange client: the pool probes them
+            # for the life of the server, past the launch call that made them.
             async def launch_one() -> Handle:
                 # The agent process is submitted through GCExecutor. This is
                 # deliberately not a local executor and has no PBS commands.
-                if cluster:
-                    handle = await manager.launch(
-                                            HpcClientAgent(CAMPAIGN_ID, BASE_DIR, ckpt_dir, INSPECT_ROOTS),
-                                            executor="globus", name=f"{CAMPAIGN_ID}-agent"
-                                        )
-                else:
-                    handle = await manager.launch(
-                        HpcAgent(CAMPAIGN_ID, BASE_DIR, INSPECT_ROOTS),
-                        executor="globus", name=f"{CAMPAIGN_ID}-agent"
-                    )
+                handle = await manager.launch(
+                    HpcAgent(CAMPAIGN_ID, BASE_DIR, INSPECT_ROOTS),
+                    executor="globus", name=f"{CAMPAIGN_ID}-agent"
+                )
                 return Handle(handle.agent_id, exchange=manager.exchange_client)
 
-            async def launch_cluster() -> Handle:
+            async def launch_client(generation_ckpt_dir: str) -> Handle:
+                handle = await manager.launch(
+                    HpcClientAgent(CAMPAIGN_ID, BASE_DIR, generation_ckpt_dir, INSPECT_ROOTS),
+                    executor="globus", name=f"{CAMPAIGN_ID}-agent"
+                )
+                return Handle(handle.agent_id, exchange=manager.exchange_client)
+
+            async def launch_cluster(generation_ckpt_dir: str) -> Handle:
                 handle = await manager.launch(HpcClusterAgent(
-                    BASE_DIR, ckpt_dir, nnodes, "polaris",
+                    BASE_DIR, generation_ckpt_dir, nnodes, SYSTEM,
                 ))
-                return handle
+                return Handle(handle.agent_id, exchange=manager.exchange_client)
 
             async def run_code(payload: str, workdir: str | None = None, timeout: float = 300.0, venv_path: str | None = None) -> dict[str, str]:
                 """Run Python on one campaign-owned, GPU/tile-pinned Academy agent."""
@@ -109,15 +119,23 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
                 except Exception as exc:
                     raise ToolError(f"inspect_filesystem failed: {type(exc).__name__}: {exc}") from exc
 
+            # Build the pool before serving: a tool call must never have to
+            # launch or verify an agent, or concurrent calls serialize. The
+            # pool brings the EL cluster up first, then the clients that
+            # handshake with its checkpoint dir.
             if cluster:
-                cluster_handle = await launch_cluster()
-                print("launching cluster")
-                result = await asyncio.wait_for(cluster_handle.action("probe"), timeout=3000)
-                print(f"result from probe:{result}")
-            
+                await pool.start(launch_cluster, launch_client)
+
             server.add_tool(run_code)
             server.add_tool(inspect_filesystem)
-            yield
+            try:
+                yield
+            finally:
+                # Stop health checking before Manager.close() shuts the agents
+                # down, or the reaper sees them die and relaunches into a
+                # cluster that is itself on the way out.
+                if cluster:
+                    await pool.stop()
         gc_executor.shutdown(wait=False, cancel_futures=False)
 
     return FastMCP(name="hpc-deployment", instructions=(
@@ -135,4 +153,8 @@ if __name__ == "__main__":
     # Raising KeyboardInterrupt instead lets that re-raise unwind the lifespan
     # stack, so the cluster still dies with its agent. SIGINT already does this.
     signal.signal(signal.SIGTERM, signal.default_int_handler)
-    create_server(cluster=True, nnodes=1).run(transport=os.environ.get("HPC_MCP_TRANSPORT", "stdio"))
+    # Must match the node count requested in HPC_ENDPOINT_CONFIG_JSON: it sets
+    # the EL policy's leaf count, not the allocation size.
+    create_server(cluster=True, nnodes=int(os.environ.get("HPC_NNODES", "1"))).run(
+        transport=os.environ.get("HPC_MCP_TRANSPORT", "stdio"),
+    )

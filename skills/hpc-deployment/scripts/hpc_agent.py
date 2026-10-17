@@ -200,7 +200,8 @@ class HpcClusterAgent(Agent):
         }
         
     async def agent_on_shutdown(self):
-        self._el.stop()
+        if self._el is not None:
+            self._el.stop()
 
 class HpcClientAgent(HpcAgent):
     def __init__(self, campaign_id: str, base_dir: str, ckpt_dir: str, inspect_roots: list[str] | None = None) -> None:
