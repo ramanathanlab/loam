@@ -3984,3 +3984,402 @@
 2026-10-09 13:34:27,337 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
 2026-10-09 13:34:28,406 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/msinclair/github/loam/.loam/state/hypothesis-research/run-manifest.json
 2026-10-09 13:34:28,409 WARNING [20261009_125346_4e5e6d] loam_hermes_adapter: Loam hook missing: /Users/msinclair/github/loam/.loam/hooks/post-tool.py
+2026-10-20 10:07:37,042 WARNING tools.mcp_tool: MCP server 'hpc' initial connection failed (attempt 1/3), retrying in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:07:38,058 WARNING tools.mcp_tool: MCP server 'hpc' initial connection failed (attempt 2/3), retrying in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:07:40,077 WARNING tools.mcp_tool: MCP server 'hpc' initial connection failed (attempt 3/3), retrying in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:07:44,089 WARNING tools.mcp_tool: MCP server 'hpc' failed initial connection after 3 attempts, parking until a reconnect is requested: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:07:44,090 WARNING tools.mcp_tool: Failed to connect to MCP server 'hpc': All connection attempts failed; [Errno 61] Connect call failed ('127.0.0.1', 8000)
+2026-10-20 10:07:44,099 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-20 10:07:44,100 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-20 10:07:44,255 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 10:07:44,276 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 10:07:44,277 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 10:07:44,278 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 10:07:44,316 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-20 10:07:44,316 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-10-20 10:15:44,128 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 1/5), reconnecting in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:15:45,142 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 2/5), reconnecting in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:15:47,148 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 3/5), reconnecting in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:15:51,162 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 4/5), reconnecting in 8s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:15:59,178 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 5/5), reconnecting in 16s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:16:15,189 WARNING tools.mcp_tool: MCP server 'hpc' failed after 5 reconnection attempts, parking; will self-probe every 300s until it recovers: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:21:37,369 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:37,372 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:37,941 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:37,959 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:37,960 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:37,960 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:38,088 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:38,097 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:38,098 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:38,098 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:38,110 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:38,110 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:38,111 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:38,117 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:38,118 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 10:21:38,122 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 10:22:12,192 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:22:41,620 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:22:43,723 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:23:21,766 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:23:23,312 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:23:25,686 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:23:25,686 WARNING [20261020_102136_c1cbae] agent.tool_executor: Tool mcp__hpc__batch_status returned error (0.08s): {"result": "{\"batch_id\":\"b-4268b8cc0d6d\",\"labels\":{},\"total\":3,\"succeeded\":3,\"failed\":0,\"unfinished\":0,\"at\":\"2026-10-20T14:23:25+00:00\",\"complete\":true,\"dir\":\"/lus/flare/project
+2026-10-20 10:23:45,953 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:23:53,140 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:23:55,462 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:24:00,479 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:24:02,939 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:27:11,905 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:27:22,666 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:27:30,673 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:28:13,627 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:28:23,189 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:28:40,320 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:28:42,689 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:28:49,099 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:28:51,235 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:29:35,128 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:29:37,773 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:29:42,104 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:29:44,638 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:29:46,548 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:29:48,908 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:29:52,085 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:29:54,134 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:29:56,119 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:29:58,405 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:30:00,704 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:30:03,177 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:30:06,249 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:30:11,400 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:30:13,433 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:30:15,216 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:30:17,249 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:30:19,421 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:30:22,728 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:30:24,712 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:30:26,535 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:30:29,247 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:30:32,870 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:38:51,445 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:38:53,738 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:38:57,923 WARNING [bg_103857_511f7f] loam_hermes_adapter: Loam hook pre-llm.py exited 1: loam pre-llm recall failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 10:38:57,924 WARNING [bg_103857_c32130] loam_hermes_adapter: Loam hook pre-llm.py exited 1: loam pre-llm recall failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 10:38:59,583 WARNING [bg_103857_c32130] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 10:38:59,588 WARNING [bg_103857_c32130] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:39:01,349 WARNING [bg_103857_c32130] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 10:39:01,413 WARNING [bg_103857_c32130] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:39:03,073 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:39:03,421 WARNING [bg_103857_c32130] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 10:39:03,504 WARNING [bg_103857_c32130] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:39:04,733 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:39:11,939 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:39:17,897 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:45:15,347 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 1/5), reconnecting in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:45:16,360 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 2/5), reconnecting in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:45:18,374 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 3/5), reconnecting in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:45:22,388 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 4/5), reconnecting in 8s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:45:30,399 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 5/5), reconnecting in 16s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:45:36,731 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 1/5), reconnecting in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:45:37,743 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 2/5), reconnecting in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:45:39,752 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 3/5), reconnecting in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:45:43,767 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 4/5), reconnecting in 8s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:45:46,412 WARNING tools.mcp_tool: MCP server 'hpc' failed after 5 reconnection attempts, parking; will self-probe every 300s until it recovers: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:45:51,776 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 5/5), reconnecting in 16s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:46:07,806 WARNING tools.mcp_tool: MCP server 'hpc' failed after 5 reconnection attempts, parking; will self-probe every 300s until it recovers: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 10:46:48,981 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:46:48,981 WARNING [20261020_102136_c1cbae] agent.tool_executor: Tool mcp__hpc__run_code returned error (0.00s): {"error": "Unknown tool: mcp__hpc__run_code"}
+2026-10-20 10:46:51,700 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:46:51,700 WARNING [20261020_102136_c1cbae] agent.tool_executor: Tool mcp__hpc__run_code returned error (0.00s): {"error": "Unknown tool: mcp__hpc__run_code"}
+2026-10-20 10:46:54,723 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:46:54,723 WARNING [20261020_102136_c1cbae] agent.tool_executor: Tool mcp__hpc__list_tools returned error (0.00s): {"error": "Unknown tool: mcp__hpc__list_tools"}
+2026-10-20 10:47:10,699 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-20 10:47:10,702 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-20 10:47:10,719 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 10:47:10,736 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 10:47:10,738 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 10:47:10,738 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 10:47:10,773 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-20 10:48:14,437 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:48:17,805 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:48:19,930 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:48:55,062 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:49:04,495 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:49:06,499 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:49:09,860 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:49:16,857 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:49:24,122 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:49:29,591 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:50:51,598 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:53:19,658 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:53:26,875 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:53:38,049 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:54:38,089 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-20 10:54:38,092 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-20 10:54:38,111 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 10:54:38,129 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 10:54:38,130 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 10:54:38,130 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 10:54:38,167 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-20 10:55:49,375 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:55:51,472 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:55:54,616 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:56:47,783 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:56:56,611 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:56:58,383 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:57:03,222 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:57:08,628 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 10:57:13,617 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:04:46,969 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:04:46,970 WARNING [20261020_102136_c1cbae] agent.tool_executor: Tool mcp__hpc__batch_status returned error (330.91s): {"error": "MCP call interrupted: user sent a new message"}
+2026-10-20 11:04:53,696 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:05:18,458 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:05:19,600 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:05:20,823 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:06:00,528 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:06:05,008 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:06:07,580 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:06:12,244 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:06:29,614 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:06:32,090 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:06:36,702 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:06:41,485 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:06:45,592 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:07:06,325 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:08:17,497 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:08:21,688 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:12:14,573 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:12:34,912 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:12:47,084 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:14:05,857 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:14:15,884 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:14:18,527 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:14:23,012 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:14:29,799 WARNING [20261020_102136_c1cbae] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 11:28:45,674 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 1/3), retrying in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:28:46,746 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 2/3), retrying in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:28:48,820 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 3/3), retrying in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:28:49,738 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:49,742 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:49,896 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:49,915 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:49,916 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:49,917 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:49,952 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:52,910 WARNING tools.mcp_tool: MCP server 'hpcctl' failed initial connection after 3 attempts, parking until a reconnect is requested: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:28:52,925 WARNING tools.mcp_tool: Failed to connect to MCP server 'hpcctl' (command=/Users/architvasan/.loam-venv-312/bin/python): Connection closed
+2026-10-20 11:28:52,942 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:52,944 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:53,095 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:53,114 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:53,115 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:53,115 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:53,149 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-20 11:28:53,149 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-10-20 11:33:53,028 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 1/3), retrying in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:33:54,101 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 2/3), retrying in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:33:56,183 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 3/3), retrying in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:34:00,263 WARNING tools.mcp_tool: MCP server 'hpcctl' failed initial connection after 3 attempts, parking until a reconnect is requested: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:39:00,350 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 1/3), retrying in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:39:01,422 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 2/3), retrying in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:39:03,500 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 3/3), retrying in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:39:07,571 WARNING tools.mcp_tool: MCP server 'hpcctl' failed initial connection after 3 attempts, parking until a reconnect is requested: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:44:07,647 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 1/3), retrying in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:44:08,727 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 2/3), retrying in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:44:10,794 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 3/3), retrying in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:44:14,866 WARNING tools.mcp_tool: MCP server 'hpcctl' failed initial connection after 3 attempts, parking until a reconnect is requested: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:49:14,997 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 1/3), retrying in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:49:16,067 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 2/3), retrying in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:49:18,142 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 3/3), retrying in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:49:22,212 WARNING tools.mcp_tool: MCP server 'hpcctl' failed initial connection after 3 attempts, parking until a reconnect is requested: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:49:45,773 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 1/5), reconnecting in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:49:46,795 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 2/5), reconnecting in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:49:48,809 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 3/5), reconnecting in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:49:48,887 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 1/5), reconnecting in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:49:49,905 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 2/5), reconnecting in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:49:51,912 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 3/5), reconnecting in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:49:52,824 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 4/5), reconnecting in 8s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:49:55,925 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 4/5), reconnecting in 8s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:50:00,838 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 5/5), reconnecting in 16s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:50:03,937 WARNING tools.mcp_tool: MCP server 'hpc' connection lost (attempt 5/5), reconnecting in 16s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:50:16,853 WARNING tools.mcp_tool: MCP server 'hpc' failed after 5 reconnection attempts, parking; will self-probe every 300s until it recovers: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:50:19,953 WARNING tools.mcp_tool: MCP server 'hpc' failed after 5 reconnection attempts, parking; will self-probe every 300s until it recovers: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:54:22,331 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 1/3), retrying in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:54:23,417 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 2/3), retrying in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:54:25,494 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 3/3), retrying in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:54:29,569 WARNING tools.mcp_tool: MCP server 'hpcctl' failed initial connection after 3 attempts, parking until a reconnect is requested: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:56:58,174 WARNING [20261020_102136_c1cbae] tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-20 11:56:58,178 WARNING [20261020_102136_c1cbae] tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-20 11:56:58,199 WARNING [20261020_102136_c1cbae] tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 11:56:58,215 WARNING [20261020_102136_c1cbae] tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 11:56:58,216 WARNING [20261020_102136_c1cbae] tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 11:56:58,216 WARNING [20261020_102136_c1cbae] tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 11:56:58,253 WARNING [20261020_102136_c1cbae] tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-20 11:57:02,120 WARNING [20261020_102136_c1cbae] agent.conversation_loop: API call failed (attempt 1/3) error_type=PermissionDeniedError thread=Thread-168 (run_agent):6323712000 provider=custom base_url=http://localhost:51900/v1 model=argo:gpt-5.6-terra summary=HTTP 403: ARGO authentication error: the username is not registered in ARGO. Please verify your username and update your argo-proxy configuration.
+2026-10-20 11:57:02,232 ERROR [20261020_102136_c1cbae] agent.conversation_loop: Non-retryable client error: Error code: 403 - {'error': {'message': 'ARGO authentication error: the username is not registered in ARGO. Please verify your username and update your argo-proxy configuration.', 'type': 'invalid_request_error', 'code': None}}
+2026-10-20 11:58:27,918 WARNING [20261020_102136_c1cbae] agent.conversation_loop: API call failed (attempt 1/3) error_type=PermissionDeniedError thread=Thread-171 (run_agent):6323712000 provider=custom base_url=http://localhost:51900/v1 model=argo:gpt-5.6-terra summary=HTTP 403: ARGO authentication error: the username is not registered in ARGO. Please verify your username and update your argo-proxy configuration.
+2026-10-20 11:58:28,029 ERROR [20261020_102136_c1cbae] agent.conversation_loop: Non-retryable client error: Error code: 403 - {'error': {'message': 'ARGO authentication error: the username is not registered in ARGO. Please verify your username and update your argo-proxy configuration.', 'type': 'invalid_request_error', 'code': None}}
+2026-10-20 11:59:29,708 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 1/3), retrying in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:59:30,809 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 2/3), retrying in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:59:32,907 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 3/3), retrying in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 11:59:36,987 WARNING tools.mcp_tool: MCP server 'hpcctl' failed initial connection after 3 attempts, parking until a reconnect is requested: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:04:37,119 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 1/3), retrying in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:04:38,217 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 2/3), retrying in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:04:40,313 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 3/3), retrying in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:04:44,418 WARNING tools.mcp_tool: MCP server 'hpcctl' failed initial connection after 3 attempts, parking until a reconnect is requested: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:09:44,526 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 1/3), retrying in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:09:45,609 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 2/3), retrying in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:09:47,717 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 3/3), retrying in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:09:51,808 WARNING tools.mcp_tool: MCP server 'hpcctl' failed initial connection after 3 attempts, parking until a reconnect is requested: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:10:07,153 WARNING hermes_cli.config: Failed to parse .hermes/.loam-home/config.yaml: while parsing a block mapping
+  in ".hermes/.loam-home/config.yaml", line 2, column 3
+did not find expected key
+  in ".hermes/.loam-home/config.yaml", line 6, column 5. Falling back to default config — every user override (auxiliary providers, fallback chain, model settings) is being IGNORED. Fix the YAML and restart. A copy of the corrupted file was saved to .hermes/.loam-home/config.yaml.corrupt.20261020-121007.bak.
+2026-10-20 12:10:07,590 WARNING hermes_cli.config: Failed to parse /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.hermes/.loam-home/config.yaml: while parsing a block mapping
+  in "/Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.hermes/.loam-home/config.yaml", line 2, column 3
+did not find expected key
+  in "/Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.hermes/.loam-home/config.yaml", line 6, column 5. Falling back to default config — every user override (auxiliary providers, fallback chain, model settings) is being IGNORED. Fix the YAML and restart.
+2026-10-20 12:11:57,755 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-20 12:11:57,758 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-20 12:11:57,983 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:11:57,984 WARNING tools.registry: check_fn check_cronjob_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:11:57,998 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 12:11:57,999 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 12:11:57,999 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:11:58,211 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:42,986 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:42,990 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,548 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,563 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,564 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,564 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,787 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,797 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,797 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,797 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,810 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,810 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,810 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,816 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,818 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:43,822 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:12:47,667 WARNING [20261020_121242_333913] loam_hermes_adapter: Loam hook pre-llm.py exited 1: loam pre-llm recall failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:13:18,845 WARNING [20261020_121242_333913] agent.conversation_loop: API call failed (attempt 1/3) error_type=RuntimeError thread=Thread-7 (run_agent):6347763712 provider=custom base_url=http://localhost:51910/v1 model=openai/gpt-oss-120b summary=Provider returned an empty stream with no finish_reason (possible upstream error or malformed SSE response).
+2026-10-20 12:13:18,846 WARNING [20261020_121242_333913] agent.conversation_loop: Retrying API call in 2.8810101267482175s (attempt 1/3) thread=Thread-7 (run_agent):6347763712 provider=custom base_url=http://localhost:51910/v1 model=openai/gpt-oss-120b policy=default error=Provider returned an empty stream with no finish_reason (possible upstream error or malformed SSE response).
+2026-10-20 12:13:52,834 WARNING [20261020_121242_333913] agent.conversation_loop: API call failed (attempt 2/3) error_type=RuntimeError thread=Thread-7 (run_agent):6347763712 provider=custom base_url=http://localhost:51910/v1 model=openai/gpt-oss-120b summary=Provider returned an empty stream with no finish_reason (possible upstream error or malformed SSE response).
+2026-10-20 12:13:52,834 WARNING [20261020_121242_333913] agent.conversation_loop: Retrying API call in 5.146124061692955s (attempt 2/3) thread=Thread-7 (run_agent):6347763712 provider=custom base_url=http://localhost:51910/v1 model=openai/gpt-oss-120b policy=default error=Provider returned an empty stream with no finish_reason (possible upstream error or malformed SSE response).
+2026-10-20 12:14:29,342 WARNING [20261020_121242_333913] agent.conversation_loop: API call failed (attempt 3/3) error_type=RuntimeError thread=Thread-7 (run_agent):6347763712 provider=custom base_url=http://localhost:51910/v1 model=openai/gpt-oss-120b summary=Provider returned an empty stream with no finish_reason (possible upstream error or malformed SSE response).
+2026-10-20 12:14:29,347 ERROR [20261020_121242_333913] agent.conversation_loop: API call failed after 3 retries. Provider returned an empty stream with no finish_reason (possible upstream error or malformed SSE response). | provider=custom model=openai/gpt-oss-120b msgs=2 tokens=~7,707
+2026-10-20 12:14:51,896 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 1/3), retrying in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:14:52,975 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 2/3), retrying in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:14:55,064 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 3/3), retrying in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:14:59,154 WARNING tools.mcp_tool: MCP server 'hpcctl' failed initial connection after 3 attempts, parking until a reconnect is requested: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:15:47,356 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:47,361 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,020 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,036 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,037 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,037 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,213 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,224 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,224 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,224 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,235 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,235 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,235 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,243 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,244 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:15:48,248 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:41,473 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:41,476 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,110 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,127 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,128 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,128 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,331 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,341 WARNING tools.registry: check_fn check_discord_tool_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,341 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,341 WARNING tools.registry: check_fn _check_feishu returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,352 WARNING tools.registry: check_fn _check_yuanbao returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,352 WARNING tools.registry: check_fn _check_ha_available returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,353 WARNING tools.registry: check_fn _check_spotify_available returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,360 WARNING tools.registry: check_fn check_video_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,361 WARNING tools.registry: check_fn _check_xai_video_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:42,365 WARNING tools.registry: check_fn check_x_search_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:17:45,830 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-llm.py exited 1: loam pre-llm recall failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:18:20,810 WARNING tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-10-20 12:18:20,814 WARNING tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-10-20 12:18:21,071 WARNING tools.registry: check_fn check_close_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:18:21,091 WARNING tools.registry: check_fn _check_kanban_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 12:18:21,093 WARNING tools.registry: check_fn _check_kanban_orchestrator_mode returned False; dependent tools will be unavailable this turn
+2026-10-20 12:18:21,093 WARNING tools.registry: check_fn check_read_terminal_requirements returned False; dependent tools will be unavailable this turn
+2026-10-20 12:18:21,255 WARNING tools.registry: check_fn check_web_api_key returned False; dependent tools will be unavailable this turn
+2026-10-20 12:18:21,361 WARNING [20261020_121740_5fd506] agent.conversation_loop: Stored system prompt for session 20261020_121740_5fd506 is null; rebuilding from scratch this turn. Prefix cache will miss until the rebuild persists. Investigate the previous turn's update_system_prompt write path.
+2026-10-20 12:18:21,886 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-llm.py exited 1: loam pre-llm recall failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:18:23,011 WARNING [20261020_121740_5fd506] run_agent: Removed duplicate tool call: mcp__hpc__list_tools
+2026-10-20 12:18:23,083 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:18:23,276 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:18:23,873 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:18:23,950 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:18:24,576 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:18:24,683 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:18:25,283 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:18:25,361 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:18:26,080 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:18:26,153 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:18:26,853 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:18:26,922 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:18:27,720 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:18:27,735 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:18:28,304 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:18:28,312 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:18:28,994 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:18:29,004 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:18:29,573 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:18:29,580 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:18:30,677 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-llm.py exited 1: loam pre-llm recall failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:19:54,854 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-llm.py exited 1: loam pre-llm recall failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:19:56,585 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:19:56,651 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:19:57,700 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:19:59,225 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 1/3), retrying in 1s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:20:00,293 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 2/3), retrying in 2s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:20:02,362 WARNING tools.mcp_tool: MCP server 'hpcctl' initial connection failed (attempt 3/3), retrying in 4s: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:20:06,429 WARNING tools.mcp_tool: MCP server 'hpcctl' failed initial connection after 3 attempts, parking until a reconnect is requested: unhandled errors in a TaskGroup (1 sub-exception)
+2026-10-20 12:20:15,189 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:20:15,189 WARNING [20261020_121740_5fd506] agent.tool_executor: Tool terminal returned error (17.49s): {"output": "ls: /lus/flare/projects/FRAME-IDP/agentic_campaign_09_26/binder_design/envs/: No such file or directory", "exit_code": 1, "error": null}
+2026-10-20 12:20:16,558 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:20:19,076 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:20:19,917 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:20:22,122 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:20:22,857 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:20:24,566 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:20:25,389 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:20:27,087 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:20:27,991 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:20:30,100 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:20:31,488 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:20:35,588 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:20:36,729 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:20:39,099 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:20:40,025 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:20:42,645 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:20:43,711 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:21:24,682 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:21:26,020 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:21:33,161 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:21:34,895 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:21:42,119 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:21:43,218 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:21:48,636 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:21:50,283 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:22:40,375 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:22:44,539 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:22:44,908 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:22:44,909 WARNING [20261020_121740_5fd506] agent.tool_executor: Tool write_file returned error (0.37s): {"bytes_written": 0, "dirs_created": false, "error": "Failed to write file: /bin/bash: line 2: /lus/flare/projects/FRAME-IDP/avasan/.hermes-tmp.28649: No such file or directory\n", "resolved_path": "/
+2026-10-20 12:22:47,189 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:22:48,918 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py
+2026-10-20 12:22:52,699 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook pre-tool.py exited 1: loam pre-tool audit failed: ValueError: run manifest identity mismatch: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/state/aurora_akv/run-manifest.json
+2026-10-20 12:22:54,295 WARNING [20261020_121740_5fd506] loam_hermes_adapter: Loam hook missing: /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.loam/hooks/post-tool.py

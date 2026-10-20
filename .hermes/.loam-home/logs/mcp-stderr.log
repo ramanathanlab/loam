@@ -1,0 +1,296 @@
+
+===== [2026-10-20 11:28:45] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:28:46] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:28:48] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:28:48] starting MCP server 'hpcctl' =====
+
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│                                                                              │
+│                         ▄▀▀ ▄▀█ █▀▀ ▀█▀ █▀▄▀█ █▀▀ █▀█                        │
+│                         █▀  █▀█ ▄▄█  █  █ ▀ █ █▄▄ █▀▀                        │
+│                                                                              │
+│                                                                              │
+│                                FastMCP 4.1.0                                 │
+│                            https://gofastmcp.com                             │
+│                                                                              │
+│                  🖥  Server:      hpc-control, 4.1.0                          │
+│                  🚀 Deploy free: https://horizon.prefect.io                  │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                          🎉 Update available: 4.1.2                          │
+│                      Run: pip install --upgrade fastmcp                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+[10/20/26 11:28:49] INFO     Starting MCP server 'hpc-control'  transport.py:241
+                             with transport 'stdio'                             
+
+===== [2026-10-20 11:28:52] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:33:52] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:33:54] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:33:56] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:34:00] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:39:00] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:39:01] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:39:03] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:39:07] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:44:07] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:44:08] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:44:10] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:44:14] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:49:14] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:49:16] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:49:18] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:49:22] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:54:22] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:54:23] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:54:25] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:54:29] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:59:29] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:59:30] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:59:32] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 11:59:36] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:04:37] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:04:38] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:04:40] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:04:44] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:09:44] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:09:45] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:09:47] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:09:51] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:10:40] starting MCP server 'hpcctl' =====
+
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│                                                                              │
+│                         ▄▀▀ ▄▀█ █▀▀ ▀█▀ █▀▄▀█ █▀▀ █▀█                        │
+│                         █▀  █▀█ ▄▄█  █  █ ▀ █ █▄▄ █▀▀                        │
+│                                                                              │
+│                                                                              │
+│                                FastMCP 4.1.0                                 │
+│                            https://gofastmcp.com                             │
+│                                                                              │
+│                  🖥  Server:      hpc-control, 4.1.0                          │
+│                  🚀 Deploy free: https://horizon.prefect.io                  │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                          🎉 Update available: 4.1.2                          │
+│                      Run: pip install --upgrade fastmcp                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+[10/20/26 12:10:41] INFO     Starting MCP server 'hpc-control'  transport.py:241
+                             with transport 'stdio'                             
+
+===== [2026-10-20 12:12:41] starting MCP server 'hpcctl' =====
+
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│                                                                              │
+│                         ▄▀▀ ▄▀█ █▀▀ ▀█▀ █▀▄▀█ █▀▀ █▀█                        │
+│                         █▀  █▀█ ▄▄█  █  █ ▀ █ █▄▄ █▀▀                        │
+│                                                                              │
+│                                                                              │
+│                                FastMCP 4.1.0                                 │
+│                            https://gofastmcp.com                             │
+│                                                                              │
+│                  🖥  Server:      hpc-control, 4.1.0                          │
+│                  🚀 Deploy free: https://horizon.prefect.io                  │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                          🎉 Update available: 4.1.2                          │
+│                      Run: pip install --upgrade fastmcp                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+[10/20/26 12:12:42] INFO     Starting MCP server 'hpc-control'  transport.py:241
+                             with transport 'stdio'                             
+
+===== [2026-10-20 12:14:51] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:14:52] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:14:54] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:14:59] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:15:11] starting MCP server 'hpcctl' =====
+
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│                                                                              │
+│                         ▄▀▀ ▄▀█ █▀▀ ▀█▀ █▀▄▀█ █▀▀ █▀█                        │
+│                         █▀  █▀█ ▄▄█  █  █ ▀ █ █▄▄ █▀▀                        │
+│                                                                              │
+│                                                                              │
+│                                FastMCP 4.1.0                                 │
+│                            https://gofastmcp.com                             │
+│                                                                              │
+│                  🖥  Server:      hpc-control, 4.1.0                          │
+│                  🚀 Deploy free: https://horizon.prefect.io                  │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                          🎉 Update available: 4.1.2                          │
+│                      Run: pip install --upgrade fastmcp                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+[10/20/26 12:15:11] INFO     Starting MCP server 'hpc-control'  transport.py:241
+                             with transport 'stdio'                             
+
+===== [2026-10-20 12:15:46] starting MCP server 'hpcctl' =====
+
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│                                                                              │
+│                         ▄▀▀ ▄▀█ █▀▀ ▀█▀ █▀▄▀█ █▀▀ █▀█                        │
+│                         █▀  █▀█ ▄▄█  █  █ ▀ █ █▄▄ █▀▀                        │
+│                                                                              │
+│                                                                              │
+│                                FastMCP 4.1.0                                 │
+│                            https://gofastmcp.com                             │
+│                                                                              │
+│                  🖥  Server:      hpc-control, 4.1.0                          │
+│                  🚀 Deploy free: https://horizon.prefect.io                  │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                          🎉 Update available: 4.1.2                          │
+│                      Run: pip install --upgrade fastmcp                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+[10/20/26 12:15:47] INFO     Starting MCP server 'hpc-control'  transport.py:241
+                             with transport 'stdio'                             
+
+===== [2026-10-20 12:16:35] starting MCP server 'hpcctl' =====
+
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│                                                                              │
+│                         ▄▀▀ ▄▀█ █▀▀ ▀█▀ █▀▄▀█ █▀▀ █▀█                        │
+│                         █▀  █▀█ ▄▄█  █  █ ▀ █ █▄▄ █▀▀                        │
+│                                                                              │
+│                                                                              │
+│                                FastMCP 4.1.0                                 │
+│                            https://gofastmcp.com                             │
+│                                                                              │
+│                  🖥  Server:      hpc-control, 4.1.0                          │
+│                  🚀 Deploy free: https://horizon.prefect.io                  │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                          🎉 Update available: 4.1.2                          │
+│                      Run: pip install --upgrade fastmcp                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+[10/20/26 12:16:36] INFO     Starting MCP server 'hpc-control'  transport.py:241
+                             with transport 'stdio'                             
+
+===== [2026-10-20 12:16:39] starting MCP server 'hpcctl' =====
+
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│                                                                              │
+│                         ▄▀▀ ▄▀█ █▀▀ ▀█▀ █▀▄▀█ █▀▀ █▀█                        │
+│                         █▀  █▀█ ▄▄█  █  █ ▀ █ █▄▄ █▀▀                        │
+│                                                                              │
+│                                                                              │
+│                                FastMCP 4.1.0                                 │
+│                            https://gofastmcp.com                             │
+│                                                                              │
+│                  🖥  Server:      hpc-control, 4.1.0                          │
+│                  🚀 Deploy free: https://horizon.prefect.io                  │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                          🎉 Update available: 4.1.2                          │
+│                      Run: pip install --upgrade fastmcp                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+[10/20/26 12:16:40] INFO     Starting MCP server 'hpc-control'  transport.py:241
+                             with transport 'stdio'                             
+
+===== [2026-10-20 12:17:40] starting MCP server 'hpcctl' =====
+
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│                                                                              │
+│                         ▄▀▀ ▄▀█ █▀▀ ▀█▀ █▀▄▀█ █▀▀ █▀█                        │
+│                         █▀  █▀█ ▄▄█  █  █ ▀ █ █▄▄ █▀▀                        │
+│                                                                              │
+│                                                                              │
+│                                FastMCP 4.1.0                                 │
+│                            https://gofastmcp.com                             │
+│                                                                              │
+│                  🖥  Server:      hpc-control, 4.1.0                          │
+│                  🚀 Deploy free: https://horizon.prefect.io                  │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                          🎉 Update available: 4.1.2                          │
+│                      Run: pip install --upgrade fastmcp                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+[10/20/26 12:17:41] INFO     Starting MCP server 'hpc-control'  transport.py:241
+                             with transport 'stdio'                             
+
+===== [2026-10-20 12:19:59] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:20:00] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:20:02] starting MCP server 'hpcctl' =====
+
+===== [2026-10-20 12:20:06] starting MCP server 'hpcctl' =====

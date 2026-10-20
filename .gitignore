@@ -2,3 +2,13 @@
 .loam/state/*
 !.loam/state/README.md
 .hermes/.loam-home/config_OLD.yaml
+# Config backups and Hermes's corrupt-config copies can hold API keys.
+.hermes/.loam-home/config.yaml.bak-*
+.hermes/.loam-home/config.yaml.corrupt.*
+# Editor swap files, bytecode, Hermes request dumps and curator tarballs.
+*.swp
+__pycache__/
+*.pyc
+.hermes/.loam-home/sessions/request_dump_*.json
+.hermes/.loam-home/skills/.curator_backups/
+*.lock

@@ -6,3 +6,5 @@
 17:07:27 interrupt fired: msg='Round 1. Follow the injected Loam directive exactly; do not ', children=0, parent._interrupt=True
 12:58:02 ENTER: queued interrupt msg='Does the handoff file say we are using polaris or aurora', agent_running=True
 12:58:02 interrupt fired: msg='Does the handoff file say we are using polaris or aurora', children=0, parent._interrupt=True
+11:04:46 ENTER: queued interrupt msg="How's it going? taking a very long time", agent_running=True
+11:04:46 interrupt fired: msg="How's it going? taking a very long time", children=0, parent._interrupt=True

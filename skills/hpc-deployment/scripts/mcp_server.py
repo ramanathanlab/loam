@@ -11,6 +11,7 @@ approved Globus Compute code-shipping serializer.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import signal
 import sys
@@ -71,6 +72,25 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
         # remote-only HPC filesystem path.
         factory = HttpExchangeFactory(EXCHANGE_URL, auth_method="globus")
         gc_executor = make_executor()
+        served = False
+        try:
+            async with _serve(factory, gc_executor, server):
+                served = True
+                yield
+        except Exception:  # noqa: BLE001 - shutdown must finish even if an agent died badly
+            if not served:
+                raise  # a startup failure must still fail the server loudly
+            # Manager.close() asks every agent to shut down first, then awaits
+            # each one and re-raises the first failure. After a cluster rebuild
+            # the previous generation's agents always fail (ManagerLost at
+            # walltime), so without this the exit skipped the executor shutdown
+            # below and its non-daemon threads kept the process alive forever.
+            logging.getLogger(__name__).exception("agent failures during shutdown (agents were already asked to stop)")
+        finally:
+            gc_executor.shutdown(wait=False, cancel_futures=True)
+
+    @asynccontextmanager
+    async def _serve(factory, gc_executor, server: FastMCP):
         async with await Manager.from_exchange_factory(factory=factory, executors={"globus": gc_executor}, default_executor="globus") as manager:
             # In cluster mode EL owns placement and fanout, so the pool is a
             # fixed set of interchangeable submitters built once at startup;
@@ -133,7 +153,11 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
                 For a tool, every row is checked against its params before anything runs.
                 Write results to files in that folder and exit 0 on success. The script and
                 inputs file are copied when the batch is created, so later edits do not
-                affect it. Returns at once with a batch_id: poll batch_status, never wait.
+                affect it. gpus is the number of GPUs/tiles EACH ROW gets, not the batch:
+                rows run side by side on all free tiles, so a script that uses one device
+                (e.g. xpu:0 or cuda:0) needs gpus=1 and 12 rows then fill a 12-tile node at
+                once. Raise it only when a single row itself spans several devices.
+                Returns at once with a batch_id: poll batch_status, never wait.
                 To resume, pass only batch_id; finished runs are skipped. Use this rather
                 than run_code for more than a handful of runs.
                 """
@@ -226,7 +250,6 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
                 # cluster that is itself on the way out.
                 if cluster:
                     await pool.stop()
-        gc_executor.shutdown(wait=False, cancel_futures=False)
 
     return FastMCP(name="hpc-deployment", instructions=(
         "run_code executes Python on a pinned accelerator. inspect_filesystem is bounded read-only ls/cat/tail; it is not a shell. "

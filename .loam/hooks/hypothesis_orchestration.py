@@ -252,7 +252,9 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
             "(name, script_path, params as {name: int|float|str|bool|list|dict}, description, example "
             "row). It is smoke-tested on the example; pass skip_smoke only if it needs a GPU to start.",
             f"- `{names['run_batch']}`: many runs at once: tool=<name> (or script_path) and inputs_path, "
-            "a JSONL file with one row of params per line. Returns a batch_id at once.",
+            "a JSONL file with one row of params per line. Returns a batch_id at once. gpus is tiles "
+            "PER ROW: rows run side by side on all free tiles, so a script using one device (xpu:0) "
+            "takes gpus=1; raise it only if one row itself spans several devices.",
             f"- `{names['batch_status']}`: poll a batch. If it is still running when you must report, "
             "report the batch_id and counts as unfinished.",
             f"- `{names['inspect_filesystem']}`: read result files (ls/cat/tail).",

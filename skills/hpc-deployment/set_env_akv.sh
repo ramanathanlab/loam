@@ -4,8 +4,8 @@
 # (own venv; PYTHONPATH -> /flare/FRAME-IDP/avasan/loam-hpc, which holds the
 # dev_akv hpc_agent.py with register_tool / list_tools / run_batch(tool=)).
 
-# TODO: set to the loam-aurora-flex endpoint UUID once it is configured.
-export HPC_GLOBUS_ENDPOINT_ID="REPLACE_WITH_LOAM_AURORA_FLEX_UUID"
+# loam-aurora-flex on Aurora (~/.globus_compute/loam-aurora-flex, aurora-uan-0009).
+export HPC_GLOBUS_ENDPOINT_ID="e9a292e7-a158-4418-8897-aef6a113657e"
 export HPC_POOL_SIZE=1
 # batches/ and tools/ are created here; code-gen scripts and the profile's
 # workdir_root must live under it.

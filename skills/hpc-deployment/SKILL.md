@@ -191,10 +191,14 @@ Never alter queue or resource values outside the endpoint user-config schema. Ne
 
 ## Agent capabilities and filesystem inspection
 
-The Academy agent has exactly two public capabilities:
+The Academy agent's public capabilities:
 
 - `run_code(payload, workdir, timeout)` — execute a Python payload on the agent's pinned accelerator.
 - `inspect_filesystem(operation, path, offset, limit)` — read-only visibility into the worker filesystem without SSH.
+- `run_batch` / `batch_status` / `list_batches` (cluster mode) — run one script once per row of a JSONL file through EL; returns a `batch_id` at once, resumable by `batch_id`.
+- `register_tool` / `list_tools` — a per-campaign library of frozen, versioned, smoke-tested scripts under `HPC_BASE_DIR/tools/`, runnable with `run_batch(tool=...)`. Tools are never deleted or deprecated.
+
+**`run_batch` `gpus` is tiles per row, not per batch — use `gpus=1` for any script that touches one device (`xpu:0` / `cuda:0`).** EL then places rows side by side on every free tile: on Aurora (FLAT hierarchy) each row gets its own `ZE_AFFINITY_MASK` tile with 64 GB, and 12 rows fill a node at once. Verified 2026-10-20: 12 rows at `gpus=1` ran concurrently on masks 0–11 in 15 s. `gpus=12` instead reserves the whole node for every row, so rows run one at a time and a one-device script leaves 11 tiles idle (observed: 12 Chai folds took ~8.5 min instead of ~45 s). Raise `gpus` only when a single row itself spans several devices. EL tracks CPUs (`ppn=1`, one of 102 per Aurora node) and tiles, not host memory or thread counts; if many concurrent rows are CPU-heavy, cap `OMP_NUM_THREADS` in the script.
 
 `inspect_filesystem` permits only:
 

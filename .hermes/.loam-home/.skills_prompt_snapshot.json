@@ -2,395 +2,395 @@
   "version": 1,
   "manifest": {
     "apple/DESCRIPTION.md": [
-      1783604587715556949,
+      1792180033296621172,
       137
     ],
     "apple/apple-reminders/SKILL.md": [
-      1783604587715763449,
+      1792424531614148024,
       3606
     ],
     "apple/imessage/SKILL.md": [
-      1783604587716089325,
+      1792424531614553351,
       2442
     ],
     "apple/findmy/SKILL.md": [
-      1783604587715943366,
+      1792424531614370271,
       3709
     ],
     "apple/apple-notes/SKILL.md": [
-      1783604587715660324,
+      1792424531613961027,
       2169
     ],
     "research/DESCRIPTION.md": [
-      1783604587756239278,
+      1792180033381295931,
       179
     ],
     "research/blogwatcher/SKILL.md": [
-      1783604587756599112,
+      1792180033382102101,
       5111
     ],
     "research/polymarket/SKILL.md": [
-      1783604587756846030,
+      1792424531681922334,
       2985
     ],
     "research/public-bioinformatics-analysis/SKILL.md": [
-      1790975959802212628,
+      1792180046389772842,
       9969
     ],
     "research/llm-wiki/SKILL.md": [
-      1783604587756728112,
+      1792180033382480602,
       20129
     ],
     "research/arxiv/SKILL.md": [
-      1783604587756375404,
+      1792180033381553224,
       10085
     ],
     "research/delegated-research/SKILL.md": [
-      1790975878998493289,
+      1792180046389431049,
       3492
     ],
     "research/research-paper-writing/SKILL.md": [
-      1783604587757388572,
+      1792180033384494401,
       103674
     ],
     "social-media/DESCRIPTION.md": [
-      1783604587763624501,
+      1792180033400463833,
       151
     ],
     "social-media/xurl/SKILL.md": [
-      1783604587763793876,
+      1792424531683057609,
       15518
     ],
     "yuanbao/SKILL.md": [
-      1783604587765100921,
+      1792424531683240939,
       3795
     ],
     "data-science/DESCRIPTION.md": [
-      1783604587739917038,
+      1792180033348124022,
       137
     ],
     "data-science/jupyter-live-kernel/SKILL.md": [
-      1783604587740057413,
+      1792180033348546898,
       5285
     ],
     "software-development/distributed-agent-triage/SKILL.md": [
-      1791485810802967683,
+      1792180046391982349,
       5250
     ],
     "software-development/test-driven-development/SKILL.md": [
-      1783604587764990170,
+      1792180033404472764,
       10306
     ],
     "software-development/systematic-debugging/SKILL.md": [
-      1783604587764870295,
+      1792180033404180096,
       14065
     ],
     "software-development/plan/SKILL.md": [
-      1783604587764236877,
+      1792180033402252672,
       8974
     ],
     "software-development/hpc-remote-execution/SKILL.md": [
-      1791569530585471522,
-      5737
+      1792508801480370617,
+      9264
     ],
     "software-development/distributed-python-integration-debugging/SKILL.md": [
-      1791485731463347913,
+      1792180046392338142,
       6377
     ],
     "software-development/agent-campaign-testing/SKILL.md": [
-      1791475904863499660,
+      1792424518617054856,
       8924
     ],
     "software-development/hermes-agent-skill-authoring/SKILL.md": [
-      1783604587763990877,
+      1792180033401284503,
       10651
     ],
     "software-development/multi-agent-campaigns/SKILL.md": [
-      1791570168099826156,
+      1792180046393192854,
       5488
     ],
     "software-development/python-debugpy/SKILL.md": [
-      1783604587764369752,
+      1792180033402795299,
       13172
     ],
     "software-development/spike/SKILL.md": [
-      1783604587764731586,
+      1792180033403779428,
       8730
     ],
     "software-development/campaign-execution/SKILL.md": [
-      1791478328016689498,
+      1792180046391409472,
       4402
     ],
     "software-development/requesting-code-review/SKILL.md": [
-      1783604587764488378,
+      1792180033403115717,
       8465
     ],
     "software-development/remote-hpc-execution/SKILL.md": [
-      1791568613557140169,
+      1792180046393649480,
       6026
     ],
     "software-development/simplify-code/SKILL.md": [
-      1783604587764610711,
+      1792180033403392885,
       10926
     ],
     "software-development/node-inspect-debugger/SKILL.md": [
-      1783604587764121752,
+      1792180033401725629,
       10929
     ],
     "mlops/DESCRIPTION.md": [
-      1783604587744727839,
+      1792180033355634215,
       162
     ],
     "mlops/huggingface-hub/SKILL.md": [
-      1783604587745992300,
+      1792180033358725768,
       3674
     ],
     "mlops/models/DESCRIPTION.md": [
-      1783604587747346761,
+      1792180033361720320,
       253
     ],
     "mlops/models/audiocraft/SKILL.md": [
-      1783604587747500886,
+      1792180033362139030,
       16189
     ],
     "mlops/models/segment-anything/SKILL.md": [
-      1783604587747917637,
+      1792180033363030742,
       13372
     ],
     "mlops/inference/DESCRIPTION.md": [
-      1783604587746090258,
+      1792180033358920894,
       161
     ],
     "mlops/inference/vllm/SKILL.md": [
-      1783604587746900343,
+      1792180033360530149,
       9071
     ],
     "mlops/inference/llama-cpp/SKILL.md": [
-      1783604587746232009,
+      1792180033359175269,
       8880
     ],
     "mlops/evaluation/DESCRIPTION.md": [
-      1783604587744842006,
+      1792180033355810133,
       126
     ],
     "mlops/evaluation/lm-evaluation-harness/SKILL.md": [
-      1783604587744992298,
+      1792180033356066592,
       12020
     ],
     "mlops/evaluation/weights-and-biases/SKILL.md": [
-      1783604587745581632,
+      1792180033357819681,
       12395
     ],
     "github/DESCRIPTION.md": [
-      1783604587740996249,
+      1792180033350417905,
       167
     ],
     "github/github-auth/SKILL.md": [
-      1783604587741234790,
+      1792180033351016991,
       7596
     ],
     "github/github-repo-management/SKILL.md": [
-      1783604587742969044,
+      1792180033353810584,
       13733
     ],
     "github/github-pr-workflow/SKILL.md": [
-      1783604587742145667,
+      1792180033352691371,
       10035
     ],
     "github/github-code-review/SKILL.md": [
-      1783604587741515958,
+      1792180033351508242,
       13615
     ],
     "github/github-issues/SKILL.md": [
-      1783604587741781125,
+      1792180033352016702,
       9315
     ],
     "github/codebase-inspection/SKILL.md": [
-      1783604587741116499,
+      1792180033350774115,
       3628
     ],
     "note-taking/DESCRIPTION.md": [
-      1783604587748317888,
+      1792180033363826953,
       146
     ],
     "note-taking/obsidian/SKILL.md": [
-      1783604587748436555,
+      1792180033364326038,
       2935
     ],
     "creative/DESCRIPTION.md": [
-      1783604587717516036,
+      1792180033299696517,
       116
     ],
     "creative/comfyui/SKILL.md": [
-      1783604587724676758,
+      1792424531624783405,
       24287
     ],
     "creative/baoyu-infographic/SKILL.md": [
-      1783604587719599998,
+      1792424531619038742,
       10434
     ],
     "creative/songwriting-and-ai-music/SKILL.md": [
-      1783604587737910242,
+      1792424531662826789,
       10206
     ],
     "creative/ascii-video/SKILL.md": [
-      1783604587718297288,
+      1792424531616351116,
       14864
     ],
     "creative/touchdesigner-mcp/SKILL.md": [
-      1783604587738043201,
+      1792424531663413155,
       15429
     ],
     "creative/excalidraw/SKILL.md": [
-      1783604587728075390,
+      1792424531631621844,
       7300
     ],
     "creative/claude-design/SKILL.md": [
-      1783604587724559258,
+      1792424531624532117,
       25117
     ],
     "creative/ascii-art/SKILL.md": [
-      1783604587718021620,
+      1792424531615512712,
       10556
     ],
     "creative/design-md/SKILL.md": [
-      1783604587727874390,
+      1792424531631175725,
       7023
     ],
     "creative/popular-web-designs/SKILL.md": [
-      1783604587732137523,
+      1792424531643371749,
       9722
     ],
     "creative/manim-video/SKILL.md": [
-      1783604587728932683,
+      1792424531633825310,
       12023
     ],
     "creative/pretext/SKILL.md": [
-      1783604587737328200,
+      1792424531660736946,
       14168
     ],
     "creative/humanizer/SKILL.md": [
-      1783604587728688224,
+      1792424531633010656,
       30025
     ],
     "creative/p5js/SKILL.md": [
-      1783604587730452770,
+      1792424531638249035,
       27494
     ],
     "creative/architecture-diagram/SKILL.md": [
-      1783604587717665953,
+      1792424531614753223,
       5830
     ],
     "creative/sketch/SKILL.md": [
-      1783604587737786284,
+      1792424531662126216,
       9304
     ],
     "computer-use/SKILL.md": [
-      1783604587717291202,
+      1792180033299519391,
       11179
     ],
     "email/DESCRIPTION.md": [
-      1783604587740551248,
+      1792180033349380235,
       101
     ],
     "email/himalaya/SKILL.md": [
-      1783604587740685790,
+      1792424531668017002,
       7272
     ],
     "smart-home/DESCRIPTION.md": [
-      1783604587763394542,
+      1792180033400113165,
       123
     ],
     "smart-home/openhue/SKILL.md": [
-      1783604587763505667,
+      1792424531682555991,
       2713
     ],
     "autonomous-ai-agents/DESCRIPTION.md": [
-      1783604587716234950,
+      1792180033297523550,
       211
     ],
     "autonomous-ai-agents/claude-code/SKILL.md": [
-      1783604587716418617,
+      1792180033297766093,
       34288
     ],
     "autonomous-ai-agents/codex/SKILL.md": [
-      1783604587716570034,
+      1792180033297986510,
       5386
     ],
     "autonomous-ai-agents/hermes-agent/SKILL.md": [
-      1783604587716771326,
+      1792180033298306762,
       51586
     ],
     "autonomous-ai-agents/opencode/SKILL.md": [
-      1783604587717150910,
+      1792180033299181015,
       7259
     ],
     "dogfood/SKILL.md": [
-      1783604587740178372,
+      1792180033348804816,
       6270
     ],
     "productivity/DESCRIPTION.md": [
-      1783604587748550263,
+      1792180033364536497,
       114
     ],
     "productivity/nano-pdf/SKILL.md": [
-      1783604587749789724,
+      1792180033367909092,
       1414
     ],
     "productivity/maps/SKILL.md": [
-      1783604587749475223,
+      1792424531670062430,
       6726
     ],
     "productivity/teams-meeting-pipeline/SKILL.md": [
-      1783604587756130278,
+      1792424531681705212,
       6883
     ],
     "productivity/notion/SKILL.md": [
-      1783604587749963641,
+      1792424531670904584,
       14629
     ],
     "productivity/airtable/SKILL.md": [
-      1783604587748708222,
+      1792424531669825725,
       11334
     ],
     "productivity/powerpoint/SKILL.md": [
-      1783604587750890309,
+      1792424531671743571,
       9298
     ],
     "productivity/google-workspace/SKILL.md": [
-      1783604587748877264,
+      1792180033365641168,
       13411
     ],
     "productivity/ocr-and-documents/SKILL.md": [
-      1783604587750278808,
+      1792180033368887221,
       5280
     ],
     "productivity/ocr-and-documents/DESCRIPTION.md": [
-      1783604587750213183,
+      1792180033368675720,
       147
     ],
     "productivity/petdex/SKILL.md": [
-      1783604587750684684,
+      1792424531671300620,
       3534
     ],
     "media/DESCRIPTION.md": [
-      1783604587743903087,
+      1792180033354225044,
       139
     ],
     "media/youtube-content/SKILL.md": [
-      1783604587744380463,
+      1792424531669209568,
       3384
     ],
     "media/heartmula/SKILL.md": [
-      1783604587744164796,
+      1792424531668827240,
       6412
     ],
     "media/songsee/SKILL.md": [
-      1783604587744272005,
+      1792424531669025821,
       2336
     ],
     "media/gif-search/SKILL.md": [
-      1783604587744043713,
+      1792424531668636993,
       2720
     ]
   },
@@ -527,7 +527,7 @@
       "skill_name": "computer-use",
       "category": "computer-use",
       "frontmatter_name": "computer-use",
-      "description": "Drive the user's desktop in the background — clicking, ty...",
+      "description": "Drive the user's desktop in the background — clicking, typing,\nscrolling, dragging — without stealing the cursor, keyboard focus,\nor switching virtual desktops / Spaces. Cross-platform: macOS,\nWindows, Linux. Works with any tool-capable model. Load this skill\nwhenever the `computer_use` tool is available.",
       "platforms": [
         "macos",
         "windows",
@@ -629,7 +629,7 @@
       "skill_name": "comfyui",
       "category": "creative",
       "frontmatter_name": "comfyui",
-      "description": "Generate images, video, and audio with ComfyUI — install,...",
+      "description": "Generate images, video, and audio with ComfyUI — install, launch, manage nodes/models, run workflows with parameter injection. Uses the official comfy-cli for lifecycle and direct REST/WebSocket API for execution.",
       "platforms": [
         "macos",
         "linux",
@@ -748,7 +748,7 @@
       "skill_name": "pretext",
       "category": "creative",
       "frontmatter_name": "pretext",
-      "description": "Use when building creative browser demos with @chenglou/p...",
+      "description": "Use when building creative browser demos with @chenglou/pretext — DOM-free text layout for ASCII art, typographic flow around obstacles, text-as-geometry games, kinetic typography, and text-powered generative art. Produces single-file HTML demos by default.",
       "platforms": [
         "linux",
         "macos",
@@ -799,7 +799,7 @@
       "skill_name": "touchdesigner-mcp",
       "category": "creative",
       "frontmatter_name": "touchdesigner-mcp",
-      "description": "Control a running TouchDesigner instance via twozero MCP ...",
+      "description": "Control a running TouchDesigner instance via twozero MCP — create operators, set parameters, wire connections, execute Python, build real-time visuals. 36 native tools.",
       "platforms": [
         "linux",
         "macos",
@@ -1308,7 +1308,7 @@
       "skill_name": "teams-meeting-pipeline",
       "category": "productivity",
       "frontmatter_name": "teams-meeting-pipeline",
-      "description": "Operate the Teams meeting summary pipeline via Hermes CLI...",
+      "description": "Operate the Teams meeting summary pipeline via Hermes CLI — summarize meetings, inspect pipeline status, replay jobs, manage Microsoft Graph subscriptions.",
       "platforms": [],
       "conditions": {
         "fallback_for_toolsets": [],
@@ -1355,7 +1355,7 @@
       "skill_name": "delegated-research",
       "category": "research",
       "frontmatter_name": "delegated-research",
-      "description": "Run controlled multi-agent web-research batches and repor...",
+      "description": "Run controlled multi-agent web-research batches and report their provenance, lifecycle state, and findings precisely.",
       "platforms": [],
       "conditions": {
         "fallback_for_toolsets": [],
@@ -1402,7 +1402,7 @@
       "skill_name": "public-bioinformatics-analysis",
       "category": "research",
       "frontmatter_name": "public-bioinformatics-analysis",
-      "description": "Design and execute small reproducible in-silico biology e...",
+      "description": "Design and execute small reproducible in-silico biology experiments using public sequence or genomics data.",
       "platforms": [],
       "conditions": {
         "fallback_for_toolsets": [],
@@ -1467,7 +1467,7 @@
       "skill_name": "agent-campaign-testing",
       "category": "software-development",
       "frontmatter_name": "agent-campaign-testing",
-      "description": "Run and debug isolated multi-round Hermes/Loam agent camp...",
+      "description": "Run and debug isolated multi-round Hermes/Loam agent campaigns with nested delegation, lifecycle evidence, and fail-closed acceptance criteria.",
       "platforms": [],
       "conditions": {
         "fallback_for_toolsets": [],
@@ -1480,7 +1480,7 @@
       "skill_name": "campaign-execution",
       "category": "software-development",
       "frontmatter_name": "campaign-execution",
-      "description": "Run strict multi-round agent campaigns end-to-end with is...",
+      "description": "Run strict multi-round agent campaigns end-to-end with isolated state, nested delegation, immutable artifacts, and fail-closed acceptance checks.",
       "platforms": [],
       "conditions": {
         "fallback_for_toolsets": [],
@@ -1493,7 +1493,7 @@
       "skill_name": "distributed-agent-triage",
       "category": "software-development",
       "frontmatter_name": "distributed-agent-triage",
-      "description": "Use when a scheduler-backed remote executor can run ordin...",
+      "description": "Use when a scheduler-backed remote executor can run ordinary tasks but an agent, pool, exchange, or MCP worker is unhealthy. Isolate the failing boundary with read-only, evidence-backed correlation.",
       "platforms": [],
       "conditions": {
         "fallback_for_toolsets": [],
@@ -1506,7 +1506,7 @@
       "skill_name": "distributed-python-integration-debugging",
       "category": "software-development",
       "frontmatter_name": "distributed-python-integration-debugging",
-      "description": "Investigate Python distributed-execution integration fail...",
+      "description": "Investigate Python distributed-execution integration failures by separating interface compatibility, payload transport, remote runtime, and control-plane health without changing application files.",
       "platforms": [
         "linux",
         "macos",
@@ -1523,7 +1523,7 @@
       "skill_name": "hermes-agent-skill-authoring",
       "category": "software-development",
       "frontmatter_name": "hermes-agent-skill-authoring",
-      "description": "Author in-repo SKILL.md: frontmatter, validator, structur...",
+      "description": "Author in-repo SKILL.md: frontmatter, validator, structure, and writing-quality principles.",
       "platforms": [
         "linux",
         "macos",
@@ -1540,7 +1540,7 @@
       "skill_name": "hpc-remote-execution",
       "category": "software-development",
       "frontmatter_name": "hpc-remote-execution",
-      "description": "Deploy, debug, and verify remote code execution through a...",
+      "description": "Deploy, debug, and verify remote code execution through an MCP/agent layer backed by Globus Compute or scheduler-managed HPC workers. Use for Academy/FastMCP/Globus/PBS execution planes, not direct scheduler substitutions.",
       "platforms": [],
       "conditions": {
         "fallback_for_toolsets": [],
@@ -1553,7 +1553,7 @@
       "skill_name": "multi-agent-campaigns",
       "category": "software-development",
       "frontmatter_name": "multi-agent-campaigns",
-      "description": "Run and debug isolated multi-round agent campaigns that r...",
+      "description": "Run and debug isolated multi-round agent campaigns that require a persistent coordinator, nested delegation, durable lifecycle evidence, and per-round acceptance checks.",
       "platforms": [],
       "conditions": {
         "fallback_for_toolsets": [],
@@ -1583,7 +1583,7 @@
       "skill_name": "plan",
       "category": "software-development",
       "frontmatter_name": "plan",
-      "description": "Plan mode: write an actionable markdown plan to .hermes/p...",
+      "description": "Plan mode: write an actionable markdown plan to .hermes/plans/, no execution. Bite-sized tasks, exact paths, complete code.",
       "platforms": [
         "linux",
         "macos",
@@ -1616,7 +1616,7 @@
       "skill_name": "remote-hpc-execution",
       "category": "software-development",
       "frontmatter_name": "remote-hpc-execution",
-      "description": "Debug and verify stateful remote code-execution paths spa...",
+      "description": "Debug and verify stateful remote code-execution paths spanning clients, MCP services, Academy agents, Globus Compute, schedulers, and workers.",
       "platforms": [],
       "conditions": {
         "fallback_for_toolsets": [],

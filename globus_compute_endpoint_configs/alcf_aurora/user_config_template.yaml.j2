@@ -11,7 +11,8 @@
 
    Differences from Polaris:
      * hsn0, not bond0, for the compute->login interchange address.
-     * 208 HW threads/node -> --depth=208 with one manager per node.
+     * SimpleLauncher: one worker pool on the head node; EL spreads work
+       across nodes itself (see the launcher note below).
      * filesystems=home:flare.
      * No accelerator pinning by default: in cluster mode EL owns tile
        placement, so available_accelerators is only emitted when passed.
@@ -62,10 +63,12 @@ engine:
 
     scheduler_options: "#PBS -l filesystems={{ filesystems|default('home:flare') }}\n#PBS -l place=scatter"
 
+    {# SimpleLauncher, not MpiExecLauncher: in cluster mode EL starts its
+       own per-node processes with mpiexec, and an mpiexec nested inside the
+       worker's PALS/PMIx job step segfaults (exit 139 in EL's
+       write_file_to_nodes). The one worker pool runs on the head node. #}
     launcher:
-      type: MpiExecLauncher
-      bind_cmd: --cpu-bind
-      overrides: --depth={{ depth|default(208) }} --ppn 1
+      type: SimpleLauncher
 
     {# Runs on every node before its workers start, in a fresh login shell.
        The caller's string must set TMPDIR=/tmp (the PBS default is too long

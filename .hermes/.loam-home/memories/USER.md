@@ -7,3 +7,5 @@ User expects requested campaign tests to be actively executed end-to-end, with c
 User expects campaign tasks to continue autonomously until the requested multi-round acceptance path has actually run or a concrete external blocker prevents it; do not stop at partial progress or summaries.
 §
 User expects explicit permission for requested Polaris/remote-execution work to be treated as authorization to proceed without repeated permission questions or unnecessary pauses; verify state and continue autonomously within the requested scope.
+§
+For Aurora/HPC Chai folding tests, user prefers conservative single-tile execution (submit with gpus=1) unless multi-tile allocation semantics are explicitly verified; they are concerned that gpus=12 may allocate 12 tiles to one run rather than pin one job per tile.

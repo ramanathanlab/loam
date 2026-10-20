@@ -484,14 +484,14 @@
     "archived_at": null,
     "created_at": "2026-10-08T19:31:32.925081+00:00",
     "created_by": "agent",
-    "last_patched_at": "2026-10-09T18:12:10.587111+00:00",
-    "last_used_at": "2026-10-09T18:12:03.831981+00:00",
-    "last_viewed_at": "2026-10-09T18:12:03.830707+00:00",
-    "patch_count": 4,
+    "last_patched_at": "2026-10-20T15:14:29.795336+00:00",
+    "last_used_at": "2026-10-20T15:14:23.009143+00:00",
+    "last_viewed_at": "2026-10-20T15:14:23.007621+00:00",
+    "patch_count": 16,
     "pinned": false,
     "state": "active",
-    "use_count": 3,
-    "view_count": 3
+    "use_count": 13,
+    "view_count": 13
   },
   "huggingface-hub": {
     "archived_at": null,
