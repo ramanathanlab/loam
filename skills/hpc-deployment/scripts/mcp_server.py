@@ -119,6 +119,88 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
                 except Exception as exc:
                     raise ToolError(f"inspect_filesystem failed: {type(exc).__name__}: {exc}") from exc
 
+            async def run_batch(script_path: str | None = None, inputs_path: str | None = None,
+                                timeout_each: float = 900.0, gpus: float = 1,
+                                venv_path: str | None = None, batch_id: str | None = None,
+                                labels: dict | None = None, tool: str | None = None,
+                                tool_version: int | None = None) -> dict:
+                """Run one Python script once per row of a JSONL file, in parallel across the cluster's GPUs.
+
+                Give either script_path or tool (a name from list_tools; newest version
+                unless tool_version). Each row runs as `python script.py input.json` in its
+                own folder, where input.json is that row (an "id" field is optional); a tool
+                registered with call="argv" runs as `python script.py --name value ...`.
+                For a tool, every row is checked against its params before anything runs.
+                Write results to files in that folder and exit 0 on success. The script and
+                inputs file are copied when the batch is created, so later edits do not
+                affect it. Returns at once with a batch_id: poll batch_status, never wait.
+                To resume, pass only batch_id; finished runs are skipped. Use this rather
+                than run_code for more than a handful of runs.
+                """
+                try:
+                    agent = await pool.next_agent(launch_one)
+                    return await agent.handle.action(
+                        "run_batch", script_path=script_path, inputs_path=inputs_path,
+                        timeout_each=timeout_each, gpus=gpus, venv_path=venv_path,
+                        batch_id=batch_id, labels=labels, tool=tool, tool_version=tool_version,
+                    )
+                except Exception as exc:
+                    raise ToolError(f"run_batch failed: {type(exc).__name__}: {exc}") from exc
+
+            async def batch_status(batch_id: str) -> dict:
+                """Progress of one run_batch batch: total, succeeded, failed, unfinished, and the first failures' stderr."""
+                try:
+                    agent = await pool.next_agent(launch_one)
+                    return await agent.handle.action("batch_status", batch_id)
+                except Exception as exc:
+                    raise ToolError(f"batch_status failed: {type(exc).__name__}: {exc}") from exc
+
+            async def list_batches(plan_id: str | None = None, hypothesis_id: str | None = None,
+                                   limit: int = 50) -> list[dict]:
+                """Batches in the registry, newest first, with their last known status."""
+                try:
+                    agent = await pool.next_agent(launch_one)
+                    return await agent.handle.action("list_batches", plan_id=plan_id,
+                                                     hypothesis_id=hypothesis_id, limit=limit)
+                except Exception as exc:
+                    raise ToolError(f"list_batches failed: {type(exc).__name__}: {exc}") from exc
+
+            async def register_tool(name: str, script_path: str, params: dict, description: str,
+                                    example: dict, defaults: dict | None = None,
+                                    call: str = "json", venv_path: str | None = None,
+                                    skip_smoke: bool = False, labels: dict | None = None) -> dict:
+                """Save a reusable script as a named, versioned tool that run_batch(tool=name) can run.
+
+                params maps each input name to one of int, float, str, bool, list, dict;
+                defaults fills params a row leaves out. example is one input row: it is run
+                once as a smoke test and the tool is registered only if it exits 0 (use
+                skip_smoke for a script that needs a GPU; it is then marked tested=false).
+                call="json" runs `python script.py input.json`; call="argv" runs
+                `python script.py --name value ...`. The script (at most 1 MB) is copied, so
+                later edits need a new registration, which becomes the next version.
+                Registering an unchanged script returns the existing version. Tools cannot
+                be deleted. Call list_tools first and reuse a tool that fits.
+                """
+                try:
+                    agent = await pool.next_agent(launch_one)
+                    return await agent.handle.action(
+                        "register_tool", name, script_path, params, description, example,
+                        defaults=defaults, call=call, venv_path=venv_path,
+                        skip_smoke=skip_smoke, labels=labels,
+                    )
+                except Exception as exc:
+                    raise ToolError(f"register_tool failed: {type(exc).__name__}: {exc}") from exc
+
+            async def list_tools(query: str | None = None, name: str | None = None,
+                                 all_versions: bool = False, limit: int = 50) -> list[dict]:
+                """Registered tools: params, description, example, how often batches used them, last clean batch."""
+                try:
+                    agent = await pool.next_agent(launch_one)
+                    return await agent.handle.action("list_tools", query=query, name=name,
+                                                     all_versions=all_versions, limit=limit)
+                except Exception as exc:
+                    raise ToolError(f"list_tools failed: {type(exc).__name__}: {exc}") from exc
+
             # Build the pool before serving: a tool call must never have to
             # launch or verify an agent, or concurrent calls serialize. The
             # pool brings the EL cluster up first, then the clients that
@@ -128,6 +210,14 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
 
             server.add_tool(run_code)
             server.add_tool(inspect_filesystem)
+            # run_batch needs EL; status/listing only read disk and register_tool's
+            # smoke run is a local subprocess, so any agent serves those.
+            if cluster:
+                server.add_tool(run_batch)
+            server.add_tool(batch_status)
+            server.add_tool(list_batches)
+            server.add_tool(register_tool)
+            server.add_tool(list_tools)
             try:
                 yield
             finally:
@@ -139,7 +229,10 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
         gc_executor.shutdown(wait=False, cancel_futures=False)
 
     return FastMCP(name="hpc-deployment", instructions=(
-        "run_code executes Python on a pinned accelerator. inspect_filesystem is bounded read-only ls/cat/tail; it is not a shell."
+        "run_code executes Python on a pinned accelerator. inspect_filesystem is bounded read-only ls/cat/tail; it is not a shell. "
+        "For many runs of one script use run_batch, then poll batch_status; list_batches shows past batches. "
+        "Before writing a new script, call list_tools and reuse a tool that fits; save a reusable script "
+        "with register_tool and run it with run_batch(tool=...)."
     ), lifespan=lifespan, on_duplicate="replace")
 
 

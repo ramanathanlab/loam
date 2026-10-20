@@ -52,9 +52,19 @@ class ExecutionConfig:
     function_name: str = ""
     input_schema: str = ""
     runtime: str = ""
+    # generated (default): the code-generator writes its own code from the
+    # validator's instruction. fixed is for debugging the orchestration only:
+    # it runs Loam's built-in arithmetic check instead. Never a default.
+    code_source: str = "generated"
+    max_children: int = 3
+    workdir_root: str = ""
+    # Prefix of the HPC server's other MCP tool names (run_batch, list_tools,
+    # ...). Empty: derived from tool_name when it ends with function_name.
+    tool_prefix: str = ""
 
 
 _EXECUTION_MODES = {"remote_mcp", "local"}
+_CODE_SOURCES = {"fixed", "generated"}
 
 @dataclass(frozen=True)
 class LoamProfile:
@@ -98,8 +108,17 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
     mode = _clean_text(raw.get("mode"))
     if mode not in _EXECUTION_MODES:
         return None
+    code_source = _clean_text(raw.get("code_source")) or "generated"
+    if code_source not in _CODE_SOURCES:
+        return None
+    extras = dict(
+        code_source=code_source,
+        max_children=_positive_int(raw.get("max_children"), 3 if code_source == "generated" else 1),
+        workdir_root=_clean_text(raw.get("workdir_root")),
+        tool_prefix=_clean_text(raw.get("tool_prefix")),
+    )
     if mode == "local":
-        return ExecutionConfig(mode=mode, runtime=_clean_text(raw.get("runtime")))
+        return ExecutionConfig(mode=mode, runtime=_clean_text(raw.get("runtime")), **extras)
     tool_name = _clean_text(raw.get("tool_name"))
     endpoint = _clean_text(raw.get("endpoint"))
     function_name = _clean_text(raw.get("function_name"))
@@ -113,6 +132,7 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
         function_name=function_name,
         input_schema=input_schema,
         runtime=_clean_text(raw.get("runtime")),
+        **extras,
     )
 
 def _tournament_config(value: Any, state_dir: Path | None = None) -> HypothesisTournamentConfig | None:
@@ -251,6 +271,10 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "function_name": execution.function_name,
             "input_schema": execution.input_schema,
             "runtime": execution.runtime,
+            "code_source": execution.code_source,
+            "max_children": execution.max_children,
+            "workdir_root": execution.workdir_root,
+            "tool_prefix": execution.tool_prefix,
         }
     run_id = _clean_text(os.environ.get("LOAM_RUN_ID"))
     if run_id:

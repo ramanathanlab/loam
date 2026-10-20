@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,10 @@ CAMPAIGN_FILENAME = "hypothesis-campaign.jsonl"
 MAX_REASONER_THREAD_CHARS = 6_000
 EVIDENCE_SCORE_HEADING = "### Evidence Score"
 MAX_BRIEF_CHARS = 2_000
+MAX_CHILD_GOAL_CHARS = 300
+# Tools of the hpc-deployment MCP server a generated-mode code-generator may use.
+HPC_TOOLS = ("run_code", "run_batch", "batch_status", "list_batches", "register_tool", "list_tools", "inspect_filesystem")
+_LOAM_TAG = re.compile(r"\[loam-[a-z-]+=[^\]]*\]")
 
 
 @dataclass(frozen=True)
@@ -124,7 +129,7 @@ def _append_campaign(payload: Mapping[str, Any], row: Mapping[str, Any]) -> None
 
 
 def _code_generator_context(execution: Mapping[str, Any] | None) -> str:
-    """Render the required exact-arithmetic action for the configured backend."""
+    """Render the exact-arithmetic debug check (code_source: fixed only)."""
 
     if isinstance(execution, Mapping) and _text(execution.get("mode")) == "remote_mcp":
         tool_name = _text(execution.get("tool_name"))
@@ -163,6 +168,136 @@ def _code_generator_context(execution: Mapping[str, Any] | None) -> str:
         "'threshold': str(threshold), 'exceeds': mean > threshold})",
         "Return exact stdout and execution status.",
     ))
+
+def _generated(execution: Mapping[str, Any] | None) -> bool:
+    """Whether code-generators write their own code.
+
+    Always, unless a profile sets code_source: fixed, a debugging mode that
+    swaps in the built-in arithmetic check from _code_generator_context.
+    """
+
+    return isinstance(execution, Mapping) and _text(execution.get("code_source")) != "fixed"
+
+
+def _max_children(execution: Mapping[str, Any] | None) -> int:
+    try:
+        return max(1, int(execution.get("max_children", 3)))  # type: ignore[union-attr]
+    except (AttributeError, TypeError, ValueError):
+        return 3
+
+
+def _child_tags(plan_id: str, hypothesis_id: str) -> str:
+    return f"[loam-agent-role=code-generator] [loam-plan-id={plan_id}] [loam-hypothesis-id={hypothesis_id}]"
+
+
+def _strip_tags(value: str) -> str:
+    """Drop model-written Loam markers so a child can't be relabeled to another plan."""
+
+    return " ".join(_LOAM_TAG.sub(" ", value).split())
+
+
+def _workdir(execution: Mapping[str, Any] | None, plan_id: str, hypothesis_id: str) -> str:
+    root = _text(execution.get("workdir_root")) if isinstance(execution, Mapping) else ""
+    return f"{root.rstrip('/')}/{plan_id}/{hypothesis_id}" if root else ""
+
+
+def hpc_tool_names(execution: Mapping[str, Any] | None) -> dict[str, str]:
+    """Hermes names of the HPC MCP tools, keyed by server function name.
+
+    Hermes prefixes MCP tools with the server name, so the other tools share
+    the configured run tool's prefix: tool_prefix when set, otherwise
+    tool_name minus function_name. Without either only tool_name is known.
+    """
+
+    if not isinstance(execution, Mapping):
+        return {}
+    tool_name = _text(execution.get("tool_name"))
+    function_name = _text(execution.get("function_name"))
+    prefix = _text(execution.get("tool_prefix"))
+    if not prefix and function_name and tool_name.endswith(function_name):
+        prefix = tool_name[: -len(function_name)]
+    names = {name: prefix + name for name in HPC_TOOLS} if prefix else {}
+    if tool_name:
+        names[function_name or "run_code"] = tool_name
+    return names
+
+
+def _generated_child_context(instruction: str, execution: Mapping[str, Any] | None, workdir: str) -> str:
+    """Context for a code-generator that writes and runs its own code."""
+
+    execution = execution if isinstance(execution, Mapping) else {}
+    report = (
+        "Report the code you ran, every tool call with its arguments, batch_ids, tool names and "
+        "versions, and the actual stdout/stderr/returncode or batch_status. A failed or unfinished "
+        "run is not evidence; say so instead of guessing results."
+    )
+    if _text(execution.get("mode")) != "remote_mcp":
+        return "\n\n".join((
+            "Write your own Python for the validator's instruction below and execute it locally"
+            + (f" with {_text(execution.get('runtime'))}." if _text(execution.get("runtime")) else "."),
+            "Instruction from validator:\n" + instruction,
+            report,
+        ))
+    names = hpc_tool_names(execution)
+    run_code = names.get(_text(execution.get("function_name")) or "run_code", "")
+    place = (f"under {workdir}" if workdir else "under the HPC base directory (HPC_BASE_DIR)")
+    lines = [
+        f"- `{run_code}`: run one Python program (`payload`) on a GPU worker; use it for one-off runs "
+        "and to write script or JSONL files to disk.",
+    ]
+    if "run_batch" in names:
+        lines += [
+            f"- `{names['list_tools']}`: call this FIRST; reuse a registered tool whose params fit.",
+            f"- `{names['register_tool']}`: save a script you will run many times as a named tool "
+            "(name, script_path, params as {name: int|float|str|bool|list|dict}, description, example "
+            "row). It is smoke-tested on the example; pass skip_smoke only if it needs a GPU to start.",
+            f"- `{names['run_batch']}`: many runs at once: tool=<name> (or script_path) and inputs_path, "
+            "a JSONL file with one row of params per line. Returns a batch_id at once.",
+            f"- `{names['batch_status']}`: poll a batch. If it is still running when you must report, "
+            "report the batch_id and counts as unfinished.",
+            f"- `{names['inspect_filesystem']}`: read result files (ls/cat/tail).",
+            f"- `{names['list_batches']}`: earlier batches for this plan or hypothesis.",
+            "Use run_batch rather than run_code for more than a handful of runs.",
+        ]
+    return "\n\n".join((
+        "Write your own Python for the validator's instruction below and run it on HPC through the "
+        "remote MCP tools listed here; do not execute code locally or use any other tool.",
+        "Instruction from validator:\n" + instruction,
+        f"Remote target: endpoint={_text(execution.get('endpoint'))}; runtime={_text(execution.get('runtime'))}.",
+        "Tools:\n" + "\n".join(lines),
+        f"Write scripts and inputs files {place}, never /tmp: /tmp is local to one node and the next "
+        "tool call may run on another.",
+        report,
+    ))
+
+
+def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_id: str) -> dict[str, Any] | None:
+    """Keep the validator's own instruction, but force tags, role and contract."""
+
+    execution = payload.get("loam_execution")
+    raw = payload.get("arguments")
+    if not isinstance(raw, Mapping):
+        return None
+    tasks = raw.get("tasks")
+    items = tasks if isinstance(tasks, list) else [raw]
+    workdir = _workdir(execution if isinstance(execution, Mapping) else None, plan_id, hypothesis_id)
+    out = []
+    for task in items:
+        if not isinstance(task, Mapping):
+            return None
+        goal = _strip_tags(_text(task.get("goal")))
+        if not goal:
+            return None
+        instruction = "\n\n".join(part for part in (goal, _strip_tags(_text(task.get("context")))) if part)
+        out.append(
+            {
+                "goal": f"{goal[:MAX_CHILD_GOAL_CHARS]} {_child_tags(plan_id, hypothesis_id)}",
+                "context": _generated_child_context(instruction, execution, workdir),
+                "role": "leaf",
+            }
+        )
+    return {"tasks": out}
+
 
 def _marker(value: str, key: str) -> str:
     prefix = f"[{key}="
@@ -296,6 +431,11 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
         if tool_name == "delegate_task":
             return {"action": "block", "message": "code-generator must not delegate"}
         execution = payload.get("loam_execution")
+        if isinstance(execution, Mapping) and execution.get("mode") == "remote_mcp" and _generated(execution):
+            allowed = sorted(set(hpc_tool_names(execution).values()))
+            if tool_name not in allowed:
+                return {"action": "block", "message": f"code-generator may use only the HPC MCP tools {allowed}"}
+            return None
         if isinstance(execution, Mapping) and execution.get("mode") == "remote_mcp":
             required_tool = _text(execution.get("tool_name"))
             if tool_name != required_tool:
@@ -332,6 +472,25 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
             "action": "block",
             "message": "hypothesis-validator may delegate only tagged code-generator children in its plan",
         }
+    execution = payload.get("loam_execution")
+    if _generated(execution if isinstance(execution, Mapping) else None):
+        hypothesis_id = _text(starts[-1].get("hypothesis_id"))
+        used = sum(
+            1
+            for row in rows
+            if row.get("event") == "agent_started"
+            and row.get("role") == "code-generator"
+            and _text(row.get("plan_id")) == plan_id
+            and _text(row.get("hypothesis_id")) == hypothesis_id
+        )
+        cap = _max_children(execution)  # type: ignore[arg-type]
+        raw_tasks = arguments.get("tasks") if isinstance(arguments, Mapping) else None
+        requested = len(raw_tasks) if isinstance(raw_tasks, list) else 1
+        if used + requested > cap:
+            return {
+                "action": "block",
+                "message": f"code-generator budget for this hypothesis is {cap} and {used} are used; return your report now.",
+            }
     return None
 
 
@@ -543,6 +702,9 @@ def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry:
     for item in selected:
         hypothesis = item.get("hypothesis")
         hypothesis_id = _text(hypothesis.get("hypothesis_id")) if isinstance(hypothesis, Mapping) else ""
+        if _generated(execution if isinstance(execution, Mapping) else None):
+            tasks.append(_generated_validator_task(plan_id, hypothesis_id, item, execution))  # type: ignore[arg-type]
+            continue
         tasks.append(
             {
                 "goal": (
@@ -585,11 +747,58 @@ def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry:
     lines = [
         "Loam orchestration directive: launch every selected hypothesis validator now, in one delegate_task batch.",
         f"Each child MUST read and follow {validator.prompt_path}. Call delegate_task exactly once using the ready-to-run task array below; do not rewrite or replace its goals, contexts, tags, or roles. Every validator task object has its required \"role\": \"orchestrator\" inside the task object; a top-level role is insufficient for batch dispatch. Do not perform experimental code or tool calls yourself.",
-        "Every executable action MUST be delegated by that validator to one leaf code-generator child; no other child may execute code.",
+        (
+            f"Every executable action MUST be delegated by that validator to at most {_max_children(execution)} leaf code-generator children; no other child may execute code."  # type: ignore[arg-type]
+            if _generated(execution if isinstance(execution, Mapping) else None)
+            else "Every executable action MUST be delegated by that validator to one leaf code-generator child; no other child may execute code."
+        ),
         "Required delegate_task tasks payload:",
         json.dumps(tasks, ensure_ascii=False, sort_keys=True),
     ]
     return "\n".join(lines)
+
+
+def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[str, Any], execution: Mapping[str, Any]) -> dict[str, Any]:
+    """Validator task for generated mode: it designs the experiment itself."""
+
+    cap = _max_children(execution)
+    return {
+        "goal": (
+            f"Validate the supplied hypothesis by designing the smallest decisive experiment and delegating "
+            f"it to at most {cap} code-generator leaf children, one at a time, iterating on their actual "
+            "results. Do not calculate directly or use any tool other than delegate_task. Then return the "
+            "required report headings, including a bare decimal Evidence Score. "
+            f"[loam-agent-role=hypothesis-validator] [loam-plan-id={plan_id}] "
+            f"[loam-hypothesis-id={hypothesis_id}]"
+        ),
+        "context": json.dumps(
+            {
+                "loam_validator_contract": "v1",
+                "selected_hypothesis": item,
+                "execution_contract": execution,
+                "child_template": {
+                    "role": "leaf",
+                    "goal_suffix": _child_tags(plan_id, hypothesis_id),
+                    "max_children": cap,
+                    "workdir": _workdir(execution, plan_id, hypothesis_id),
+                },
+                "validator_instructions": (
+                    "Restate the hypothesis as a falsifiable claim and design the smallest decisive experiment. "
+                    "Delegate each executable step to a code-generator child: role=leaf, goal = what to compute "
+                    "and the acceptance condition, ending with child_template.goal_suffix; context = exact "
+                    "inputs, parameter ranges and expected outputs. Children write their own code, can reuse "
+                    "registered HPC tools, and run large sweeps as batches. At most max_children children in "
+                    "total. Never compute or run code yourself. Then return exactly these headings: "
+                    "### Hypothesis; ### Outcome; ### Evidence Ledger; ### Credit Assignment; "
+                    "### Evidence Score; ### Next Step. The Evidence Score must be a bare decimal "
+                    "in [-1.00, 1.00], for example +0.75, immediately after its heading."
+                ),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        "role": "orchestrator",
+    }
 
 
 def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registry: Mapping[str, AgentSpec]) -> str:
@@ -632,6 +841,8 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
         plan_id = _text(start.get("plan_id"))
         hypothesis_id = _text(start.get("hypothesis_id"))
         execution = payload.get("loam_execution")
+        if _generated(execution if isinstance(execution, Mapping) else None):
+            return _generated_child_tasks(payload, plan_id, hypothesis_id)
         return {
             "tasks": [
                 {

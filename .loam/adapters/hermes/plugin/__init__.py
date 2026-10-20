@@ -137,12 +137,15 @@ def canonicalize_campaign_delegation(tool_name: str, args: dict[str, Any], **kwa
     values = dict(kwargs)
     values.update(payload_values(profile))
     values.setdefault("session_id", values.get("parent_session_id", ""))
+    values.pop("arguments", None)
     try:
         if str(HOOKS_DIR) not in sys.path:
             sys.path.insert(0, str(HOOKS_DIR))
         from hypothesis_orchestration import canonical_delegation_args
 
-        canonical = canonical_delegation_args(_payload("tool_request", **values))
+        # The model's own args are passed so a generated-mode validator's
+        # instruction to its code-generator survives canonicalization.
+        canonical = canonical_delegation_args(_payload("tool_request", arguments=args, **values))
     except Exception as exc:
         logger.warning("Loam campaign delegation canonicalization failed: %s", exc)
         return None

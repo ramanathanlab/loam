@@ -102,7 +102,23 @@ class HypothesisTournamentTests(unittest.TestCase):
                 profile = config.load_profile()
 
         assert profile is not None
-        self.assertEqual(config.payload_values(profile)["loam_execution"], {"mode": "local", "tool_name": "", "endpoint": "", "function_name": "", "input_schema": "", "runtime": "python3.11"})
+        self.assertEqual(config.payload_values(profile)["loam_execution"], {"mode": "local", "tool_name": "", "endpoint": "", "function_name": "", "input_schema": "", "runtime": "python3.11", "code_source": "generated", "max_children": 3, "workdir_root": "", "tool_prefix": ""})
+
+    def test_execution_parses_generated_code_source(self) -> None:
+        config = _load("loam_config_generated_execution", CONFIG)
+        remote = {"mode": "remote_mcp", "tool_name": "mcp_hpc_run_code", "endpoint": "http://x/mcp",
+                  "function_name": "run_code", "input_schema": "v1"}
+        generated = config._execution_config(
+            {**remote, "code_source": "generated", "workdir_root": " /lus/w ", "tool_prefix": "mcp_hpc_"})
+        self.assertEqual((generated.code_source, generated.max_children, generated.workdir_root,
+                          generated.tool_prefix), ("generated", 3, "/lus/w", "mcp_hpc_"))
+        self.assertEqual(config._execution_config({**remote, "code_source": "generated",
+                                                   "max_children": 5}).max_children, 5)
+        self.assertEqual(config._execution_config(remote).code_source, "generated")
+        self.assertEqual(config._execution_config(remote).max_children, 3)
+        fixed = config._execution_config({**remote, "code_source": "fixed"})
+        self.assertEqual((fixed.code_source, fixed.max_children), ("fixed", 1))
+        self.assertIsNone(config._execution_config({**remote, "code_source": "llm"}))
 
     def test_runtime_state_directory_overrides_profile_and_enables_emergency_mode(self) -> None:
         config = _load("loam_config_runtime_state", CONFIG)

@@ -1,3 +1,4 @@
 # Local Loam runtime state may contain delegated task text and summaries.
 .loam/state/*
 !.loam/state/README.md
+.hermes/.loam-home/config_OLD.yaml

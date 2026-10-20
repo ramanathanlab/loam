@@ -1,0 +1,79 @@
+{# ===========================================================================
+   user_config_template.yaml.j2  --  ALCF AURORA, endpoint `loam-aurora-flex`
+
+   Aurora port of alcf_polaris/user_config_template.yaml.j2 (develop). The
+   job shape and worker environment come per submission from
+   HPC_ENDPOINT_CONFIG_JSON (skills/hpc-deployment/set_env_akv.sh):
+
+       {"account": "FRAME-IDP", "queue": "debug", "walltime": "00:30:00",
+        "nodes_per_block": 1, "max_workers_per_node": 2,
+        "worker_init": "module load frameworks; source .../venv/bin/activate; ..."}
+
+   Differences from Polaris:
+     * hsn0, not bond0, for the compute->login interchange address.
+     * 208 HW threads/node -> --depth=208 with one manager per node.
+     * filesystems=home:flare.
+     * No accelerator pinning by default: in cluster mode EL owns tile
+       placement, so available_accelerators is only emitted when passed.
+
+   String quoting: globus-compute-endpoint 4.19 `_sanitize_user_json`
+   JSON-encodes every caller-supplied string before Jinja sees it, so a
+   string option arrives with its own double quotes. String defaults below
+   therefore embed their quotes (`default('"debug"')`); never add static
+   quotes around a string expression. `worker_init` relies on this too: it
+   renders as one double-quoted YAML scalar, so pass it as a single
+   `;`-separated line.
+   =========================================================================== #}
+
+display_name: {{ display_name|default('"loam-aurora-flex"') }}
+
+engine:
+  type: GlobusComputeEngine
+
+  max_workers_per_node: {{ max_workers_per_node|default(2) }}
+  {% if available_accelerators is defined %}
+  available_accelerators: {{ available_accelerators }}
+  {% endif %}
+  prefetch_capacity: {{ prefetch_capacity|default(0) }}
+
+  {# A rejected qsub logs and retries instead of tearing the endpoint down. #}
+  block_error_handler: {{ block_error_handler|default(false)|lower }}
+
+  strategy: {{ strategy|default('"simple"') }}
+  job_status_kwargs:
+    max_idletime: {{ max_idletime|default(300) }}
+
+  address:
+    type: address_by_interface
+    ifname: {{ ifname|default('"hsn0"') }}
+
+  provider:
+    type: PBSProProvider
+    account: {{ account|default('"FRAME-IDP"') }}
+    queue: {{ queue|default('"debug"') }}
+    walltime: {{ walltime|default('"01:00:00"') }}
+
+    cpus_per_node: 208
+    nodes_per_block: {{ nodes_per_block|default(1) }}
+
+    init_blocks: {{ init_blocks|default(0) }}
+    min_blocks: {{ min_blocks|default(0) }}
+    max_blocks: {{ max_blocks|default(1) }}
+
+    scheduler_options: "#PBS -l filesystems={{ filesystems|default('home:flare') }}\n#PBS -l place=scatter"
+
+    launcher:
+      type: MpiExecLauncher
+      bind_cmd: --cpu-bind
+      overrides: --depth={{ depth|default(208) }} --ppn 1
+
+    {# Runs on every node before its workers start, in a fresh login shell.
+       The caller's string must set TMPDIR=/tmp (the PBS default is too long
+       for the worker pool's AF_UNIX socket), the proxy, and activate a venv
+       holding globus-compute-endpoint with this endpoint's version. #}
+    worker_init: {{ worker_init|default('"export TMPDIR=/tmp"') }}
+
+{# Give resources back when idle: ~300 s idle before the user endpoint
+   shuts down, ~48 h ceiling. #}
+idle_heartbeats_soft: {{ idle_heartbeats_soft|default(10) }}
+idle_heartbeats_hard: {{ idle_heartbeats_hard|default(5760) }}
