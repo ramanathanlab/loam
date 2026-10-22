@@ -114,10 +114,16 @@ ledgers) and are loaded through the adapter at
 
 See `.loam/README.md` for the full hook contract and the global-install option.
 
+> **Config templates.** Copy `examples/hermes-config.yaml.example` into your
+> Hermes home as `config.yaml` and fill in the `<PLACEHOLDER>`s. **Credentials
+> are not in this file** — they live in `auth.json`, which is user-provided and
+> gitignored; create it with `hermes` login, never commit a filled-in one.
+
 ## Step 4 — The Loam profile (`~/.hermes/loam.yaml`)
 
-One active profile defines the tournament and the execution contract. Use the
-`aurora_akv` profile as the template. Key blocks:
+Copy `examples/loam.yaml.example` to `~/.hermes/loam.yaml` and edit every
+`<PLACEHOLDER>`. One active profile defines the tournament and the execution
+contract. Key blocks:
 
 - `hypothesis_tournament` — `jnana_root`, the generation endpoint (`:51900`) and
   ranking endpoint (`:51911`), `initial_hypotheses`, `matches_per_run`, `top_k`,
