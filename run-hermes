@@ -19,10 +19,11 @@ export LOAM_PRE_LLM_EVERY="${LOAM_PRE_LLM_EVERY:-1}"
 export LOAM_STATE_DIR="${LOAM_STATE_DIR:-}"
 export LOAM_RUN_ID="${LOAM_RUN_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 
-# The model (Hermes and Jnana) is gpt-oss-120b on ALCF Minerva, reached through
-# scripts/alcf_inference_proxy.py, which injects a fresh ALCF token. Start it if
-# nothing is listening yet; it is detached so it outlives this Hermes session.
-# Skip with ALCF_PROXY=0 (e.g. when using another provider).
+# The model for Hermes (nemotron-3-ultra) and Jnana's tournament (gpt-oss-120b)
+# is ALCF Minerva via scripts/alcf_inference_proxy.py. Argo is not used: its
+# content filter drops henipavirus prompts (empty replies / HTTP 400).
+# Starts the proxy if nothing is listening; detached, so it outlives Hermes.
+# Skip with ALCF_PROXY=0 when using another provider via /model.
 ALCF_PROXY_PORT="${ALCF_PROXY_PORT:-51911}"
 ALCF_PROXY_PYTHON="${ALCF_PROXY_PYTHON:-$HOME/.loam-venv-312/bin/python}"
 ALCF_PROXY_LOG="${ALCF_PROXY_LOG:-$HOME/.loam-hpc/alcf_proxy_minerva.log}"

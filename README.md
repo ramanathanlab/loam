@@ -32,14 +32,21 @@ The hook integration and its runtime state are under `.loam/`. See `.loam/README
 
 The focused verification suite exercises the ranked-hypothesis lifecycle without a live MCP execution service: it loads the three prompt roles, verifies validator-to-code-generator tool boundaries, simulates tagged subagent start/stop records, collates completed validator reports into a reasoner request, and confirms the reasoner brief reaches the next tournament goal. It also covers tournament profile parsing and the existing lifecycle/provenance ledger contracts.
 
-Run it from the repository root:
+Run it from the repository root, using a Python environment that has Loam's
+dependencies installed (PyYAML in particular — without it `load_profile` returns
+`None` and the tournament profile-parsing tests fail; the tournament suite also
+imports `jnana`, which imports `yaml` at module load). Use the same interpreter
+the campaign runs under, e.g. the Loam virtualenv:
 
 ```bash
-python3 -m unittest \
+/Users/architvasan/.loam-venv-312/bin/python -m unittest \
   tests.test_hypothesis_orchestration \
   tests.test_hypothesis_tournament \
   tests.test_subagent_ledger -v
 ```
+
+Substitute your own interpreter if it differs; a bare `python3` works only if
+`pip install -e .` (or at least `pyyaml`) has been run in it.
 
 This is deterministic fixture coverage. It does not invoke a real harness subagent, MCP execution endpoint, or inference endpoint.
 

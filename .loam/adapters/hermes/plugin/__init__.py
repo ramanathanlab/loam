@@ -195,7 +195,10 @@ def pre_llm_call(session_id: str = "", **kwargs: Any) -> dict[str, Any] | None:
     timeout_seconds = HOOK_TIMEOUT_SECONDS
     tournament = profile.hypothesis_tournament
     if tournament is not None:
-        timeout_seconds = max(timeout_seconds, tournament.timeout_seconds)
+        # The knowledge pre-pass runs inside the same hook, before generation.
+        knowledge = tournament.knowledge or {}
+        timeout_seconds = max(timeout_seconds,
+                              tournament.timeout_seconds + int(knowledge.get("timeout_seconds") or 0))
     return _invoke(
         "pre-llm.py",
         _payload(
@@ -248,7 +251,9 @@ def subagent_stop(**kwargs: Any) -> None:
 def register(ctx: Any) -> None:
     ctx.register_middleware("tool_request", canonicalize_campaign_delegation)
     ctx.register_hook("pre_tool_call", pre_tool_call)
-    ctx.register_hook("post_tool_call", post_tool_call)
+    # Temporarily disabled: keep post_tool_call/post-tool.py intact while the
+    # remaining lifecycle hooks are verified end to end.
+    # ctx.register_hook("post_tool_call", post_tool_call)
     ctx.register_hook("pre_llm_call", pre_llm_call)
     ctx.register_hook("subagent_start", subagent_start)
     ctx.register_hook("subagent_stop", subagent_stop)

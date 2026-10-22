@@ -536,6 +536,51 @@ class HypothesisOrchestrationTests(unittest.TestCase):
         self.assertTrue(context["child_template"]["workdir"].startswith("/lus/campaign/work/plan_"))
         self.assertIn("### Evidence Score", context["validator_instructions"])
 
+    def test_validator_definition_is_injected_not_referenced_as_a_path(self) -> None:
+        """A validator may call only delegate_task, so its prompt must be inlined.
+
+        Handing it `prompt_path` to read fails closed in tool_policy, which left
+        the validator running with no role instructions at all.
+        """
+
+        orchestration = _load("loam_orchestration_injected_definition")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._generated_payload(Path(temporary))
+            directive = orchestration.context_for(payload)
+            registry = orchestration.agent_registry(payload)
+
+        body = registry["hypothesis-validator"].prompt_body
+        self.assertTrue(body, "validator prompt body should be loaded")
+        self.assertFalse(body.startswith("---"), "front matter should be stripped")
+        self.assertNotIn("name: hypothesis-validator", body)
+        self.assertLessEqual(len(body), orchestration.MAX_AGENT_PROMPT_CHARS)
+
+        tasks = json.loads(directive.split("Required delegate_task tasks payload:\n", 1)[1])
+        raw_context = tasks[0]["context"]
+        context = json.loads(raw_context)
+        self.assertEqual(context["agent_definition"], body)
+        # The directive must not tell the child to read a file it cannot read.
+        self.assertNotIn("MUST read and follow", directive)
+
+        # The assignment must precede the role boilerplate in the serialized
+        # payload. sort_keys=True silently ordered `agent_definition` first and
+        # pushed `selected_hypothesis` ~9000 chars in, so assert on byte
+        # positions rather than dict keys, which carry no order through JSON.
+        self.assertLess(
+            raw_context.index('"selected_hypothesis"'),
+            raw_context.index('"agent_definition"'),
+            "selected_hypothesis must come before the long agent_definition",
+        )
+        self.assertLess(
+            raw_context.index('"validator_instructions"'),
+            raw_context.index('"agent_definition"'),
+        )
+        # tool_policy matches this exact substring; serialization must keep it.
+        self.assertIn('"loam_validator_contract": "v1"', raw_context)
+        # The validator must be told to pass the hypothesis text down, because a
+        # child cannot resolve a bare id.
+        self.assertIn("provenance tag", context["validator_instructions"])
+
     def test_generated_canonical_keeps_instruction_and_forces_tags(self) -> None:
         orchestration = _load("loam_orchestration_generated_canonical")
         with tempfile.TemporaryDirectory() as temporary:
@@ -563,7 +608,11 @@ class HypothesisOrchestrationTests(unittest.TestCase):
         task = canonical["tasks"][0]
         self.assertEqual(task["role"], "leaf")
         self.assertNotIn("other-plan", task["goal"])
-        self.assertTrue(task["goal"].startswith("Sweep T from 300 to 900 K [loam-agent-role=code-generator]"))
+        # The goal now leads with the hypothesis (so the child can't miss it),
+        # then preserves the validator's instruction, then the forced tags.
+        self.assertIn("Test this binder hypothesis", task["goal"])
+        self.assertIn("Sweep T from 300 to 900 K", task["goal"])
+        self.assertIn("[loam-agent-role=code-generator]", task["goal"])
         self.assertIn("[loam-plan-id=plan-1] [loam-hypothesis-id=h-1]", task["goal"])
         self.assertIn("Use 500 points; report the peak.", task["context"])
         self.assertIn("mcp_hpc_list_tools", task["context"])

@@ -24,6 +24,11 @@ MAX_REASONER_THREAD_CHARS = 6_000
 EVIDENCE_SCORE_HEADING = "### Evidence Score"
 MAX_BRIEF_CHARS = 2_000
 MAX_CHILD_GOAL_CHARS = 300
+# Bound on the hypothesis text forwarded into a child's context.
+MAX_HYPOTHESIS_CHARS = 4_000
+# Bound on an injected agent definition. The checked-in prompts are ~4-10 KB;
+# this leaves headroom while keeping a runaway edit out of every child context.
+MAX_AGENT_PROMPT_CHARS = 24_000
 # Tools of the hpc-deployment MCP server a generated-mode code-generator may use.
 HPC_TOOLS = ("run_code", "run_batch", "batch_status", "list_batches", "register_tool", "list_tools", "inspect_filesystem")
 _LOAM_TAG = re.compile(r"\[loam-[a-z-]+=[^\]]*\]")
@@ -37,6 +42,14 @@ class AgentSpec:
     prompt_path: Path
     allowed_children: tuple[str, ...]
     direct_execution: bool
+    # The prompt body, for injection into the child's task context. It cannot be
+    # delivered as a path to read: `tool_policy` allows a hypothesis-validator
+    # only `delegate_task`, so a validator told to read its own definition gets
+    # back "hypothesis-validator must delegate executable work to
+    # code-generator" and then runs with no role instructions at all. The
+    # reasoner is likewise restricted. Only a code-generator could read a path,
+    # and it already receives its contract inline.
+    prompt_body: str = ""
 
 
 def _text(value: Any) -> str:
@@ -78,6 +91,21 @@ def _front_matter(path: Path) -> dict[str, str]:
     raise ValueError(f"agent prompt has unterminated front matter: {path}")
 
 
+def _prompt_body(path: Path) -> str:
+    """Return the agent prompt with its front matter removed, bounded in size."""
+
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    if lines and lines[0] == "---":
+        for index in range(1, len(lines)):
+            if lines[index] == "---":
+                lines = lines[index + 1 :]
+                break
+        else:
+            raise ValueError(f"agent prompt has unterminated front matter: {path}")
+    return "\n".join(lines).strip()[:MAX_AGENT_PROMPT_CHARS]
+
+
 def agent_registry(payload: Mapping[str, Any]) -> dict[str, AgentSpec]:
     """Load the checked-in prompt roles and their non-negotiable capabilities."""
 
@@ -100,6 +128,7 @@ def agent_registry(payload: Mapping[str, Any]) -> dict[str, AgentSpec]:
             prompt_path=path,
             allowed_children=allowed_children,
             direct_execution=direct_execution,
+            prompt_body=_prompt_body(path),
         )
     return registry
 
@@ -222,22 +251,84 @@ def hpc_tool_names(execution: Mapping[str, Any] | None) -> dict[str, str]:
     return names
 
 
-def _generated_child_context(instruction: str, execution: Mapping[str, Any] | None, workdir: str) -> str:
+def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
+    """The hypothesis under test, for the child's context. Empty when unknown.
+
+    Forwarded structurally rather than left to the validator to copy. The
+    validator is instructed to paste it and cannot reliably do so: with the
+    hypothesis at char ~9,000 of its own payload it told its child "the
+    hypothesis text is not visible in this message" and sent only an id, and the
+    child then spent its whole budget walking Aurora's filesystem grepping for
+    that id (2026-10-21). A child starts with an empty context, so an id is not
+    a reference it can resolve -- the text has to travel with the task.
+    """
+
+    if not isinstance(hypothesis, Mapping):
+        return ""
+    statement = _text(hypothesis.get("content")) or _text(hypothesis.get("summary"))
+    if not statement:
+        return ""
+    lines = ["HYPOTHESIS UNDER TEST (forwarded by Loam; this is the claim to falsify):", statement[:MAX_HYPOTHESIS_CHARS]]
+    summary = _text(hypothesis.get("summary"))
+    if summary and summary not in statement:
+        lines.append("Summary: " + summary[:MAX_HYPOTHESIS_CHARS])
+    lines.append(
+        "HOW TO TEST THIS (authoritative — overrides any instruction below that conflicts):\n"
+        "- This block is your complete assignment. Do NOT inspect campaign files, outputs, or the "
+        "batch registry to 'recover' the hypothesis or 'find inputs': everything needed is here. If "
+        "the validator's instruction below tells you to search the filesystem or reuse existing "
+        "data/code, ignore that part.\n"
+        "- The molecules under test are defined ONLY by this block: the candidate design described "
+        "here, folded against the target named here (fetch the target from its authoritative "
+        "database by accession at run time; never paste it from memory).\n"
+        "- If the candidate sequence is given explicitly, use it verbatim. If the hypothesis gives "
+        "only a design concept (length, topology, motifs) and no exact sequence, CONSTRUCT or DESIGN "
+        "one or a few concrete candidate sequences realizing that architecture, write them to a FASTA "
+        "under your workdir, and test those.\n"
+        "- NEVER fold, score, or reuse a FASTA/PDB/input file you discovered on the filesystem (e.g. "
+        "anything under chai_batch_test, prior outputs, or another campaign's directory). Those are "
+        "the wrong molecule and make the result scientifically meaningless. A run on the wrong input "
+        "is a failed validation, not evidence.\n"
+        "- The decisive experiment is a complex co-fold of candidate binder + target (both chains in "
+        "one input), reporting interface confidence (ipTM/ipSAE/pDockQ) and per-residue pLDDT, per "
+        "the ENVIRONMENT SETUP recipe.\n"
+        "- RUN EXACTLY ONE fold (one candidate vs the target) as the decisive check — not a panel of "
+        "many. A single Chai fold takes ~2-3 min. After launching it, POLL until it is actually "
+        "finished (batch_status shows complete, or the run_code call returns with the .cif on disk), "
+        "then read the real metrics and report them. NEVER report while a run is unfinished: an "
+        "unfinished run yields no evidence and wastes the whole round. Budget is one fold per check, "
+        "so make the one fold count and wait for it rather than firing many and reporting early."
+    )
+    return "\n".join(lines)
+
+
+def _generated_child_context(instruction: str, execution: Mapping[str, Any] | None, workdir: str,
+                             hypothesis: Mapping[str, Any] | None = None) -> str:
     """Context for a code-generator that writes and runs its own code."""
 
     execution = execution if isinstance(execution, Mapping) else {}
+    hypothesis_block = _hypothesis_block(hypothesis)
+    # Campaign environment recipe (venv activation, tool CLIs, weight paths),
+    # carried in the contract because the child cannot see the campaign's local
+    # files. Without it a child hand-rolls `import chai_lab` against the source
+    # tree with no venv and dies on a missing dependency (observed 2026-10-21:
+    # ModuleNotFoundError: gemmi).
+    setup = _text(execution.get("setup"))
+    setup_block = ("ENVIRONMENT SETUP (use exactly this; do not invent venv or interpreter paths):\n" + setup) if setup else ""
     report = (
         "Report the code you ran, every tool call with its arguments, batch_ids, tool names and "
         "versions, and the actual stdout/stderr/returncode or batch_status. A failed or unfinished "
         "run is not evidence; say so instead of guessing results."
     )
     if _text(execution.get("mode")) != "remote_mcp":
-        return "\n\n".join((
+        return "\n\n".join(part for part in (
             "Write your own Python for the validator's instruction below and execute it locally"
             + (f" with {_text(execution.get('runtime'))}." if _text(execution.get("runtime")) else "."),
+            hypothesis_block,
+            setup_block,
             "Instruction from validator:\n" + instruction,
             report,
-        ))
+        ) if part)
     names = hpc_tool_names(execution)
     run_code = names.get(_text(execution.get("function_name")) or "run_code", "")
     place = (f"under {workdir}" if workdir else "under the HPC base directory (HPC_BASE_DIR)")
@@ -261,16 +352,61 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
             f"- `{names['list_batches']}`: earlier batches for this plan or hypothesis.",
             "Use run_batch rather than run_code for more than a handful of runs.",
         ]
-    return "\n\n".join((
+    return "\n\n".join(part for part in (
         "Write your own Python for the validator's instruction below and run it on HPC through the "
         "remote MCP tools listed here; do not execute code locally or use any other tool.",
+        # Before the validator's instruction: the claim matters more than the
+        # wording of the request, and the validator's text may contradict it
+        # (e.g. "the hypothesis text is not visible in this message").
+        hypothesis_block,
+        setup_block,
         "Instruction from validator:\n" + instruction,
         f"Remote target: endpoint={_text(execution.get('endpoint'))}; runtime={_text(execution.get('runtime'))}.",
         "Tools:\n" + "\n".join(lines),
         f"Write scripts and inputs files {place}, never /tmp: /tmp is local to one node and the next "
         "tool call may run on another.",
         report,
-    ))
+    ) if part)
+
+
+_RECOVER_FROM_FS = re.compile(
+    r"[^.]*\b(recover|locate|inspect|find|search)\b[^.]*\b(hypothesis|context|campaign files?|"
+    r"project context|data/code|inputs?|registry|filesystem)\b[^.]*\.",
+    re.IGNORECASE,
+)
+
+
+def _neutralize_fs_recovery(text: str) -> str:
+    """Drop validator sentences that send the child hunting the filesystem.
+
+    A luna validator writes "first inspect the campaign/project context to
+    recover the exact supplied hypothesis and any data/code" into the child's
+    instruction. The child then ignores the hypothesis already in its context,
+    hunts the filesystem, and either folds a leftover fixture or gives up asking
+    for the hypothesis to be "provided" (both observed 2026-10-22). The
+    hypothesis and recipe are injected structurally, so this framing is pure
+    noise; strip it before relaying the validator's instruction.
+    """
+
+    return _RECOVER_FROM_FS.sub("", text).strip()
+
+
+def _child_goal(hypothesis: Mapping[str, Any] | None, validator_goal: str, plan_id: str, hypothesis_id: str) -> str:
+    """Lead the child's GOAL with the hypothesis, not the validator's framing.
+
+    The hypothesis is injected in the context block, but luna skims past it and
+    acts on the goal line. Putting the claim first in the goal makes "test THIS"
+    the primary task instead of "go find a hypothesis."
+    """
+
+    tags = _child_tags(plan_id, hypothesis_id)
+    lead = ""
+    if isinstance(hypothesis, Mapping):
+        claim = _text(hypothesis.get("summary")) or _text(hypothesis.get("content"))
+        if claim:
+            lead = f"Test this binder hypothesis (full text + how-to in your context; do NOT search for it): {claim[:220]} || "
+    body = _neutralize_fs_recovery(validator_goal)
+    return f"{lead}{body[:MAX_CHILD_GOAL_CHARS]} {tags}"
 
 
 def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_id: str) -> dict[str, Any] | None:
@@ -283,6 +419,10 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
     tasks = raw.get("tasks")
     items = tasks if isinstance(tasks, list) else [raw]
     workdir = _workdir(execution if isinstance(execution, Mapping) else None, plan_id, hypothesis_id)
+    # Look the hypothesis up here rather than trusting the validator to have
+    # copied it into the instruction; see _hypothesis_block. Unknown id -> empty
+    # block, and the child's context is exactly as it was before.
+    hypothesis = _full_hypotheses(payload).get(hypothesis_id)
     out = []
     for task in items:
         if not isinstance(task, Mapping):
@@ -290,11 +430,12 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
         goal = _strip_tags(_text(task.get("goal")))
         if not goal:
             return None
-        instruction = "\n\n".join(part for part in (goal, _strip_tags(_text(task.get("context")))) if part)
+        clean = _neutralize_fs_recovery(goal)
+        instruction = "\n\n".join(part for part in (clean, _neutralize_fs_recovery(_strip_tags(_text(task.get("context"))))) if part)
         out.append(
             {
-                "goal": f"{goal[:MAX_CHILD_GOAL_CHARS]} {_child_tags(plan_id, hypothesis_id)}",
-                "context": _generated_child_context(instruction, execution, workdir),
+                "goal": _child_goal(hypothesis, goal, plan_id, hypothesis_id),
+                "context": _generated_child_context(instruction, execution, workdir, hypothesis),
                 "role": "leaf",
             }
         )
@@ -311,16 +452,22 @@ def _marker(value: str, key: str) -> str:
 
 
 def _evidence_score(summary: str) -> float | None:
-    """Extract the validator's explicitly formatted calibrated evidence score."""
+    """Extract the validator's calibrated evidence score from its report.
 
-    section = summary.split(EVIDENCE_SCORE_HEADING, 1)
-    if len(section) != 2:
+    Tolerant of how the models actually format the heading. Validators emit
+    "## Evidence Score\n\n0.18" (two hashes, number on the next line), while the
+    original parser required exactly "### Evidence Score" with the number on the
+    same line, so real scored rounds (0.18, 0.00) were silently dropped as
+    `missing` (observed 2026-10-22). Match the heading at any level (#, ##, ###,
+    or none) and take the first signed decimal after it, across whitespace or
+    newlines and optional backticks.
+    """
+
+    match = re.search(r"#{0,6}\s*Evidence\s+Score\b\s*:?\s*`?\s*([+-]?\d*\.?\d+)", summary, re.IGNORECASE)
+    if not match:
         return None
-    value = section[1].lstrip().split(None, 1)[0] if section[1].lstrip() else ""
-    if value.startswith("`") and value.endswith("`"):
-        value = value[1:-1]
     try:
-        score = float(value)
+        score = float(match.group(1))
     except ValueError:
         return None
     return score if -1.0 <= score <= 1.0 else None
@@ -349,7 +496,7 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
             for row in rows
         )
     )
-    active = _active_plan(rows, _text(payload.get("workflow_id")))
+    active = _active_plan(rows, _text(payload.get("workflow_id")), _text(payload.get("loam_run_id")))
     active_validators_complete = bool(
         active is not None
         and active[1]
@@ -570,21 +717,38 @@ def prepare_payload(payload: dict[str, Any]) -> None:
         )
 
 
-def _active_plan(rows: list[dict[str, Any]], workflow_id: str) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]] | None:
-    """Return the most recent started plan until its reasoner has completed."""
+def _active_plan(
+    rows: list[dict[str, Any]], workflow_id: str, run_id: str = ""
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]] | None:
+    """Return the most recent started plan until its reasoner has completed.
+
+    Scoped to the current run: a plan started by a PRIOR run (a different
+    ``run_id``) is never treated as active. Otherwise an earlier run that
+    dispatched validators but exited before they completed (e.g. a one-shot
+    ``-z`` turn) would leave a started-but-never-finished plan that deadlocks
+    every later run's coordinator — the pre-tool policy demands the pending
+    plan's validators while ``context_for`` injects no payload for it. When
+    ``run_id`` is empty the scope falls back to workflow only (legacy behaviour
+    and the fixture tests, which do not set a run id).
+    """
+
+    def _scope(row: Mapping[str, Any]) -> bool:
+        return _text(row.get("workflow_id")) == workflow_id and (
+            not run_id or _text(row.get("run_id")) == run_id
+        )
 
     plan_ids = [
         _text(row.get("plan_id"))
         for row in rows
         if row.get("event") == "agent_started"
         and row.get("role") == "hypothesis-validator"
-        and _text(row.get("workflow_id")) == workflow_id
+        and _scope(row)
     ]
     for plan_id in reversed(plan_ids):
         if any(
             row.get("event") == "reasoner_completed"
             and _text(row.get("plan_id")) == plan_id
-            and _text(row.get("workflow_id")) == workflow_id
+            and _scope(row)
             for row in rows
         ):
             continue
@@ -594,14 +758,14 @@ def _active_plan(rows: list[dict[str, Any]], workflow_id: str) -> tuple[str, lis
             if row.get("event") == "agent_started"
             and row.get("role") == "hypothesis-validator"
             and _text(row.get("plan_id")) == plan_id
-            and _text(row.get("workflow_id")) == workflow_id
+            and _scope(row)
         ]
         completions = [
             row
             for row in rows
             if row.get("event") == "validator_completed"
             and _text(row.get("plan_id")) == plan_id
-            and _text(row.get("workflow_id")) == workflow_id
+            and _scope(row)
         ]
         return plan_id, starts, completions
     return None
@@ -705,7 +869,7 @@ def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry:
         hypothesis = item.get("hypothesis")
         hypothesis_id = _text(hypothesis.get("hypothesis_id")) if isinstance(hypothesis, Mapping) else ""
         if _generated(execution if isinstance(execution, Mapping) else None):
-            tasks.append(_generated_validator_task(plan_id, hypothesis_id, item, execution))  # type: ignore[arg-type]
+            tasks.append(_generated_validator_task(plan_id, hypothesis_id, item, execution, validator.prompt_body))  # type: ignore[arg-type]
             continue
         tasks.append(
             {
@@ -739,16 +903,17 @@ def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry:
                             "### Evidence Score; ### Next Step. The Evidence Score must be a bare decimal "
                             "in [-1.00, 1.00], for example +0.75, immediately after its heading."
                         ),
+                        # Last on purpose; see the generated-mode task for why.
+                        "agent_definition": validator.prompt_body,
                     },
                     ensure_ascii=False,
-                    sort_keys=True,
                 ),
                 "role": "orchestrator",
             }
         )
     lines = [
         "Loam orchestration directive: launch every selected hypothesis validator now, in one delegate_task batch.",
-        f"Each child MUST read and follow {validator.prompt_path}. Call delegate_task exactly once using the ready-to-run task array below; do not rewrite or replace its goals, contexts, tags, or roles. Every validator task object has its required \"role\": \"orchestrator\" inside the task object; a top-level role is insufficient for batch dispatch. Do not perform experimental code or tool calls yourself.",
+        f"Each child's role definition ({validator.prompt_path.name}) is already inlined in its task context as \"agent_definition\" -- the validator cannot read that file, since it may call no tool but delegate_task, so do not replace the definition with a path. Call delegate_task exactly once using the ready-to-run task array below; do not rewrite or replace its goals, contexts, tags, or roles. Every validator task object has its required \"role\": \"orchestrator\" inside the task object; a top-level role is insufficient for batch dispatch. Do not perform experimental code or tool calls yourself.",
         (
             f"Every executable action MUST be delegated by that validator to at most {_max_children(execution)} leaf code-generator children; no other child may execute code."  # type: ignore[arg-type]
             if _generated(execution if isinstance(execution, Mapping) else None)
@@ -760,7 +925,7 @@ def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry:
     return "\n".join(lines)
 
 
-def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[str, Any], execution: Mapping[str, Any]) -> dict[str, Any]:
+def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[str, Any], execution: Mapping[str, Any], agent_definition: str = "") -> dict[str, Any]:
     """Validator task for generated mode: it designs the experiment itself."""
 
     cap = _max_children(execution)
@@ -773,6 +938,13 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
             f"[loam-agent-role=hypothesis-validator] [loam-plan-id={plan_id}] "
             f"[loam-hypothesis-id={hypothesis_id}]"
         ),
+        # Deliberately ordered, so sort_keys must stay off. Alphabetical order
+        # put `agent_definition` first, and at ~8.6 KB it pushed the actual
+        # assignment to roughly char 9,000 of an 11 KB payload -- a validator
+        # then told its child "the hypothesis text is not visible in this
+        # message" while holding it (2026-10-21). The assignment and the
+        # instruction for passing it down come first; the role boilerplate goes
+        # last, where its length costs nothing.
         "context": json.dumps(
             {
                 "loam_validator_contract": "v1",
@@ -785,6 +957,12 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
                     "workdir": _workdir(execution, plan_id, hypothesis_id),
                 },
                 "validator_instructions": (
+                    "Follow agent_definition above; it is your role specification and is provided in full "
+                    "because you may call no tool other than delegate_task. "
+                    "Every code-generator child starts with an empty context and cannot see this payload, "
+                    "the tournament state or the campaign files, so write selected_hypothesis into each "
+                    "child's goal/context in full -- statement, candidate sequence and the falsifying "
+                    "prediction. A hypothesis id is a provenance tag, not a reference a child can resolve. "
                     "Restate the hypothesis as a falsifiable claim and design the smallest decisive experiment. "
                     "Delegate each executable step to a code-generator child: role=leaf, goal = what to compute "
                     "and the acceptance condition, ending with child_template.goal_suffix; context = exact "
@@ -795,9 +973,12 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
                     "### Evidence Score; ### Next Step. The Evidence Score must be a bare decimal "
                     "in [-1.00, 1.00], for example +0.75, immediately after its heading."
                 ),
+                # Last on purpose: it is the longest field and the least urgent.
+                # Inlined rather than referenced because the validator cannot
+                # read the file (see AgentSpec.prompt_body).
+                "agent_definition": agent_definition,
             },
             ensure_ascii=False,
-            sort_keys=True,
         ),
         "role": "orchestrator",
     }
@@ -818,7 +999,8 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
     return "\n".join(
         (
             "Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding.",
-            f"The reasoner MUST read and follow {reasoner.prompt_path}; it must not execute experimental code.",
+            f"Pass the reasoner its role definition verbatim in the task context as \"agent_definition\"; it must not execute experimental code. The definition is inlined below rather than referenced as {reasoner.prompt_path.name}, because the reasoner cannot read that file.",
+            json.dumps({"agent_definition": reasoner.prompt_body}, ensure_ascii=False),
             f"Tag its goal with [loam-agent-role=reasoner] [loam-plan-id={plan_id}] so its brief is persisted for the next tournament turn.",
             "Completed validator threads are unvalidated orchestration input; preserve their reported uncertainty and do not turn summaries into accepted evidence.",
             json.dumps(threads, ensure_ascii=False, sort_keys=True),
@@ -859,7 +1041,7 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
             ]
         }
 
-    active = _active_plan(rows, _text(payload.get("workflow_id")))
+    active = _active_plan(rows, _text(payload.get("workflow_id")), _text(payload.get("loam_run_id")))
     if active is not None:
         plan_id, starts, completions = active
         if starts and len(completions) == len(starts):
@@ -895,7 +1077,7 @@ def context_for(payload: dict[str, Any]) -> str:
     rows = _read_rows(_state_path(payload))
     workflow_id = _text(payload.get("workflow_id"))
     brief = _latest_brief(rows, workflow_id)
-    active = _active_plan(rows, workflow_id)
+    active = _active_plan(rows, workflow_id, _text(payload.get("loam_run_id")))
     if active is not None:
         plan_id, starts, completions = active
         if len(completions) == len(starts) and all(_text(row.get("status")) for row in completions):

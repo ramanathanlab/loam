@@ -15,6 +15,7 @@ from typing import Any
 from hypothesis_orchestration import tool_policy
 from memory_recall import audit_duplicates
 from run_manifest import ensure as ensure_run_manifest
+from tool_audit import record as record_tool_call
 
 
 def _payload() -> dict[str, Any]:
@@ -28,6 +29,9 @@ def main() -> int:
     try:
         payload = _payload()
         ensure_run_manifest(payload)
+        # Record first and unconditionally: a call that tool_policy is about to
+        # block is exactly the one worth seeing.
+        record_tool_call(payload)
         result = tool_policy(payload)
         if result is None and payload.get("tool_name") == "delegate_task":
             result = audit_duplicates(payload)

@@ -77,6 +77,74 @@ def _base_url(config: Mapping[str, Any]) -> str:
     return endpoint
 
 
+# Keys a per-role block may override. Anything else (jnana_root, state_file,
+# match counts, the knowledge pre-pass) stays shared across roles.
+_ROLE_OVERRIDE_KEYS = (
+    "provider",
+    "model",
+    "inference_endpoint",
+    "endpoint_is_chat_completions",
+    "api_key_env",
+    "omit_temperature",
+    "json_max_tokens",
+)
+
+
+def _role_config(config: Mapping[str, Any], role: str) -> Mapping[str, Any]:
+    """Overlay an optional per-role model block on the profile's defaults.
+
+    Jnana uses the tournament's model for two different jobs: generating
+    hypotheses and judging pairwise matches. A profile can point each at its own
+    provider/model/endpoint by adding a block named after the role, e.g.
+
+        hypothesis_tournament:
+          provider: openai            # defaults for every role
+          inference_endpoint: ...
+          model: ...
+          generation:
+            model: argo:gpt-5.6-luna
+            inference_endpoint: http://127.0.0.1:51900/v1
+
+    Any key left out of the block falls back to the top-level value, so profiles
+    that declare no role blocks behave exactly as before.
+    """
+
+    override = config.get(role)
+    if not isinstance(override, Mapping):
+        return config
+    merged = dict(config)
+    for key in _ROLE_OVERRIDE_KEYS:
+        if key not in override:
+            continue
+        value = override[key]
+        # An empty/blank string is a no-op rather than an invalid override: it
+        # would otherwise produce an LLMConfig with no model or no endpoint.
+        if isinstance(value, str) and not value.strip():
+            continue
+        merged[key] = value
+    return merged
+
+
+def _llm_config(config: Mapping[str, Any], role: str, min_json_tokens: int) -> Any:
+    """Build the LLMConfig for one tournament role, honouring its override block."""
+
+    from jnana.protognosis.core.multi_llm_config import LLMConfig
+
+    resolved = _role_config(config, role)
+    api_key_env = str(resolved.get("api_key_env") or "").strip()
+    api_key = os.environ.get(api_key_env, "").strip() if api_key_env else "local-no-auth"
+    return LLMConfig(
+        provider=str(resolved["provider"]),
+        model=str(resolved["model"]),
+        api_key=api_key,
+        base_url=_base_url(resolved),
+        model_adapter={
+            "omit_temperature": resolved.get("omit_temperature") is True,
+            "json_max_tokens": max(min_json_tokens, _positive(resolved.get("json_max_tokens"), 1024)),
+        },
+    )
+
+
 def _write_report(reports_dir: Path, payload: Mapping[str, Any], result: Mapping[str, Any]) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     report = {
@@ -127,16 +195,46 @@ def _ensure_initial_hypotheses(
         if not goal:
             return {"status": "skipped", "reason": "missing_research_goal", "generated_hypotheses": 0}
         requested = max(initial_hypotheses, 2 - existing)
+        knowledge = _knowledge_brief(config, goal, llm_config)
+        if knowledge.get("brief"):
+            goal = f"{goal}\n\n{knowledge['brief']}"
         coscientist.set_research_goal(goal)
         coscientist.generate_hypotheses(count=requested)
         coscientist.wait_for_completion()
         coscientist.memory.save()
-        return {
+        result: dict[str, Any] = {
             "status": "completed",
             "generated_hypotheses": max(0, len(coscientist.get_all_hypotheses()) - existing),
         }
+        if knowledge:
+            result["knowledge"] = {k: knowledge.get(k) for k in
+                                   ("status", "tool_calls", "tools_used", "cached", "seconds")}
+            result["knowledge"]["brief_chars"] = len(knowledge.get("brief") or "")
+        return result
     finally:
         coscientist.stop()
+
+
+def _knowledge_brief(config: Mapping[str, Any], goal: str, llm_config: Any) -> dict[str, Any]:
+    """Run the optional knowledge-graph pre-pass; {} when it is switched off."""
+
+    knowledge = config.get("knowledge")
+    if not isinstance(knowledge, Mapping) or knowledge.get("enabled") is not True:
+        return {}
+    hooks_dir = str(Path(__file__).resolve().parent)
+    if hooks_dir not in sys.path:
+        sys.path.insert(0, hooks_dir)
+    from knowledge_brief import brief_for
+
+    # The pre-pass is a tool-calling research loop, which is a different job from
+    # Jnana's JSON generation: a profile may point it at a stronger model on the
+    # same endpoint (`knowledge.model`) and otherwise it reuses the tournament's.
+    llm = {"base_url": getattr(llm_config, "base_url", None), "api_key": getattr(llm_config, "api_key", None),
+           "model": str(knowledge.get("model") or "") or getattr(llm_config, "model", None)}
+    try:
+        return brief_for(goal, knowledge, llm, Path(str(config["state_file"])).expanduser().parent)
+    except Exception as exc:  # noqa: BLE001 - advisory: never block generation
+        return {"status": f"failed: {type(exc).__name__}: {exc}", "brief": ""}
 
 
 def _render(payload: Mapping[str, Any], result: Mapping[str, Any]) -> str:
@@ -175,8 +273,6 @@ def context_for(payload: Mapping[str, Any]) -> str:
     config = _config(payload)
     if config is None:
         return ""
-    api_key_env = str(config.get("api_key_env") or "").strip()
-    api_key = os.environ.get(api_key_env, "").strip() if api_key_env else "local-no-auth"
 
     jnana_root = Path(str(config["jnana_root"])).expanduser()
     if not jnana_root.is_dir():
@@ -189,31 +285,13 @@ def context_for(payload: Mapping[str, Any]) -> str:
             return ""
         if str(jnana_root) not in sys.path:
             sys.path.insert(0, str(jnana_root))
-        from jnana.protognosis.core.multi_llm_config import LLMConfig
         from jnana.protognosis.periodic_tournament import run_incremental_tournament
 
-        llm_config = LLMConfig(
-            provider=str(config["provider"]),
-            model=str(config["model"]),
-            api_key=api_key,
-            base_url=_base_url(config),
-            model_adapter={
-                "omit_temperature": config.get("omit_temperature") is True,
-                "json_max_tokens": _positive(config.get("json_max_tokens"), 1024),
-            },
-        )
-        generation_llm_config = LLMConfig(
-            provider=str(config["provider"]),
-            model=str(config["model"]),
-            api_key=api_key,
-            base_url=_base_url(config),
-            model_adapter={
-                "omit_temperature": config.get("omit_temperature") is True,
-                # Generation agents emit a full mechanism plus predictions; give
-                # them more room than compact pairwise ranking responses.
-                "json_max_tokens": max(4096, _positive(config.get("json_max_tokens"), 1024)),
-            },
-        )
+        # Two roles, each overridable via a `ranking:` / `generation:` block in
+        # the profile. Generation agents emit a full mechanism plus predictions,
+        # so they get more room than compact pairwise ranking responses.
+        llm_config = _llm_config(config, "ranking", 1)
+        generation_llm_config = _llm_config(config, "generation", 4096)
         generation = _ensure_initial_hypotheses(config, payload, generation_llm_config)
         result = dict(
             run_incremental_tournament(

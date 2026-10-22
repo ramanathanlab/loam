@@ -102,7 +102,7 @@ class HypothesisTournamentTests(unittest.TestCase):
                 profile = config.load_profile()
 
         assert profile is not None
-        self.assertEqual(config.payload_values(profile)["loam_execution"], {"mode": "local", "tool_name": "", "endpoint": "", "function_name": "", "input_schema": "", "runtime": "python3.11", "code_source": "generated", "max_children": 3, "workdir_root": "", "tool_prefix": ""})
+        self.assertEqual(config.payload_values(profile)["loam_execution"], {"mode": "local", "tool_name": "", "endpoint": "", "function_name": "", "input_schema": "", "runtime": "python3.11", "setup": "", "code_source": "generated", "max_children": 3, "workdir_root": "", "tool_prefix": ""})
 
     def test_execution_parses_generated_code_source(self) -> None:
         config = _load("loam_config_generated_execution", CONFIG)
@@ -406,6 +406,84 @@ class HypothesisTournamentTests(unittest.TestCase):
         }
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(hook.context_for(payload), "")
+
+    def test_role_blocks_override_only_the_keys_they_set(self) -> None:
+        """A `generation:`/`ranking:` block retargets one role; the rest inherits."""
+
+        config = _load("loam_config_roles", CONFIG)
+        raw = {
+            "enabled": True,
+            "jnana_root": "/tmp/jnana",
+            "state_file": "/tmp/state/jnana.json",
+            "reports_dir": "/tmp/state/reports",
+            "provider": "openai",
+            "inference_endpoint": "http://judge.test/v1",
+            "model": "judge-model",
+            "json_max_tokens": 16384,
+            "generation": {
+                "model": "generator-model",
+                "inference_endpoint": "http://generator.test/v1",
+            },
+            "ranking": {"model": "   "},
+        }
+        parsed = config._tournament_config(raw)
+        assert parsed is not None
+        # A block of only blank values contributes nothing.
+        self.assertEqual(
+            parsed.roles,
+            {"generation": {"model": "generator-model", "inference_endpoint": "http://generator.test/v1"}},
+        )
+
+        hook = _load("loam_hypothesis_tournament_roles", HOOKS / "hypothesis_tournament.py")
+        payload = {"loam_hypothesis_tournament": {**raw, "generation": parsed.roles["generation"]}}
+        resolved = hook._config(payload)
+        assert resolved is not None
+
+        generation = hook._role_config(resolved, "generation")
+        self.assertEqual(generation["model"], "generator-model")
+        self.assertEqual(hook._base_url(generation), "http://generator.test/v1")
+        # Unset keys still come from the shared defaults.
+        self.assertEqual(generation["provider"], "openai")
+        self.assertEqual(generation["json_max_tokens"], 16384)
+
+        # No usable override for this role: the judge keeps the shared values.
+        ranking = hook._role_config(resolved, "ranking")
+        self.assertEqual(ranking["model"], "judge-model")
+        self.assertEqual(hook._base_url(ranking), "http://judge.test/v1")
+
+    def test_role_overrides_reach_the_hook_payload(self) -> None:
+        config = _load("loam_config_role_payload", CONFIG)
+        raw = {
+            "enabled": True,
+            "active_profile": "research",
+            "profiles": {
+                "research": {
+                    "workflow_id": "research-v1",
+                    "state_dir": "/tmp/state",
+                    "hypothesis_tournament": {
+                        "enabled": True,
+                        "jnana_root": "/tmp/jnana",
+                        "state_file": "/tmp/state/jnana.json",
+                        "reports_dir": "/tmp/state/reports",
+                        "provider": "openai",
+                        "inference_endpoint": "http://judge.test/v1",
+                        "model": "judge-model",
+                        "generation": {"model": "generator-model"},
+                    },
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "loam.yaml"
+            config_path.write_text(json.dumps(raw), encoding="utf-8")
+            with patch.dict(os.environ, {"LOAM_CONFIG_PATH": str(config_path)}, clear=False):
+                profile = config.load_profile()
+
+        assert profile is not None
+        values = config.payload_values(profile)
+        self.assertEqual(values["loam_hypothesis_tournament"]["model"], "judge-model")
+        self.assertEqual(values["loam_hypothesis_tournament"]["generation"], {"model": "generator-model"})
+        self.assertNotIn("ranking", values["loam_hypothesis_tournament"])
 
 
 if __name__ == "__main__":

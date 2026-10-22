@@ -31,6 +31,33 @@ Use memories to manage context across tournaments. Read relevant existing memori
 
 Do not save raw transcripts, secrets, unverified assertions, duplicated observations, or temporary tool failures as durable facts. Label every memory item with its provenance and confidence. Supersede stale or contradicted memory rather than retaining competing claims without explanation.
 
+### Where durable memory goes
+
+Campaign findings are **campaign-scoped**, not global. Write them to the two append-only JSONL files in the campaign's own state directory (`$LOAM_STATE_DIR`, which the launcher sets per campaign), because the pre-LLM recall hooks read them back from there and because archiving or resetting a campaign must reset its beliefs with it.
+
+Do **not** put campaign findings in the agent's global memory tool. That store is shared by every campaign using the same Hermes home, so a target-specific claim written there leaks into unrelated campaigns and keeps being injected after this campaign ends. Reserve the global store for facts that are genuinely true across campaigns — user preferences, and durable environment facts such as how to activate a venv on this machine.
+
+**`$LOAM_STATE_DIR/hypothesis-memory.jsonl`** — hypothesis state. Append one line per synthesis. Each line is a complete snapshot, not a delta: recall reads the *last* row whose `workflow_id` matches, so a row must carry every hypothesis still active.
+
+```json
+{"event": "hypothesis_memory_snapshot", "workflow_id": "<the run's workflow id>", "parent_session_id": "<session id>", "active_hypotheses": [{"hypothesis_id": "<id>", "statement": "<claim>", "supporting_evidence": ["<source-backed item>"], "contradicting_evidence": ["<source-backed item>"]}]}
+```
+
+The `event` value must be exactly `hypothesis_memory_snapshot` or the row is ignored. Only source-backed items belong in the evidence arrays; tournament ELO is advisory prioritization and does not count as support.
+
+**`$LOAM_STATE_DIR/parent-memory.jsonl`** — accepted, source-backed findings. Same append-and-snapshot rule (last matching `workflow_id` row wins).
+
+```json
+{"workflow_id": "<the run's workflow id>", "parent_session_id": "<session id>", "parent_turn_id": "<turn id>", "accepted_findings": [{"source_kind": "<e.g. uniprot>", "source_accession": "<e.g. P43220>", "field": "<e.g. sequence>", "value": "<the value>"}]}
+```
+
+This file is a findings cache that prevents re-delegating work to rediscover something already established — it is not a journal. Put narrative reasoning in your report, not here.
+
+Two failures must never become durable facts:
+
+- **A path or activation failure is not an unavailable tool.** `exit 127` / `No such file or directory` from a relative path means the path was wrong for the working directory, not that the tool is missing. Re-check with an absolute path before recording anything.
+- **A transient endpoint or scheduler failure is not a conclusion.** Record it as a prerequisite blocker for this run at most, never as evidence about a hypothesis, and never as a claim that a tool is dead.
+
 ## Synthesis Workflow
 
 1. Normalize each thread into: hypothesis family, mechanism, intervention or condition, outcome, ELO score, evidence score, evidence quality, confounders, and unresolved alternatives.

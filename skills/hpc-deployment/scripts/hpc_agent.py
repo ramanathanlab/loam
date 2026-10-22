@@ -358,8 +358,21 @@ def _roots(base_dir: str, inspect_roots: list[str]) -> list[Path]:
 
 def _safe_path(raw: str, base_dir: str, inspect_roots: list[str]) -> Path:
     path = Path(raw).expanduser().resolve(strict=True)
-    if not any(path == root or root in path.parents for root in _roots(base_dir, inspect_roots)):
-        raise ValueError("path is outside allowed inspection roots")
+    roots = _roots(base_dir, inspect_roots)
+    if not any(path == root or root in path.parents for root in roots):
+        # Name the roots. A caller that only learns it guessed wrong guesses
+        # again: an agent asked for `/workspace` (a container convention that
+        # does not exist here) and two other outside paths in eight seconds
+        # (2026-10-21). Each refusal was correct, but blind, so it produced
+        # another attempt -- and a run of refusals used to trip the MCP
+        # connectivity breaker, which told every agent in the process that this
+        # healthy server was unreachable. Listing the roots turns a guessing
+        # loop into one corrected call.
+        allowed = ", ".join(str(root) for root in roots)
+        raise ValueError(
+            f"path {str(path)!r} is outside allowed inspection roots; "
+            f"inspect only within: {allowed}"
+        )
     if path.is_symlink():  # resolve() normally removes this; retain explicit policy.
         raise ValueError("symlink paths are not inspectable")
     if not (path.is_file() or path.is_dir()):

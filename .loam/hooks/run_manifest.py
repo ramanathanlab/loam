@@ -48,6 +48,19 @@ def _identity(payload: Mapping[str, Any], state_dir: Path) -> dict[str, Any]:
     }
 
 
+def _deployment_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
+    """Identity minus the per-launch run_id.
+
+    The manifest is deployment-scoped: the state dir, repo, profile, workflow and
+    execution binding define the deployment. run_id is minted fresh on every
+    launch (run-campaign calls uuidgen), so relaunching into an existing campaign
+    directory must NOT be treated as an identity mismatch. We gate on the
+    deployment fields and refresh run_id when a relaunch is detected.
+    """
+
+    return {k: v for k, v in identity.items() if k != "run_id"}
+
+
 def _new_manifest(payload: Mapping[str, Any], state_dir: Path, event: str) -> dict[str, Any]:
     now = _timestamp()
     tournament = payload.get("loam_hypothesis_tournament")
@@ -81,9 +94,13 @@ def ensure(payload: Mapping[str, Any]) -> Path:
         value = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(value, dict) or value.get("schema_version") != SCHEMA_VERSION:
             raise ValueError(f"invalid run manifest: {path}")
-        if value.get("identity") != _identity(payload, state_dir):
+        current = _identity(payload, state_dir)
+        stored = value.get("identity") if isinstance(value.get("identity"), Mapping) else {}
+        if _deployment_identity(stored) != _deployment_identity(current):
             raise ValueError(f"run manifest identity mismatch: {path}")
         manifest = value
+        # Same deployment, new launch: adopt the current run_id for provenance.
+        manifest["identity"] = current
         lifecycle = manifest.setdefault("lifecycle", {})
         counts = lifecycle.setdefault("event_counts", {})
         counts[event] = int(counts.get(event, 0)) + 1
