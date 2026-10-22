@@ -118,11 +118,101 @@ class RunBatchTests(unittest.TestCase):
         self.assertEqual(sorted(t.task_id for t in self.client.submitted),
                          [f"{batch_id}-4", f"{batch_id}-c"])
 
+    def test_resume_keeps_frozen_gpus_and_timeout(self) -> None:
+        # H4: a batch submitted with gpus=2 / timeout=1800 must resume with the
+        # same, not revert to the defaults (gpus=1 / timeout=900).
+        batch_id = self._call("run_batch", script_path=str(self.base / "sim.py"),
+                              inputs_path=str(self.inputs), labels=self.labels,
+                              gpus=2, timeout_each=1800.0)["batch_id"]
+        self.assertEqual({t.ngpus_per_process for t in self.client.submitted}, {2})
+        self.assertEqual({t.args[3] for t in self.client.submitted}, {1800.0})
+        self.client.run(only=1)  # finish run a
+        self.client.submitted.clear()
+        # Bare resume: nothing passed -> frozen values, not the call defaults.
+        self._call("run_batch", batch_id=batch_id, labels=self.labels)
+        self.assertTrue(self.client.submitted)
+        self.assertEqual({t.ngpus_per_process for t in self.client.submitted}, {2})
+        self.assertEqual({t.args[3] for t in self.client.submitted}, {1800.0})
+
+    def test_complete_is_true_but_ok_false_when_a_run_failed(self) -> None:
+        # H3: a batch where a run crashed is complete (all terminal) but not ok.
+        self.inputs.write_text('{"id": "a", "x": 1}\n{"id": "b", "x": 2, "fail": true}\n')
+        batch_id = self._new_batch()["batch_id"]
+        self.client.run()
+        status = self._call("batch_status", batch_id)
+        self.assertEqual((status["succeeded"], status["failed"], status["unfinished"]), (1, 1, 0))
+        self.assertTrue(status["complete"])
+        self.assertFalse(status["ok"])
+
+    def test_failed_attempt_does_not_leave_result_at_top_level(self) -> None:
+        # M6: a failed run must not promote a result artifact to the run-folder
+        # top level; a later successful attempt promotes cleanly.
+        folder = self.base / "runM6"
+        # Writes result.json in its cwd, then fails unless an ok_flag exists one
+        # level up (so attempt 1 fails, attempt 2 succeeds).
+        script = self.base / "flaky.py"
+        script.write_text(
+            "import json, os, sys\n"
+            "json.dump({'junk': True}, open('result.json', 'w'))\n"
+            "sys.exit(0 if os.path.exists(os.path.join(os.pardir, 'ok_flag')) else 3)\n")
+        out1 = self.hpc._run_one(str(script), {"x": 1}, str(folder), 5.0, expects=["result.json"])
+        self.assertNotEqual(out1["returncode"], 0)
+        self.assertFalse((folder / "result.json").exists())           # not promoted
+        self.assertTrue((folder / "attempt_1" / "result.json").exists())  # kept for debugging
+        (folder / "ok_flag").write_text("")  # make attempt 2 succeed
+        out2 = self.hpc._run_one(str(script), {"x": 1}, str(folder), 5.0, expects=["result.json"])
+        self.assertEqual((out2["returncode"], out2["attempt"]), (0, 2))
+        self.assertTrue((folder / "result.json").exists())            # promoted
+
     def test_resume_refuses_other_hypothesis(self) -> None:
         batch_id = self._new_batch()["batch_id"]
         with self.assertRaisesRegex(ValueError, "another hypothesis_id"):
             self._call("run_batch", batch_id=batch_id,
                        labels={"plan_id": "P1", "hypothesis_id": "H9"})
+
+    def test_resume_skips_in_flight_lease_and_reclaims_stale(self) -> None:
+        # C3: a resume overlapping an in-flight row must not re-dispatch it.
+        import time
+
+        batch_id = self._new_batch()["batch_id"]
+        batch_dir = self.base / "batches" / batch_id
+        self.client.run(only=2)  # a, b finish cleanly; c and row 4 remain todo
+        # Simulate run_c as still running: folder + fresh lease, no done file.
+        run_c = batch_dir / "run_c"
+        run_c.mkdir()
+        run_c.joinpath("lease.json").write_text(
+            json.dumps({"pid": 999999, "host": "other", "started_at": time.time()})
+        )
+
+        resumed = self._call("run_batch", batch_id=batch_id, labels=self.labels)
+        # Only row 4 is re-dispatched; the in-flight c is left to its owner.
+        self.assertEqual([t.task_id for t in self.client.submitted], [f"{batch_id}-4"])
+        self.assertEqual(resumed["submitted"], 1)
+
+        # Age the lease past timeout + margin -> c is now reclaimable on resume.
+        self.client.submitted.clear()
+        frozen = json.loads((batch_dir.parent / "registry" / f"{batch_id}.json").read_text())
+        run_c.joinpath("lease.json").write_text(json.dumps({
+            "pid": 999999, "host": "other",
+            "started_at": time.time() - (frozen["timeout_each"] + self.hpc.LEASE_STALE_MARGIN + 10),
+        }))
+        self._call("run_batch", batch_id=batch_id, labels=self.labels)
+        self.assertIn(f"{batch_id}-c", [t.task_id for t in self.client.submitted])
+
+    def test_run_one_backs_off_when_folder_is_leased(self) -> None:
+        # C3: a second task started on a live-leased folder must not clobber it.
+        import time
+
+        folder = self.base / "leased"
+        folder.mkdir()
+        folder.joinpath("lease.json").write_text(
+            json.dumps({"pid": 1, "host": "other", "started_at": time.time()})
+        )
+        folder.joinpath("stdout.txt").write_text("PRIOR")  # the owner's output
+        out = self.hpc._run_one("/nonexistent/script.py", {"x": 1}, str(folder), 5.0)
+        self.assertIn("leased", out.get("skipped", ""))
+        self.assertEqual(folder.joinpath("stdout.txt").read_text(), "PRIOR")  # preserved
+        self.assertFalse(folder.joinpath("done").exists())
 
     def test_list_batches_filters_by_labels(self) -> None:
         batch_id = self._new_batch()["batch_id"]
@@ -169,6 +259,31 @@ class RunBatchTests(unittest.TestCase):
             self._register(example={"x": True})
         with self.assertRaisesRegex(ValueError, "tool name"):
             self._register(name="Bad-Name")
+
+    def test_output_contract_marks_rc0_without_output_as_failed(self) -> None:
+        # L3: a tool can declare required outputs; rc0 without them = failed, at
+        # registration time (smoke) and per run.
+        (self.base / "noout.py").write_text("import sys; sys.exit(0)\n")
+        with self.assertRaisesRegex(ValueError, "declared outputs"):
+            self._register(name="needs_out", script="noout.py", params={"x": "int"},
+                           defaults={}, example={"x": 1}, expects=["result.json"])
+        # sim.py DOES write result.json, so the same contract passes smoke.
+        self._register(name="with_out", expects=["result.json"])
+        self.inputs.write_text('{"id": "a", "x": 1}\n')
+        batch_id = self._call("run_batch", tool="with_out", inputs_path=str(self.inputs))["batch_id"]
+        self.client.run()
+        status = self._call("batch_status", batch_id)
+        self.assertEqual((status["succeeded"], status["ok"]), (1, True))
+
+    def test_corrupt_tool_json_raises_not_silent_fallback(self) -> None:
+        # M15: a present-but-unparseable tool.json must raise, not silently fall
+        # back to an older version that runs different science.
+        self._register()  # v1
+        (self.base / "sim.py").write_text(SIM + "\n# v2\n")
+        self._register()  # v2
+        (self.base / "tools" / "doubler" / "v2" / "tool.json").write_text("{ broken")
+        with self.assertRaisesRegex(ValueError, "unreadable tool.json"):
+            self._call("list_tools", name="doubler")
 
     def test_skip_smoke_registers_untested(self) -> None:
         result = self._register(skip_smoke=True, example={"x": 1, "fail": True})

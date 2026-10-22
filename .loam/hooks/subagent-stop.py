@@ -32,13 +32,31 @@ def _payload() -> dict[str, Any]:
 def main() -> int:
     try:
         payload = _payload()
-        ensure_run_manifest(payload)
-        write_stop_and_candidate(payload)
-        record_stop(payload)
-    except Exception as exc:  # observer failures must not change Hermes behavior
-        print(f"loam subagent-stop observer failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+    except Exception as exc:
+        print(f"loam subagent-stop: unparseable payload: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    return 0
+
+    rc = 0
+    # Terminal records FIRST, each isolated. write_stop_and_candidate carries
+    # the validator's evidence score; record_stop appends the orchestration
+    # completion row that lets later turns advance (a missing one leaves a
+    # dangling "...started" that deadlocks the plan). A failure writing the
+    # manifest must not drop either, and a failure in one must not drop the
+    # other -- so they do not share a try with the manifest or with each other.
+    for step in (write_stop_and_candidate, record_stop):
+        try:
+            step(payload)
+        except Exception as exc:  # observer failures must not change Hermes behavior
+            print(f"loam subagent-stop: {step.__name__} failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+            rc = 1
+
+    try:
+        ensure_run_manifest(payload)
+    except Exception as exc:
+        print(f"loam subagent-stop: run_manifest failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        rc = 1
+
+    return rc
 
 
 if __name__ == "__main__":

@@ -111,6 +111,19 @@ class SubagentLedgerTests(unittest.TestCase):
                 ),
             }
             start = self._run_hook(START, {**common, "event": "subagent_start"}, ledger)
+            # C2: a backed score requires a completed code-generator execution
+            # for this plan+hypothesis. Stage one, as the validator would.
+            code_common = {
+                **common,
+                "child_session_id": "codegen-session",
+                "child_subagent_id": "codegen-1",
+                "child_goal": (
+                    "Execute [loam-agent-role=code-generator] "
+                    "[loam-plan-id=plan-1] [loam-hypothesis-id=hypothesis-1]"
+                ),
+            }
+            self._run_hook(START, {**code_common, "event": "subagent_start"}, ledger)
+            self._run_hook(STOP, {**code_common, "event": "subagent_stop", "child_status": "completed", "child_summary": "ran"}, ledger)
             stop = self._run_hook(
                 STOP,
                 {
@@ -128,11 +141,14 @@ class SubagentLedgerTests(unittest.TestCase):
 
         self.assertEqual(start.returncode, 0, start.stderr)
         self.assertEqual(stop.returncode, 0, stop.stderr)
-        self.assertEqual([row["event"] for row in rows], ["agent_started", "validator_completed"])
-        self.assertEqual(rows[1]["hypothesis_id"], "hypothesis-1")
-        self.assertEqual(rows[1]["summary"], "Validator report.\n### Evidence Score\n-0.50 — contradictory result")
-        self.assertEqual(rows[1]["evidence_score"], -0.5)
-        self.assertEqual(rows[1]["evidence_score_status"], "reported")
+        self.assertEqual(
+            [row["event"] for row in rows],
+            ["agent_started", "agent_started", "code_generator_completed", "validator_completed"],
+        )
+        self.assertEqual(rows[-1]["hypothesis_id"], "hypothesis-1")
+        self.assertEqual(rows[-1]["summary"], "Validator report.\n### Evidence Score\n-0.50 — contradictory result")
+        self.assertEqual(rows[-1]["evidence_score"], -0.5)
+        self.assertEqual(rows[-1]["evidence_score_status"], "reported")
 
     def test_runtime_state_directory_routes_direct_hook_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -156,6 +172,22 @@ class SubagentLedgerTests(unittest.TestCase):
                 [sys.executable, str(START)], cwd=str(ROOT), input=json.dumps({**common, "event": "subagent_start"}),
                 text=True, capture_output=True, env=env, check=False,
             )
+            # C2: stage a completed code-generator execution so the score is backed.
+            code_common = {
+                **common,
+                "child_session_id": "codegen-session",
+                "child_subagent_id": "codegen-1",
+                "child_goal": (
+                    "Execute [loam-agent-role=code-generator] "
+                    "[loam-plan-id=plan-1] [loam-hypothesis-id=hypothesis-1]"
+                ),
+            }
+            for ev, hook in (("subagent_start", START), ("subagent_stop", STOP)):
+                subprocess.run(
+                    [sys.executable, str(hook)], cwd=str(ROOT),
+                    input=json.dumps({**code_common, "event": ev, "child_status": "completed", "child_summary": "ran"}),
+                    text=True, capture_output=True, env=env, check=False,
+                )
             stop = subprocess.run(
                 [sys.executable, str(STOP)], cwd=str(ROOT),
                 input=json.dumps(

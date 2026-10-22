@@ -4,12 +4,18 @@
 This projector reads only hypothesis acceptance, accepted evidence, and explicit
 credit records. It never reads raw subagent summaries, pending candidates, or
 Jnana tournament outcomes; tournament ranking remains a separate advisory signal.
+
+It is the SINGLE authoritative writer of `hypothesis-memory.jsonl` (the file the
+pre-LLM recall hook reads). No agent may hand-write or append to that file: it is
+a derived projection and is regenerated here from the ledgers (H10). The write is
+atomic (tmp + os.replace) so a concurrent recall read never sees a torn file.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -126,7 +132,10 @@ def main() -> int:
     args = parser.parse_args()
     snapshots = project(_rows(args.hypotheses), _rows(args.evidence), _rows(args.credit))
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in snapshots), encoding="utf-8")
+    payload = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in snapshots)
+    tmp = args.out.with_name(f".{args.out.name}.{os.getpid()}.tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, args.out)  # atomic: recall never reads a half-written projection
     print(json.dumps({"snapshots_written": len(snapshots), "out": str(args.out)}))
     return 0
 

@@ -140,7 +140,13 @@ def _read_rows(path: Path) -> list[dict[str, Any]]:
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        value = json.loads(line)
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            # A concurrent writer can leave a half-written final line. Skip the
+            # torn line rather than letting it raise out of tool_policy, which
+            # the adapter would treat as a nonzero exit == allow (fail-open).
+            continue
         if isinstance(value, dict):
             rows.append(value)
     return rows
@@ -369,10 +375,27 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
     ) if part)
 
 
+# A clause telling the child to go hunt the filesystem to "recover" context.
+# Matched line-wise and ending at a period OR end-of-line, so a sentence with no
+# trailing period is still stripped (H2: the old `\.`-terminated pattern let
+# period-less lines through).
 _RECOVER_FROM_FS = re.compile(
-    r"[^.]*\b(recover|locate|inspect|find|search)\b[^.]*\b(hypothesis|context|campaign files?|"
-    r"project context|data/code|inputs?|registry|filesystem)\b[^.]*\.",
-    re.IGNORECASE,
+    r"[^.\n]*\b(recover|locate|inspect|find|search)\b[^.\n]*\b(hypothesis|context|"
+    r"campaign files?|project context|data/code|inputs?|registry|filesystem|"
+    r"artifacts?|results?|fasta|pdb|cif)\b[^.\n]*(?:\.|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+# "reuse/use the existing/staged/cached/leftover <artifact> (under <path>)" --
+# steering the child onto a stale on-disk input. The ON-DISK QUALIFIER (existing,
+# staged, cached, leftover, prior/previous run) is the signal, so a legitimate
+# "fetch the sequence from UniProt" -- which carries no such qualifier -- is left
+# untouched (H2).
+_REUSE_EXISTING = re.compile(
+    r"[^.\n]*\b(reuse|re-use|existing|already[ -]?(?:staged|present|there|on[ -]?disk)|"
+    r"staged|cached|leftover|previous run|prior run)\b[^.\n]*\b(fasta|pdb|cif|inputs?|"
+    r"files?|sequence|structure|artifacts?|results?|folder|directory|path|batch|fixture)\b"
+    r"[^.\n]*(?:\.|$)",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 
@@ -383,12 +406,16 @@ def _neutralize_fs_recovery(text: str) -> str:
     recover the exact supplied hypothesis and any data/code" into the child's
     instruction. The child then ignores the hypothesis already in its context,
     hunts the filesystem, and either folds a leftover fixture or gives up asking
-    for the hypothesis to be "provided" (both observed 2026-10-22). The
-    hypothesis and recipe are injected structurally, so this framing is pure
-    noise; strip it before relaying the validator's instruction.
+    for the hypothesis to be "provided" (both observed 2026-10-22). The variant
+    "reuse the existing FASTA under <path>" is the same failure by another verb.
+    The hypothesis and recipe are injected structurally, so this framing is pure
+    noise; strip it before relaying. The code-generator prompt now independently
+    refuses stale on-disk inputs, so this is defence in depth, not the only gate.
     """
 
-    return _RECOVER_FROM_FS.sub("", text).strip()
+    cleaned = _RECOVER_FROM_FS.sub("", text)
+    cleaned = _REUSE_EXISTING.sub("", cleaned)
+    return cleaned.strip()
 
 
 def _child_goal(hypothesis: Mapping[str, Any] | None, validator_goal: str, plan_id: str, hypothesis_id: str) -> str:
@@ -451,23 +478,35 @@ def _marker(value: str, key: str) -> str:
     return value[start + len(prefix) : end] if end >= 0 else ""
 
 
+_EVIDENCE_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s*Evidence\s+Score\b", re.IGNORECASE | re.MULTILINE)
+_SIGNED_DECIMAL_RE = re.compile(r"[-+−]?\d*\.?\d+")
+
+
 def _evidence_score(summary: str) -> float | None:
     """Extract the validator's calibrated evidence score from its report.
 
-    Tolerant of how the models actually format the heading. Validators emit
-    "## Evidence Score\n\n0.18" (two hashes, number on the next line), while the
-    original parser required exactly "### Evidence Score" with the number on the
-    same line, so real scored rounds (0.18, 0.00) were silently dropped as
-    `missing` (observed 2026-10-22). Match the heading at any level (#, ##, ###,
-    or none) and take the first signed decimal after it, across whitespace or
-    newlines and optional backticks.
+    The score must sit under a real markdown heading LINE ("### Evidence Score",
+    or ## / #### -- any level, at the start of a line). Anchoring to a heading is
+    what keeps an in-prose mention like "the prior Evidence Score was 0.00" from
+    being read as this round's score (M2 false positive); it still tolerates the
+    "## Evidence Score\n\n0.18" form (two hashes, number on the next line) that
+    the old same-line-### parser dropped. When several such headings appear (a
+    recap plus the final verdict) the LAST one wins. From that heading we take
+    the first signed decimal within a short window, tolerating a lead-in and
+    markup: the number may follow a colon on the heading line, sit on a later
+    line, or be wrapped in **bold**, `backticks`, or parentheses (M2 false
+    negatives), and a Unicode minus sign is accepted.
     """
 
-    match = re.search(r"#{0,6}\s*Evidence\s+Score\b\s*:?\s*`?\s*([+-]?\d*\.?\d+)", summary, re.IGNORECASE)
+    headings = list(_EVIDENCE_HEADING_RE.finditer(summary))
+    if not headings:
+        return None
+    start = headings[-1].end()
+    match = _SIGNED_DECIMAL_RE.search(summary[start:start + 200])
     if not match:
         return None
     try:
-        score = float(match.group(1))
+        score = float(match.group(0).replace("−", "-"))
     except ValueError:
         return None
     return score if -1.0 <= score <= 1.0 else None
@@ -665,7 +704,12 @@ def _latest_report(payload: Mapping[str, Any]) -> tuple[Path, Mapping[str, Any]]
         return None
     workflow_id = _text(payload.get("workflow_id"))
     for path in sorted(reports_dir.glob("tournament-*.json"), reverse=True):
-        value = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            # An in-progress / truncated report must not raise out of
+            # tool_policy and fail the boundary open; skip to the next one.
+            continue
         if not isinstance(value, Mapping):
             continue
         if workflow_id and _text(value.get("workflow_id")) != workflow_id:
@@ -683,7 +727,13 @@ def _full_hypotheses(payload: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]
     state_file = Path(_text(raw_config.get("state_file"))).expanduser()
     if not state_file.is_file():
         return {}
-    value = json.loads(state_file.read_text(encoding="utf-8"))
+    try:
+        value = json.loads(state_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        # A concurrent Jnana write can leave the state file momentarily
+        # unparseable; treat as "no hypotheses yet" rather than failing the
+        # boundary open.
+        return {}
     raw_hypotheses = value.get("hypotheses") if isinstance(value, Mapping) else None
     if not isinstance(raw_hypotheses, list):
         return {}
@@ -838,8 +888,33 @@ def record_stop(payload: Mapping[str, Any]) -> None:
     }
     if role == "hypothesis-validator":
         score = _evidence_score(summary)
-        record["evidence_score"] = score
-        record["evidence_score_status"] = "reported" if score is not None else "missing_or_invalid"
+        plan = _text(start.get("plan_id"))
+        hyp = _text(start.get("hypothesis_id"))
+        # C2: a reported score is only trustworthy if a code-generator child
+        # actually completed an execution for this plan+hypothesis. The check is
+        # domain-blind on purpose -- it asks only whether an execution child
+        # reached the "completed" terminal state (the single success status, see
+        # ledger._observation_status), never what the code computed -- so it
+        # holds for folds, docking, small-molecule work, arithmetic, or any
+        # future tool. An unbacked score becomes None/unbacked_no_exec, and the
+        # claimed value is retained under reported_evidence_score for audit so
+        # the reasoner can see the validator asserted a number without running.
+        backed = any(
+            row.get("event") == "code_generator_completed"
+            and _text(row.get("plan_id")) == plan
+            and _text(row.get("hypothesis_id")) == hyp
+            and _text(row.get("status")) == "completed"
+            for row in rows
+        )
+        if score is not None and not backed:
+            record["reported_evidence_score"] = score
+            record["evidence_score"] = None
+            record["evidence_score_status"] = "unbacked_no_exec"
+        else:
+            record["evidence_score"] = score
+            record["evidence_score_status"] = (
+                "reported" if score is not None else "missing_or_invalid"
+            )
     _append(_state_path(payload), record)
     if role == "hypothesis-validator":
         _append_campaign(payload, {**record, "event": "hypothesis_validation_completed"})

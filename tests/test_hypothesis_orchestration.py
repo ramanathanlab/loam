@@ -383,6 +383,20 @@ class HypothesisOrchestrationTests(unittest.TestCase):
                     ),
                 }
                 orchestration.record_start(child)
+                # C2: a trustworthy score requires a completed code-generator
+                # execution for this plan+hypothesis. Stage one, as a real
+                # validator would delegate, before recording the validator stop.
+                code_gen = {
+                    **payload,
+                    "child_subagent_id": f"codegen-{index}",
+                    "child_session_id": f"codegen-session-{index}",
+                    "child_goal": (
+                        "Execute [loam-agent-role=code-generator] "
+                        f"[loam-plan-id={plan_id}] [loam-hypothesis-id={hypothesis_id}]"
+                    ),
+                }
+                orchestration.record_start(code_gen)
+                orchestration.record_stop({**code_gen, "child_status": "completed", "child_summary": "ran"})
                 orchestration.record_stop(
                     {
                         **child,
@@ -474,6 +488,32 @@ class HypothesisOrchestrationTests(unittest.TestCase):
 
         self.assertIsNone(row["evidence_score"])
         self.assertEqual(row["evidence_score_status"], "missing_or_invalid")
+
+    def test_validator_score_without_execution_is_unbacked(self) -> None:
+        # C2: a well-formed score is rejected as unbacked when NO code-generator
+        # child completed an execution for this plan+hypothesis.
+        orchestration = _load("loam_orchestration_unbacked_score")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            child = {
+                **payload,
+                "child_subagent_id": "validator-1",
+                "child_session_id": "validator-session-1",
+                "child_goal": (
+                    "Validate [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-1] "
+                    "[loam-hypothesis-id=h-1]"
+                ),
+            }
+            orchestration.record_start(child)
+            orchestration.record_stop(
+                {**child, "child_status": "completed", "child_summary": "### Evidence Score\n0.00 — inconclusive"}
+            )
+            row = json.loads(
+                (Path(payload["loam_state_dir"]) / "hypothesis-orchestration.jsonl").read_text().splitlines()[-1]
+            )
+        self.assertIsNone(row["evidence_score"])
+        self.assertEqual(row["evidence_score_status"], "unbacked_no_exec")
+        self.assertEqual(row["reported_evidence_score"], 0.0)
 
     # -- generated code-generator mode ---------------------------------------
 
@@ -685,6 +725,40 @@ class HypothesisOrchestrationTests(unittest.TestCase):
             )
 
         self.assertEqual(batch["action"], "block")
+
+
+class EvidenceScoreAndNeutralizeTests(unittest.TestCase):
+    """M2 (evidence-score parsing) and H2 (fs-recovery neutralizer)."""
+
+    def setUp(self) -> None:
+        self.orch = _load("loam_orchestration_m2_h2")
+
+    def test_score_requires_a_heading_not_an_in_prose_mention(self) -> None:
+        # M2 false positive: a recap sentence must not be read as the score.
+        self.assertIsNone(self.orch._evidence_score(
+            "Earlier the prior Evidence Score was 0.00, but we re-ran it."))
+
+    def test_score_tolerates_markup_and_a_lead_in(self) -> None:
+        # M2 false negatives: bold markup and a lead-in line before the number.
+        self.assertEqual(self.orch._evidence_score(
+            "### Evidence Score\nsupported\n**+0.75** — ipTM 0.75"), 0.75)
+        self.assertEqual(self.orch._evidence_score("## Evidence Score\n\n0.18"), 0.18)
+
+    def test_last_heading_wins(self) -> None:
+        # A recap heading then the final verdict -> the final verdict's number.
+        self.assertEqual(self.orch._evidence_score(
+            "### Evidence Score\n0.10 (prior)\n\n### Evidence Score\n+0.90"), 0.90)
+
+    def test_neutralize_strips_reuse_existing_without_a_period(self) -> None:
+        # H2: a period-less "reuse the existing FASTA under ..." line is stripped.
+        cleaned = self.orch._neutralize_fs_recovery(
+            "reuse the existing FASTA under chai_batch_test")
+        self.assertNotIn("FASTA", cleaned)
+
+    def test_neutralize_keeps_a_legitimate_fetch_instruction(self) -> None:
+        # H2: fetching from an authoritative source carries no on-disk qualifier.
+        instruction = "Fetch the sequence from the UniProt REST API by accession."
+        self.assertEqual(self.orch._neutralize_fs_recovery(instruction), instruction)
 
 
 if __name__ == "__main__":

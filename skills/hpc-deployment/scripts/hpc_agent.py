@@ -147,11 +147,7 @@ class HpcAgent(Agent):
             )
         finally:
             self._inflight -= 1
-        
-        '''
-        for large runs, call /tmp/function....py --args 
-        args would be function, and --args
-        '''
+
     @action
     async def inspect_filesystem(self, operation: str, path: str,
                                  offset: int = 1, limit: int = 100) -> dict:
@@ -179,15 +175,20 @@ class HpcAgent(Agent):
     async def register_tool(self, name: str, script_path: str, params: dict, description: str,
                             example: dict, defaults: dict | None = None,
                             call: Literal["json", "argv"] = "json", venv_path: str | None = None,
-                            skip_smoke: bool = False, labels: dict | None = None) -> dict:
+                            skip_smoke: bool = False, labels: dict | None = None,
+                            expects: list[str] | None = None) -> dict:
         """Freeze a script as the next version of a named tool, after one smoke run.
 
         skip_smoke is for scripts that need a GPU the client node may lack: the
-        tool is registered with tested=False.
+        tool is registered with tested=False. `expects` is a list of output
+        filenames/globs (relative to each run's folder) the script must produce;
+        a run that exits 0 without them is counted as failed (L3), so a fold
+        that exits clean but writes nothing never travels downstream as a
+        datapoint.
         """
         return await asyncio.get_running_loop().run_in_executor(
             None, _register_tool, name, script_path, params, description, example, defaults,
-            call, venv_path, skip_smoke, labels, self.base_dir, self.inspect_roots,
+            call, venv_path, skip_smoke, labels, expects, self.base_dir, self.inspect_roots,
         )
 
     @action
@@ -197,15 +198,6 @@ class HpcAgent(Agent):
         return await asyncio.get_running_loop().run_in_executor(
             None, _list_tools, self.base_dir, query, name, all_versions, limit
         )
-    '''
-    @action
-    async def write_payload(args):
-        write the function such that it can take argumentis
-        repo of /tmp/function.py
-        mpi broadcast payload -> tmp
-        tmp/function.py --args for each parallel execution
-        
-    '''
 
 
 class HpcClusterAgent(Agent):
@@ -318,12 +310,27 @@ class HpcClientAgent(HpcAgent):
         copies of the script and inputs and registers itself; passing an
         existing batch_id resumes it from those copies, skipping runs that
         already finished cleanly.
+
+        H4: gpus, timeout_each and venv_path are frozen on the first submission
+        and read back from the registry entry here, so a bare resume keeps the
+        batch's real accelerator pinning, walltime and interpreter instead of
+        silently reverting to the defaults (gpus=1, timeout=900s, system python)
+        -- which mis-pinned multi-tile folds, killed long folds at 900s, and ran
+        resumed rows under the wrong environment. The entry is the single source
+        of truth: on a new batch it holds exactly the values passed; on a resume
+        it wins over whatever this call passes.
         """
         entry, script, todo = await asyncio.get_running_loop().run_in_executor(
             None, _prepare_batch, script_path, inputs_path, batch_id, labels,
-            timeout_each, gpus, self.base_dir, self.inspect_roots, tool, tool_version,
+            timeout_each, gpus, venv_path, self.base_dir, self.inspect_roots, tool, tool_version,
         )
         batch_id = entry["batch_id"]
+        # Use the frozen run parameters, not this call's args (H4). .get keeps
+        # pre-H4 batches (which have no frozen field) resumable on the passed args.
+        timeout_each = float(entry.get("timeout_each", timeout_each))
+        gpus = entry.get("gpus", gpus)
+        venv_path = entry.get("venv_path", venv_path)
+        expects = entry.get("expects")  # L3: frozen output contract, or None
         # The call style belongs to the frozen script, so resume reuses it.
         call, order = entry.get("call", "json"), entry.get("param_order")
         tasks = [
@@ -334,7 +341,7 @@ class HpcClientAgent(HpcAgent):
                 ngpus_per_process=gpus,
                 executable=_run_one,
                 args=(script, row, run_dir, timeout_each, venv_path, call, order,
-                      entry["script_sha256"]),
+                      entry["script_sha256"], expects),
             )
             for run_id, row, run_dir in todo
         ]
@@ -538,13 +545,90 @@ def _clean_labels(labels: dict | None) -> dict[str, str]:
     return {str(key)[:64]: str(value)[:200] for key, value in labels.items()}
 
 
+def _run_succeeded(status: dict) -> bool:
+    """A run counts as a success only if it exited 0 AND produced every output
+    its tool declared (L3). rc0 with a missing declared output is a failure: a
+    fold that exits clean but writes nothing is not a datapoint.
+    """
+    return status.get("returncode") == 0 and not status.get("missing_outputs")
+
+
 def _finished_ok(run_dir: Path) -> bool:
     if not (run_dir / "done").exists():
         return False
     try:
-        return json.loads((run_dir / "status.json").read_text()).get("returncode") == 0
+        return _run_succeeded(json.loads((run_dir / "status.json").read_text()))
     except (OSError, ValueError):
         return False
+
+
+# A run folder can only be legitimately owned while its task is alive, and a
+# task cannot outlive its own `timeout` (subprocess.run kills it). So a lease
+# older than timeout + this margin means the owner died and the row is safe to
+# re-dispatch. The margin absorbs clock skew and the gap between the subprocess
+# being killed and its wrapper returning.
+LEASE_STALE_MARGIN = 300.0
+
+
+def _lease_age(run_dir: Path) -> float | None:
+    """Seconds since this run folder was leased, or None if unleased/unreadable."""
+    try:
+        info = json.loads((run_dir / "lease.json").read_text())
+        started = float(info.get("started_at"))
+    except (OSError, ValueError, TypeError):
+        return None
+    return time.time() - started
+
+
+def _active_lease(run_dir: Path, max_age: float) -> bool:
+    """Whether a live task currently owns this run folder (C3).
+
+    `done` is written last, so its presence means the task is terminal and the
+    lease is irrelevant. Otherwise a lease younger than `max_age` marks a task
+    still in flight -- resume must not dispatch a second task onto its folder.
+    """
+    if (run_dir / "done").exists():
+        return False
+    age = _lease_age(run_dir)
+    return age is not None and age < max_age
+
+
+def _acquire_lease(folder: Path, max_age: float) -> dict | None:
+    """Atomically claim a run folder. Returns our lease, or None if a live task
+    already owns it (the caller must then NOT run, to avoid clobbering it).
+
+    O_CREAT|O_EXCL makes the claim atomic between two tasks that were both
+    dispatched for the same row (e.g. a resume overlapping an in-flight run):
+    the second to start loses the race, sees a fresh lease, and backs off. A
+    clearly-stale lease (dead owner) is stolen so a crashed row can still rerun.
+    """
+    import socket
+
+    lease = folder / "lease.json"
+    me = {"pid": os.getpid(), "host": socket.gethostname(), "started_at": time.time()}
+    payload = json.dumps(me).encode()
+    for _ in range(2):
+        try:
+            fd = os.open(lease, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            # A terminal run (`done` written) no longer owns its folder, so its
+            # lease is reclaimable at once -- otherwise a just-failed row could
+            # not be re-run until its own lease aged past max_age. A live run
+            # (no done) is honored until its lease goes stale.
+            if not (folder / "done").exists():
+                age = _lease_age(folder)
+                if age is not None and age < max_age:
+                    return None  # a live owner holds it; back off
+            try:
+                lease.unlink()  # stale, terminal, or unreadable; drop it and retry
+            except OSError:
+                return None
+            continue
+        else:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
+            return me
+    return None
 
 
 def _stage_local(script: str, sha: str | None) -> str:
@@ -582,16 +666,44 @@ def _argv(row: dict, order: list[str] | None) -> list[str]:
     return argv
 
 
+# Files the run bookkeeping owns at the top of a run folder; a promoted output
+# that collides with one of these names is left in the attempt folder instead.
+_RUN_RESERVED = {"input.json", "stdout.txt", "stderr.txt", "status.json", "done", "lease.json"}
+
+
+def _promote_outputs(attempt: Path, folder: Path) -> None:
+    """Move a successful attempt's output files up to the run-folder top level,
+    where harvesters look, without clobbering the run bookkeeping (M6)."""
+    for item in attempt.iterdir():
+        if item.name in _RUN_RESERVED or item.name.startswith("attempt_"):
+            continue
+        dest = folder / item.name
+        try:
+            if dest.is_dir():
+                shutil.rmtree(dest)
+            elif dest.exists():
+                dest.unlink()
+            shutil.move(str(item), str(dest))
+        except OSError:
+            continue
+
+
 def _run_one(script: str, row: dict, run_dir: str, timeout: float,
              venv_path: str | None = None, call: str = "json",
-             order: list[str] | None = None, sha: str | None = None) -> dict:
+             order: list[str] | None = None, sha: str | None = None,
+             expects: list[str] | None = None) -> dict:
     """Run one batch row inside an EL task; only a small status dict returns.
 
     The script is invoked as `python script input.json` (call="json") or
-    `python script --name value ...` (call="argv") with its run folder as cwd.
-    input.json is written either way, as the record of this run's input.
-    stdout/stderr stay in files so a large batch never streams its output
-    back through EL. `done` is written last, so it means "finished".
+    `python script --name value ...` (call="argv") with a fresh per-attempt
+    subfolder as cwd. stdout/stderr and the status live at the run-folder top
+    level so batch_status can read them; the script's own output files are
+    written into the attempt subfolder and PROMOTED to the top level only on
+    success (M6), so a failed attempt can never leave a result artifact at the
+    top level that a globbing harvester would read as this run's output. If the
+    tool declared expected outputs (`expects`), a run that exits 0 without
+    producing them is recorded as a failure (L3). `done` is written last, so it
+    means "finished".
     """
     import socket
     import subprocess
@@ -599,32 +711,54 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
 
     folder = Path(run_dir)
     folder.mkdir(parents=True, exist_ok=True)
+    # C3: claim the folder before touching anything. If a live task already owns
+    # it (a resume that overlapped an in-flight run), back off WITHOUT clearing
+    # its done/outputs, rather than running a second process into the same dir.
+    if _acquire_lease(folder, timeout + LEASE_STALE_MARGIN) is None:
+        return {"returncode": None, "skipped": "run folder actively leased by another task",
+                "host": socket.gethostname()}
     (folder / "done").unlink(missing_ok=True)  # a rerun after a failure
+    # M6: give each attempt its own cwd. The top level only ever holds promoted
+    # (successful) outputs plus the bookkeeping; a failed attempt's files stay
+    # under attempt_<n>/ for debugging and are never seen by a harvester.
+    attempt_n = 1 + sum(1 for p in folder.glob("attempt_*") if p.is_dir())
+    attempt = folder / f"attempt_{attempt_n}"
+    attempt.mkdir(parents=True, exist_ok=True)
     (folder / "input.json").write_text(json.dumps(row))
+    (attempt / "input.json").write_text(json.dumps(row))
     python = str(Path(venv_path, "bin/python")) if venv_path else sys.executable
     args = _argv(row, order) if call == "argv" else ["input.json"]
     started = time.time()
     with open(folder / "stdout.txt", "wb") as out, open(folder / "stderr.txt", "wb") as err:
         try:
-            returncode = subprocess.run([python, _stage_local(script, sha), *args], cwd=folder,
+            returncode = subprocess.run([python, _stage_local(script, sha), *args], cwd=attempt,
                                         stdout=out, stderr=err, timeout=timeout).returncode
         except subprocess.TimeoutExpired:
             err.write(f"\nTimed out after {timeout}s.".encode())
             returncode = -1
     status = {
         "returncode": returncode,
+        "attempt": attempt_n,
         "seconds": round(time.time() - started, 1),
         "host": socket.gethostname(),
         "gpu": os.environ.get("CUDA_VISIBLE_DEVICES", os.environ.get("ZE_AFFINITY_MASK", "")),
     }
-    (folder / "status.json").write_text(json.dumps(status))
+    # L3: enforce the tool's declared output contract on an otherwise-clean exit.
+    if returncode == 0 and expects:
+        missing = [pattern for pattern in expects if not any(True for _ in attempt.glob(pattern))]
+        if missing:
+            status["missing_outputs"] = missing
+    if _run_succeeded(status):
+        _promote_outputs(attempt, folder)
+    _write_json(folder / "status.json", status)  # M5: atomic, so readers never tear it
     (folder / "done").touch()
     return status
 
 
 def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: str | None,
                    labels: dict | None, timeout_each: float, gpus: float,
-                   base_dir: str, inspect_roots: list[str], tool: str | None = None,
+                   venv_path: str | None, base_dir: str, inspect_roots: list[str],
+                   tool: str | None = None,
                    tool_version: int | None = None) -> tuple[dict, str, list]:
     """Create or resume a batch on disk and list the runs still to submit.
 
@@ -672,20 +806,27 @@ def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: s
             "inputs_sha256": _sha256(batch_dir / "inputs.jsonl"),
             "timeout_each": timeout_each,
             "gpus": gpus,
+            "venv_path": venv_path,  # H4: frozen so a resume keeps the interpreter
         }
         if spec:
             entry.update(tool=spec["tool"], tool_version=spec["version"],
                          tool_sha256=spec["sha256"], call=spec["call"],
                          param_order=list(spec["params"]),
+                         expects=spec.get("expects"),  # L3: frozen output contract
                          tool_spec={key: spec[key] for key in ("params", "defaults")})
 
     rows = _read_rows(batch_dir / "inputs.jsonl")
     if entry.get("tool_spec"):
         rows = [(run_id, _check_row(row, entry["tool_spec"], f"inputs row {run_id!r}"))
                 for run_id, row in rows]
+    # C3: skip rows that finished cleanly AND rows a live task still owns, so a
+    # resume that overlaps an in-flight submission does not dispatch a second
+    # task onto the same run folder. Staleness uses the batch's frozen timeout.
+    lease_max_age = float(entry.get("timeout_each", timeout_each)) + LEASE_STALE_MARGIN
     todo = [(run_id, row, str(batch_dir / f"run_{run_id}"))
             for run_id, row in rows
-            if not _finished_ok(batch_dir / f"run_{run_id}")]
+            if not _finished_ok(batch_dir / f"run_{run_id}")
+            and not _active_lease(batch_dir / f"run_{run_id}", lease_max_age)]
     entry["total"] = len(rows)
     entry.setdefault("submissions", []).append({"at": _now(), "submitted": len(todo)})
     _write_json(batch_dir / "batch.json", entry)
@@ -694,7 +835,13 @@ def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: s
 
 
 def _batch_status(batch_id: str, base_dir: str, max_failures: int = 5) -> dict:
-    """Count finished runs on disk and cache the counts in the registry."""
+    """Count finished runs on disk and cache the counts in the registry.
+
+    `complete` means every run reached a terminal state (none unfinished); it
+    does NOT mean every run produced a result -- a batch where most folds
+    crashed is still `complete`. `ok` is the harvest signal: complete AND zero
+    failures (H3). A consumer must key on `ok`, not `complete`.
+    """
     root = _batch_root(base_dir)
     entry_path = root / "registry" / f"{_check_id(batch_id, 'batch_id')}.json"
     if not entry_path.exists():
@@ -709,20 +856,27 @@ def _batch_status(batch_id: str, base_dir: str, max_failures: int = 5) -> dict:
             folder = Path(item.path)
             if not (folder / "done").exists():
                 continue
-            returncode = json.loads((folder / "status.json").read_text()).get("returncode")
-            if returncode == 0:
+            try:  # M5: one torn status.json must not abort the whole batch's status
+                run_status = json.loads((folder / "status.json").read_text())
+            except (OSError, ValueError):
+                continue  # leave this run counted as unfinished until it settles
+            if _run_succeeded(run_status):
                 succeeded += 1
                 continue
             failed += 1
             if len(failures) < max_failures:
                 tail = (folder / "stderr.txt").read_text(errors="replace").splitlines()[-5:]
-                failures.append({"run": item.name, "returncode": returncode, "stderr_tail": tail})
-    status = {"succeeded": succeeded, "failed": failed,
-              "unfinished": entry["total"] - succeeded - failed, "at": _now()}
+                record = {"run": item.name, "returncode": run_status.get("returncode"),
+                          "stderr_tail": tail}
+                if run_status.get("missing_outputs"):
+                    record["missing_outputs"] = run_status["missing_outputs"]
+                failures.append(record)
+    unfinished = entry["total"] - succeeded - failed
+    status = {"succeeded": succeeded, "failed": failed, "unfinished": unfinished, "at": _now()}
     entry["last_status"] = status
     _write_json(entry_path, entry)
     return {"batch_id": batch_id, "labels": entry["labels"], "total": entry["total"],
-            **status, "complete": status["unfinished"] == 0,
+            **status, "complete": unfinished == 0, "ok": unfinished == 0 and failed == 0,
             "dir": str(root / batch_id), "failures": failures}
 
 
@@ -815,6 +969,26 @@ def _check_row(row: dict, spec: dict, what: str) -> dict:
     return filled
 
 
+_MAX_EXPECTS = 16
+
+
+def _check_expects(expects: list[str] | None) -> list[str]:
+    """Validate a tool's declared output patterns (L3): relative filenames or
+    globs, resolved against each run's folder. Absolute paths and `..` escapes
+    are refused so the contract can only name files the run itself produces."""
+    if expects is None:
+        return []
+    if not isinstance(expects, list) or len(expects) > _MAX_EXPECTS:
+        raise ValueError(f"expects must be a list of at most {_MAX_EXPECTS} output patterns")
+    cleaned = []
+    for pattern in expects:
+        if (not isinstance(pattern, str) or not pattern.strip()
+                or pattern.startswith("/") or ".." in pattern):
+            raise ValueError(f"bad expected-output pattern {pattern!r}: use a relative filename or glob")
+        cleaned.append(pattern.strip())
+    return cleaned
+
+
 def _version_dirs(tool_dir: Path) -> list[tuple[int, Path]]:
     """Every v<N> folder of a tool, registered or not, lowest N first."""
     if not tool_dir.is_dir():
@@ -825,13 +999,23 @@ def _version_dirs(tool_dir: Path) -> list[tuple[int, Path]]:
 
 
 def _registered(tool_dir: Path) -> list[dict]:
-    """tool.json of each registered version, lowest first, with its folder."""
+    """tool.json of each registered version, lowest first, with its folder.
+
+    A version folder with no tool.json is simply not registered (a failed smoke
+    leaves one). But a tool.json that EXISTS and will not parse is corruption of
+    a frozen, immutable spec, so raise loudly rather than silently skip it and
+    fall back to an older version that runs different science (M15).
+    """
     specs = []
     for _, path in _version_dirs(tool_dir):
-        try:
-            specs.append({**json.loads((path / "tool.json").read_text()), "dir": str(path)})
-        except (OSError, ValueError):
+        tool_json = path / "tool.json"
+        if not tool_json.exists():
             continue
+        try:
+            specs.append({**json.loads(tool_json.read_text()), "dir": str(path)})
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"tool version {path.name} in {tool_dir.name!r} has an "
+                             f"unreadable tool.json: {exc}") from exc
     return specs
 
 
@@ -849,8 +1033,8 @@ def _load_tool(base_dir: str, name: str, version: int | None = None) -> dict:
 
 def _register_tool(name: str, script_path: str, params: dict, description: str,
                    example: dict, defaults: dict | None, call: str, venv_path: str | None,
-                   skip_smoke: bool, labels: dict | None, base_dir: str,
-                   inspect_roots: list[str]) -> dict:
+                   skip_smoke: bool, labels: dict | None, expects: list[str] | None,
+                   base_dir: str, inspect_roots: list[str]) -> dict:
     """Freeze a script as the next version of a tool and smoke-test it.
 
     Registering the same script with the same params, defaults and call style
@@ -866,6 +1050,7 @@ def _register_tool(name: str, script_path: str, params: dict, description: str,
     if call not in ("json", "argv"):
         raise ValueError("call must be 'json' or 'argv'")
     params, defaults = _check_params(params, defaults)
+    expects = _check_expects(expects)
     if not isinstance(example, dict):
         raise ValueError("example must be one input row (an object)")
     example = _check_row(example, {"params": params, "defaults": defaults}, "example")
@@ -877,8 +1062,8 @@ def _register_tool(name: str, script_path: str, params: dict, description: str,
     tool_dir = _tool_root(base_dir) / name
 
     for spec in _registered(tool_dir):
-        if (spec["sha256"], spec["params"], spec.get("defaults"), spec["call"]) == (
-                sha, params, defaults, call):
+        if (spec["sha256"], spec["params"], spec.get("defaults"), spec["call"],
+                spec.get("expects") or []) == (sha, params, defaults, call, expects):
             return {"tool": name, "version": spec["version"], "sha256": sha,
                     "tested": spec.get("tested"), "existing": True, "dir": spec["dir"]}
 
@@ -900,11 +1085,14 @@ def _register_tool(name: str, script_path: str, params: dict, description: str,
     if not skip_smoke:
         smoke_status = _run_one(str(version_dir / "script.py"), example,
                                 str(version_dir / "smoke"), _SMOKE_TIMEOUT, venv_path,
-                                call, list(params))
-        if smoke_status["returncode"] != 0:
+                                call, list(params), expects=expects)
+        if not _run_succeeded(smoke_status):
             tail = (version_dir / "smoke" / "stderr.txt").read_text(errors="replace")
+            missing = smoke_status.get("missing_outputs")
+            why = (f"did not produce declared outputs {missing}" if missing
+                   else f"returncode {smoke_status['returncode']}")
             raise ValueError(
-                f"smoke test failed with returncode {smoke_status['returncode']}; "
+                f"smoke test failed ({why}); "
                 f"{name!r} not registered (run left in {version_dir / 'smoke'}). stderr tail:\n"
                 + "\n".join(tail.splitlines()[-20:]))
     spec = {
@@ -915,6 +1103,7 @@ def _register_tool(name: str, script_path: str, params: dict, description: str,
         "defaults": defaults,
         "call": call,
         "example": example,
+        "expects": expects,
         "sha256": sha,
         "source_script": str(script),
         "venv_path": venv_path,
@@ -971,7 +1160,7 @@ def _list_tools(base_dir: str, query: str | None = None, name: str | None = None
             found.append({
                 **{field: spec.get(field) for field in (
                     "tool", "version", "description", "params", "defaults", "call",
-                    "example", "tested", "labels", "registered_at", "sha256")},
+                    "example", "expects", "tested", "labels", "registered_at", "sha256")},
                 "uses": uses.get(key, 0),
                 "last_ok_batch": last_ok.get(key, ("", None))[1],
             })
