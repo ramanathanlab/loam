@@ -56,12 +56,36 @@ _MAX_BYTES = 64 * 1024
 
 # A dropped exchange stream must not read as "the agent is gone".
 _TRANSIENT_LISTEN_ERRORS = (aiohttp.ClientPayloadError, aiohttp.ClientConnectionError)
-_LISTEN_MAX_RETRIES = 10
-# A stream that lasted this long before dropping was genuinely working, so its
-# drop starts a fresh retry budget. Judging health by "did a message arrive"
-# instead would let a stream that delivers one message per drop reset the
-# budget forever and never give up.
-_LISTEN_HEALTHY_S = 30.0
+# The Academy exchange is reached over the ALCF HTTP proxy, which severs the
+# long-poll stream routinely (observed in production: repeated ClientPayloadError
+# / TransferEncodingError 400 against exchange.academy-agents.org via
+# proxy.alcf.anl.gov, one every few seconds). Those drops are NORMAL; they must
+# never accumulate into a false "agent lost" that tears the whole EL cluster --
+# and its PBS allocation -- down. A fixed count of consecutive retries is the
+# wrong budget: the proxy drops faster than any "healthy for N seconds" reset, so
+# the count is reached in under a minute even while the exchange is perfectly
+# alive (this is what zombied a live capacity block). So the budget is TIME-based
+# and resets on every delivered message: keep reconnecting indefinitely as long
+# as messages still flow, and give up only after the exchange has produced
+# nothing at all for this long. Env-tunable.
+_LISTEN_GIVEUP_S = float(os.environ.get("LOAM_EXCHANGE_GIVEUP_S", "1200"))  # 20 min of silence
+_LISTEN_BACKOFF_CAP = 8.0
+
+
+def _listen_should_give_up(first_failure: float | None, now: float, giveup_s: float = _LISTEN_GIVEUP_S) -> bool:
+    """True once the exchange has delivered NOTHING for longer than the budget.
+
+    `first_failure` is the monotonic time of the first drop since the last
+    delivered message, or None if a message has arrived since (so a stream that
+    delivers at least one message per `giveup_s` never gives up -- it is flaky,
+    not dead).
+    """
+    return first_failure is not None and (now - first_failure) >= giveup_s
+
+
+def _listen_backoff(failures: int, cap: float = _LISTEN_BACKOFF_CAP) -> float:
+    """Exponential backoff for consecutive reconnects (1,2,4,8...), capped."""
+    return min(2.0 ** min(max(failures - 1, 0), 3), cap)
 
 
 def _harden_exchange_listener() -> None:
@@ -86,30 +110,36 @@ def _harden_exchange_listener() -> None:
         return
 
     async def listen(self, timeout: float | None = None):
+        first_failure: float | None = None  # monotonic time of first drop since last message
         failures = 0
         while True:
-            started = time.monotonic()
             try:
                 # aclosing: the inner generator owns an open HTTP response, so
                 # it must be finalized if our consumer abandons us mid-stream.
                 async with aclosing(original(self, timeout=timeout)) as stream:
                     async for message in stream:
+                        # A delivered message proves the exchange is alive, so
+                        # clear the failure budget: routine proxy drops between
+                        # messages never accumulate toward a false "agent lost".
+                        first_failure = None
+                        failures = 0
                         yield message
                 return
             except _TRANSIENT_LISTEN_ERRORS as exc:
-                if time.monotonic() - started >= _LISTEN_HEALTHY_S:
-                    failures = 0
+                now = time.monotonic()
+                if first_failure is None:
+                    first_failure = now
                 failures += 1
-                if failures > _LISTEN_MAX_RETRIES:
+                if _listen_should_give_up(first_failure, now):
                     logger.error(
-                        'exchange stream unrecoverable after %d retries: %s: %s',
-                        _LISTEN_MAX_RETRIES, type(exc).__name__, exc,
+                        'exchange stream unrecoverable: no message for %.0fs across %d reconnects: %s: %s',
+                        now - first_failure, failures, type(exc).__name__, exc,
                     )
                     raise
-                backoff = min(2 ** (failures - 1), 8)
+                backoff = _listen_backoff(failures)
                 logger.warning(
-                    'exchange stream dropped (%s: %s); reconnecting in %ss [%d/%d]',
-                    type(exc).__name__, exc, backoff, failures, _LISTEN_MAX_RETRIES,
+                    'exchange stream dropped (%s: %s); reconnecting in %.0fs [silent %.0fs/%.0fs]',
+                    type(exc).__name__, exc, backoff, now - first_failure, _LISTEN_GIVEUP_S,
                 )
                 await asyncio.sleep(backoff)
 

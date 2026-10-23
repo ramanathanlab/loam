@@ -50,6 +50,19 @@ export HPC_MCP_TRANSPORT="http"
 export HPC_ACCOUNT="FRAME-IDP"
 export HPC_QUEUE="debug"
 export HPC_WALLTIME="00:30:00"
+# Block maintenance -- QUEUE-AGNOSTIC. These make Loam keep one block of whatever
+# queue is selected above alive and request a REPLACEMENT by itself when a block
+# ends or its node is lost, so a 30-min debug block self-replaces during a longer
+# campaign, and prod/capacity behave the same with no code change. min_blocks=1
+# is what makes the endpoint request a fresh node on its own; init_blocks=1 grabs
+# one at startup; max_idletime is how long an idle block is held before scale-down
+# (kept high so a lull between folds does not drop the allocation). Raise
+# HPC_MAX_BLOCKS to 2 if you want the replacement to overlap the expiring block
+# (no coverage gap) at the cost of briefly holding two blocks.
+export HPC_INIT_BLOCKS="${HPC_INIT_BLOCKS:-1}"
+export HPC_MIN_BLOCKS="${HPC_MIN_BLOCKS:-1}"
+export HPC_MAX_BLOCKS="${HPC_MAX_BLOCKS:-1}"
+export HPC_MAX_IDLETIME="${HPC_MAX_IDLETIME:-3600}"
 # ----------------------------------------------------------------------------
 # One worker slot per client agent, plus one for the long-running
 # HpcClusterAgent, which occupies its slot for the life of the allocation.
@@ -58,5 +71,5 @@ export HPC_WALLTIME="00:30:00"
 # globus-compute-endpoint/sdk 4.19.0, dill 0.3.9, ensemble_launcher@c36dc43.
 # Keys match globus_compute_endpoint_configs/alcf_aurora/user_config_template.yaml.j2.
 # worker_init must be one line: the template renders it as one quoted YAML string.
-export HPC_ENDPOINT_CONFIG_JSON='{"account": "'"$HPC_ACCOUNT"'", "queue": "'"$HPC_QUEUE"'", "walltime": "'"$HPC_WALLTIME"'", "nodes_per_block": '"$HPC_NNODES"', "max_workers_per_node": '"$((HPC_POOL_SIZE + 1))"', "worker_init": "export TMPDIR=/tmp; export HTTP_PROXY=http://proxy.alcf.anl.gov:3128 HTTPS_PROXY=http://proxy.alcf.anl.gov:3128 http_proxy=http://proxy.alcf.anl.gov:3128 https_proxy=http://proxy.alcf.anl.gov:3128 NO_PROXY=localhost,127.0.0.1,.alcf.anl.gov no_proxy=localhost,127.0.0.1,.alcf.anl.gov; module reset; module load frameworks; source /flare/FRAME-IDP/avasan/loam-hpc/venv/bin/activate; which python; export PYTHONPATH=/flare/FRAME-IDP/avasan/loam-hpc:$PYTHONPATH"}'
+export HPC_ENDPOINT_CONFIG_JSON='{"account": "'"$HPC_ACCOUNT"'", "queue": "'"$HPC_QUEUE"'", "walltime": "'"$HPC_WALLTIME"'", "nodes_per_block": '"$HPC_NNODES"', "max_workers_per_node": '"$((HPC_POOL_SIZE + 1))"', "init_blocks": '"$HPC_INIT_BLOCKS"', "min_blocks": '"$HPC_MIN_BLOCKS"', "max_blocks": '"$HPC_MAX_BLOCKS"', "max_idletime": '"$HPC_MAX_IDLETIME"', "worker_init": "export TMPDIR=/tmp; export HTTP_PROXY=http://proxy.alcf.anl.gov:3128 HTTPS_PROXY=http://proxy.alcf.anl.gov:3128 http_proxy=http://proxy.alcf.anl.gov:3128 https_proxy=http://proxy.alcf.anl.gov:3128 NO_PROXY=localhost,127.0.0.1,.alcf.anl.gov no_proxy=localhost,127.0.0.1,.alcf.anl.gov; module reset; module load frameworks; source /flare/FRAME-IDP/avasan/loam-hpc/venv/bin/activate; which python; export PYTHONPATH=/flare/FRAME-IDP/avasan/loam-hpc:$PYTHONPATH"}'
 # Optional: HPC_TOOL_SMOKE_TIMEOUT=120, HPC_LOCAL_STAGE=/tmp/loam-tools

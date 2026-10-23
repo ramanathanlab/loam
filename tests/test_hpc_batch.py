@@ -344,5 +344,35 @@ class RunBatchTests(unittest.TestCase):
         self.assertTrue((stage / sha / "script.py").is_file())
 
 
+@unittest.skipUnless(HAVE_DEPS, "hpc-deployment dependencies not installed")
+class ExchangeListenerBudgetTests(unittest.TestCase):
+    """The exchange-listener give-up budget is time-based, not count-based, so
+    the ALCF proxy's routine stream drops can't zombie a live cluster."""
+
+    def setUp(self) -> None:
+        sys.path.insert(0, str(SCRIPTS))
+        import hpc_agent
+        self.hpc = hpc_agent
+
+    def tearDown(self) -> None:
+        sys.path.remove(str(SCRIPTS))
+
+    def test_backoff_is_exponential_and_capped(self) -> None:
+        self.assertEqual(self.hpc._listen_backoff(1), 1.0)
+        self.assertEqual(self.hpc._listen_backoff(2), 2.0)
+        self.assertLessEqual(self.hpc._listen_backoff(50), self.hpc._LISTEN_BACKOFF_CAP)
+
+    def test_never_gives_up_while_messages_arrive(self) -> None:
+        # first_failure=None means a message arrived since the last drop.
+        self.assertFalse(self.hpc._listen_should_give_up(None, 1e9))
+
+    def test_many_brief_drops_within_window_do_not_give_up(self) -> None:
+        # Sustained-silence budget is what matters, not the number of drops.
+        self.assertFalse(self.hpc._listen_should_give_up(100.0, 100.0 + 1199, giveup_s=1200))
+
+    def test_gives_up_only_after_sustained_silence(self) -> None:
+        self.assertTrue(self.hpc._listen_should_give_up(100.0, 100.0 + 1200, giveup_s=1200))
+
+
 if __name__ == "__main__":
     unittest.main()

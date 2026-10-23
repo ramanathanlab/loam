@@ -324,6 +324,7 @@ class ClusterPool:
 
         probed = await asyncio.gather(*(self._probe(agent) for agent in self._agents))
         survivors = [agent for agent in probed if agent is not None]
+        dropped = [agent for agent, ok in zip(self._agents, probed) if ok is None]
         if len(survivors) < len(self._agents):
             # Publish survivors before relaunching: a dead agent must stop
             # being handed out even if its replacement cannot be launched.
@@ -333,6 +334,15 @@ class ClusterPool:
         shortfall = self.want - len(survivors)
         if shortfall <= 0:
             return
+        # M8: free the dropped agents' worker slots BEFORE launching replacements.
+        # A client that fails its probe but is still alive (hung) keeps holding
+        # its slot; the endpoint is sized at one slot per client (+1 for the
+        # cluster), so without this the replacement has nowhere to land and
+        # _launch_client blocks the whole repair sweep for startup_timeout_s
+        # (~600s) -- freezing cluster liveness for ~10 min. Best effort: the
+        # dropped agent is usually already gone, and _shutdown_all is bounded.
+        if dropped:
+            await self._shutdown_all(dropped)
         fresh = await self._launch_clients(shortfall)
         if fresh:
             self._agents = survivors + fresh
