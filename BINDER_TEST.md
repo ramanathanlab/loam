@@ -46,9 +46,13 @@ all of these must be green:
    ```bash
    python3 scripts/campaign_preflight.py \
      --repo <repo> --hermes-home <hermes-home> --loam-config <loam.yaml> \
-     --hpc-env skills/hpc-deployment/set_env_akv.sh \
+     --hpc-env skills/hpc-deployment/set_env.local.sh \
      --hpc-url http://127.0.0.1:8000/mcp --no-auto-start
    ```
+
+   Use **your own** `set_env.local.sh`. `set_env_akv.sh` is Archit's filled-in
+   copy — his endpoint UUID and a `HPC_BASE_DIR` under his `/flare` tree that
+   other users cannot write to.
 
 A cold just-started block can report `ready: false` once while its worker
 registers; re-run before concluding a failure.
@@ -57,10 +61,12 @@ registers; re-run before concluding a failure.
 
 The endpoint provisions PBS blocks through a Parsl provider. On the `debug`
 queue a block lives only 30 minutes, so a multi-round campaign *will* outlive its
-first block. The allocation knobs in `skills/hpc-deployment/set_env_akv.sh` make
+first block. The allocation knobs in your `set_env.local.sh` make
 Loam request a replacement node by itself (`HPC_MIN_BLOCKS=1`), and the server
 rides out the ALCF-proxy exchange-stream drops (`LOAM_EXCHANGE_GIVEUP_S`) instead
-of tearing the cluster down. This test asserts that behavior (see acceptance
+of tearing the cluster down. `set_env.example.sh` ships without those knobs, so
+a file copied from it provisions exactly one block and the cluster simply ends at
+walltime — port them from `set_env_akv.sh` before a run longer than the walltime. This test asserts that behavior (see acceptance
 criterion 7); it is queue-agnostic — set `HPC_QUEUE=prod` (or `capacity`) with a
 longer `HPC_WALLTIME` for a scaled run, `debug` for a short one.
 
@@ -139,12 +145,7 @@ For each round:
 1. Submit the binder-design research task, e.g.:
 
    ```text
-   Design a candidate peptide binder for the human GLP-1 receptor (GLP1R) and
-   assess its interface confidence by co-folding it with the target on Aurora.
-   Fetch the GLP1R sequence at run time from the UniProt REST API (accession
-   P43220) — never hardcode it; verify the returned accession and length — then
-   co-fold a proposed binder + GLP1R with Chai-1 via the HPC run_code endpoint
-   and report ipTM and ipSAE for the interface.
+  Design a candidate peptide binder for the human GLP-1 receptor (GLP1R) and assess its interface confidence by co-folding it with the target on Aurora. Fetch the GLP1R sequence at run time from the UniProt REST API (accession P43220) — never hardcode it; verify the returned accession and length — then co-fold a proposed binder + GLP1R with Chai-1 via the HPC run_code endpoint and report ipTM and ipSAE for the interface.
    ```
 
 2. Follow the injected Loam directive exactly:

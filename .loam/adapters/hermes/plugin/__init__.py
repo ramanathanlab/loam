@@ -199,6 +199,9 @@ def pre_llm_call(session_id: str = "", **kwargs: Any) -> dict[str, Any] | None:
         knowledge = tournament.knowledge or {}
         timeout_seconds = max(timeout_seconds,
                               tournament.timeout_seconds + int(knowledge.get("timeout_seconds") or 0))
+    # Newer Hermes passes its own parent_session_id ("" for a top-level
+    # session); Loam keys the pre-LLM pass on this session, so ours wins.
+    kwargs.pop("parent_session_id", None)
     return _invoke(
         "pre-llm.py",
         _payload(

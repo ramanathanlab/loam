@@ -47,3 +47,9 @@ mcp_servers:
     command: /ABS/PATH/TO/.loam-venv/bin/python
     args:
       - /ABS/PATH/TO/loam/skills/hpc-deployment/scripts/hpc_control.py
+# Loam's pre_llm_call directives (validator/reasoner dispatch with inlined role
+# definitions) run 20-40 KB. Hermes' default 10 KB spill replaces them with a
+# file pointer the coordinator never reads, so the reasoner is never dispatched.
+hooks:
+  output_spill:
+    max_chars: 200000
