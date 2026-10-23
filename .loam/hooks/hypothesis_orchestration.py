@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -379,10 +380,16 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
 # Matched line-wise and ending at a period OR end-of-line, so a sentence with no
 # trailing period is still stripped (H2: the old `\.`-terminated pattern let
 # period-less lines through).
+# The object list is deliberately narrow: it names only things that are already
+# injected structurally (the hypothesis, the campaign/project context, the batch
+# registry). The earlier list also held `results?`, `inputs?`, `fasta`, `pdb` and
+# `cif`, which are the words a CORRECT instruction uses -- "Report the results
+# you find in stdout" and "Inspect the ipTM in the batch results" were both being
+# deleted (H1).
 _RECOVER_FROM_FS = re.compile(
-    r"[^.\n]*\b(recover|locate|inspect|find|search)\b[^.\n]*\b(hypothesis|context|"
-    r"campaign files?|project context|data/code|inputs?|registry|filesystem|"
-    r"artifacts?|results?|fasta|pdb|cif)\b[^.\n]*(?:\.|$)",
+    r"[^.\n]*\b(recover|locate|inspect|find|search)\b[^.\n]*\b(hypothesis|"
+    r"campaign files?|project context|campaign context|data/code|"
+    r"batch registry|filesystem)\b[^.\n]*(?:\.|$)",
     re.IGNORECASE | re.MULTILINE,
 )
 # "reuse/use the existing/staged/cached/leftover <artifact> (under <path>)" --
@@ -391,12 +398,21 @@ _RECOVER_FROM_FS = re.compile(
 # "fetch the sequence from UniProt" -- which carries no such qualifier -- is left
 # untouched (H2).
 _REUSE_EXISTING = re.compile(
-    r"[^.\n]*\b(reuse|re-use|existing|already[ -]?(?:staged|present|there|on[ -]?disk)|"
+    r"[^.\n]*\b(reuse|re-use|already[ -]?(?:staged|present|there|on[ -]?disk)|"
     r"staged|cached|leftover|previous run|prior run)\b[^.\n]*\b(fasta|pdb|cif|inputs?|"
     r"files?|sequence|structure|artifacts?|results?|folder|directory|path|batch|fixture)\b"
     r"[^.\n]*(?:\.|$)",
     re.IGNORECASE | re.MULTILINE,
 )
+# `existing` alone was in the pattern above and matched ordinary prose such as
+# "Use the existing UniProt accession for the sequence" (H1). It now has to
+# qualify a file-ish noun directly, within two intervening words.
+_EXISTING_FILE = re.compile(
+    r"[^.\n]*\bexisting\b(?:\s+\S+){0,2}\s+\b(fasta|pdb|cif|inputs?|files?|folder|"
+    r"directory|path|batch|fixture)\b[^.\n]*(?:\.|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_SCRUBBERS = (_RECOVER_FROM_FS, _REUSE_EXISTING, _EXISTING_FILE)
 
 
 def _neutralize_fs_recovery(text: str) -> str:
@@ -413,9 +429,28 @@ def _neutralize_fs_recovery(text: str) -> str:
     refuses stale on-disk inputs, so this is defence in depth, not the only gate.
     """
 
-    cleaned = _RECOVER_FROM_FS.sub("", text)
-    cleaned = _REUSE_EXISTING.sub("", cleaned)
+    cleaned = text
+    removed: list[str] = []
+
+    def _drop(match: re.Match[str]) -> str:
+        removed.append(match.group(0).strip())
+        return ""
+
+    for pattern in _SCRUBBERS:
+        cleaned = pattern.sub(_drop, cleaned)
+    if removed:
+        # Never silent: a validator whose instruction was rewritten otherwise
+        # looks to the child like one who wrote nothing useful (H1).
+        _note_scrubbed(removed)
     return cleaned.strip()
+
+
+def _note_scrubbed(removed: list[str]) -> None:
+    """Record the clauses stripped from a validator instruction, best effort."""
+
+    message = "loam: stripped filesystem-recovery clause(s) from validator instruction: " + \
+        "; ".join(repr(span) for span in removed if span)
+    print(message, file=sys.stderr)
 
 
 def _child_goal(hypothesis: Mapping[str, Any] | None, validator_goal: str, plan_id: str, hypothesis_id: str) -> str:
@@ -479,7 +514,12 @@ def _marker(value: str, key: str) -> str:
 
 
 _EVIDENCE_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s*Evidence\s+Score\b", re.IGNORECASE | re.MULTILINE)
-_SIGNED_DECIMAL_RE = re.compile(r"[-+−]?\d*\.?\d+")
+# Requires a decimal point, so a number in the heading's own lead-in -- the `0`
+# of "### Evidence Score (0-1 scale)", or the `3` of "Based on 3 folds, 0.42" --
+# cannot be mistaken for the score (H1). A bare integer is accepted only as the
+# first token after the heading line, where it is unambiguous.
+_SIGNED_DECIMAL_RE = re.compile(r"[-+−]?\d*\.\d+")
+_LEADING_INT_RE = re.compile(r"\A[^\S\n]*[*`_(\[]*([-+−]?\d+)\b")
 
 
 def _evidence_score(summary: str) -> float | None:
@@ -496,17 +536,30 @@ def _evidence_score(summary: str) -> float | None:
     markup: the number may follow a colon on the heading line, sit on a later
     line, or be wrapped in **bold**, `backticks`, or parentheses (M2 false
     negatives), and a Unicode minus sign is accepted.
+
+    The number must carry a decimal point, because the window begins at the end
+    of the "Evidence Score" match and anything else on the heading line is still
+    inside it: "### Evidence Score (0-1 scale)\n\n0.42" would otherwise report
+    the `0` of "(0-1" as a neutral 0.0 score -- recorded as "reported", not even
+    flagged invalid (H1). A bare integer is read only when it is the first token
+    after the heading line, where there is no lead-in to confuse it with.
     """
 
     headings = list(_EVIDENCE_HEADING_RE.finditer(summary))
     if not headings:
         return None
     start = headings[-1].end()
-    match = _SIGNED_DECIMAL_RE.search(summary[start:start + 200])
+    window = summary[start:start + 200]
+    match = _SIGNED_DECIMAL_RE.search(window)
+    if match is None:
+        # No decimal: accept an integer only at the very start of the body, i.e.
+        # right after the heading line ("### Evidence Score\n\n0").
+        _, _, body = window.partition("\n")
+        match = _LEADING_INT_RE.match(body.lstrip("\n"))
     if not match:
         return None
     try:
-        score = float(match.group(0).replace("−", "-"))
+        score = float(match.group(match.lastindex or 0).replace("−", "-"))
     except ValueError:
         return None
     return score if -1.0 <= score <= 1.0 else None

@@ -101,7 +101,34 @@ class InferenceTests(unittest.TestCase):
             _Handler.response_text = "LOAM_PREFLIGHT_OK"
 
 
+    def test_roles_sharing_a_model_but_not_a_key_are_both_smoked(self) -> None:
+        # H1: the dedup key omitted the api key, so a tournament role with its
+        # own credential was reported as "same as reasoner" without ever being
+        # called under the key it will really use.
+        (self.root / "loam.yaml").write_text(
+            (self.root / "loam.yaml").read_text()
+            .replace("      model: judge-model", "      model: reasoner-model\n      api_key_env: TOURNAMENT_KEY")
+            .replace("        model: generator-model", "        model: reasoner-model")
+        )
+        report = campaign_preflight.check_inference(
+            self.root / "home", self.root / "loam.yaml", 5
+        )
+        self.assertEqual(_Handler.models.count("reasoner-model"), 2)  # reasoner + the shared key
+        self.assertNotIn("same as", report["generation"]["response"])
+        self.assertIn("same as", report["ranking"]["response"])  # same endpoint, key and model
+
+
 class PortTests(unittest.TestCase):
+    def test_host_port_comes_from_the_hpc_url(self) -> None:
+        # H1: both port checks were pinned to 8000 and ignored --hpc-url.
+        self.assertEqual(campaign_preflight._host_port("http://127.0.0.1:8100/mcp"),
+                         ("127.0.0.1", 8100))
+        self.assertEqual(campaign_preflight._host_port("https://host.example/mcp"),
+                         ("host.example", 443))
+        with self.assertRaisesRegex(RuntimeError, "no host"):
+            campaign_preflight._host_port("8100")
+
+
     def test_port_open_detects_listener(self) -> None:
         sock = socket.socket()
         sock.bind(("127.0.0.1", 0))

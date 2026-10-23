@@ -118,7 +118,9 @@ class HypothesisTournamentTests(unittest.TestCase):
         self.assertEqual(config._execution_config(remote).max_children, 3)
         fixed = config._execution_config({**remote, "code_source": "fixed"})
         self.assertEqual((fixed.code_source, fixed.max_children), ("fixed", 1))
-        self.assertIsNone(config._execution_config({**remote, "code_source": "llm"}))
+        # A typo must fail loudly rather than discard the whole execution block.
+        with self.assertRaises(ValueError):
+            config._execution_config({**remote, "code_source": "llm"})
 
     def test_runtime_state_directory_overrides_profile_and_enables_emergency_mode(self) -> None:
         config = _load("loam_config_runtime_state", CONFIG)

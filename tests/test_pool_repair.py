@@ -62,6 +62,39 @@ class ClusterRepairOrderingTests(unittest.TestCase):
         self.assertEqual(events[0], ("shutdown", ("bad",)))
         self.assertEqual(events[1], ("launch", 1))
 
+    def test_repair_releases_waiters_once_clients_are_restored(self) -> None:
+        # H1: a rebuild that brought the cluster up but launched no clients left
+        # _ready cleared. The next sweep restored the clients through the normal
+        # shortfall path without touching _ready, so next_agent() waited forever
+        # on a fully healthy pool.
+        pm = self.pm
+
+        class FakeHandle:
+            def __init__(self, name: str) -> None:
+                self.agent_id = name
+
+        pool = pm.ClusterPool("camp", want=1)
+        cluster_marker = object()
+        pool._cluster = cluster_marker
+        pool._agents = []
+        pool._ready.clear()
+        pool._restart_failures = 1
+
+        async def fake_probe(agent, check_campaign=True):
+            return agent
+
+        async def fake_launch_clients(n):
+            return [pm.AgentInfo(FakeHandle(f"new{i}"), "") for i in range(n)]
+
+        pool._probe = fake_probe
+        pool._launch_clients = fake_launch_clients
+
+        asyncio.run(pool._repair())
+
+        self.assertEqual(len(pool._agents), 1)
+        self.assertTrue(pool._ready.is_set())
+        self.assertEqual(pool._restart_failures, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

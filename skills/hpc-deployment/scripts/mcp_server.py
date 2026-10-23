@@ -192,7 +192,8 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
             async def register_tool(name: str, script_path: str, params: dict, description: str,
                                     example: dict, defaults: dict | None = None,
                                     call: str = "json", venv_path: str | None = None,
-                                    skip_smoke: bool = False, labels: dict | None = None) -> dict:
+                                    skip_smoke: bool = False, labels: dict | None = None,
+                                    expects: list[str] | None = None) -> dict:
                 """Save a reusable script as a named, versioned tool that run_batch(tool=name) can run.
 
                 params maps each input name to one of int, float, str, bool, list, dict;
@@ -204,13 +205,15 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
                 later edits need a new registration, which becomes the next version.
                 Registering an unchanged script returns the existing version. Tools cannot
                 be deleted. Call list_tools first and reuse a tool that fits.
+                expects lists output filenames/globs (relative to each run's folder) the
+                script must write; a run that exits 0 without them counts as failed.
                 """
                 try:
                     agent = await pool.next_agent(launch_one)
                     return await agent.handle.action(
                         "register_tool", name, script_path, params, description, example,
                         defaults=defaults, call=call, venv_path=venv_path,
-                        skip_smoke=skip_smoke, labels=labels,
+                        skip_smoke=skip_smoke, labels=labels, expects=expects,
                     )
                 except Exception as exc:
                     raise ToolError(f"register_tool failed: {type(exc).__name__}: {exc}") from exc

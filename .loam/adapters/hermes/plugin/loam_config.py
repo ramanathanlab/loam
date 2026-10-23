@@ -124,7 +124,14 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
         return None
     code_source = _clean_text(raw.get("code_source")) or "generated"
     if code_source not in _CODE_SOURCES:
-        return None
+        # Not `return None`: that means "no execution block", which silently
+        # turns a configured HPC campaign into the local arithmetic self-test
+        # (no generated mode, an empty HPC tool allowlist, no max_children
+        # budget, no setup/workdir context). A typo in a new, optional,
+        # free-text field must not do that quietly.
+        raise ValueError(
+            f"execution.code_source must be one of {sorted(_CODE_SOURCES)}: {code_source!r}"
+        )
     extras = dict(
         code_source=code_source,
         max_children=_positive_int(raw.get("max_children"), 3 if code_source == "generated" else 1),

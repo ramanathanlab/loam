@@ -40,7 +40,6 @@ try:
     from ensemble_launcher.config import (
         LauncherConfig,
         PolicyConfig,
-        SystemConfig,
         aurora_config,
         polaris_config,
     )
@@ -251,7 +250,7 @@ class HpcClusterAgent(Agent):
             self.system_config = polaris_config
             gpu_selector = "CUDA_VISIBLE_DEVICES"
         else:
-            self.system_config = SystemConfig(name="cluster")
+            raise ValueError(f"unsupported system {system!r}; expected 'aurora' or 'polaris'")
 
         self.launcher_config = LauncherConfig(
             child_executor_name="async_mpi",
@@ -305,6 +304,10 @@ class HpcClientAgent(HpcAgent):
         os.environ.setdefault("EL_LOGDIR", str(Path(self.base_dir, "logs")))
         self._client = ClusterClient(checkpoint_dir=self.ckpt_dir, checkpoint_timeout=300)
         self._client.start()
+
+    async def agent_on_shutdown(self):
+        if self._client is not None:
+            self._client.stop()
 
 
     def _create_task(self, payload: str, workdir: str, timeout: float, venv_path: str | None = None):
@@ -437,6 +440,18 @@ def _read_text_lines(path: Path) -> list[str]:
     return data.decode("utf-8", errors="replace").splitlines()
 
 
+def _tail_lines(path: Path, count: int) -> list[str]:
+    """Last `count` lines of a text file, reading at most _MAX_BYTES from its end."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - _MAX_BYTES))
+            data = handle.read()
+    except OSError:
+        return []
+    return data.decode("utf-8", errors="replace").splitlines()[-count:]
+
+
 def _inspect(operation: str, raw_path: str, offset: int, limit: int,
              base_dir: str, inspect_roots: list[str]) -> dict:
     path = _safe_path(raw_path, base_dir, inspect_roots)
@@ -514,7 +529,8 @@ def _run_subprocess(payload: str, workdir: str | None, timeout: float, venv_path
 # tmp-file + os.replace so readers never see a partial file.
 
 _MAX_BATCH_ROWS = int(os.environ.get("HPC_BATCH_MAX_ROWS", "100000"))
-_BATCH_ID = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+# Leading alphanumeric: rejects "." and "..", which would escape the batch root.
+_BATCH_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 
 
 def _now() -> str:
@@ -895,7 +911,7 @@ def _batch_status(batch_id: str, base_dir: str, max_failures: int = 5) -> dict:
                 continue
             failed += 1
             if len(failures) < max_failures:
-                tail = (folder / "stderr.txt").read_text(errors="replace").splitlines()[-5:]
+                tail = _tail_lines(folder / "stderr.txt", 5)
                 record = {"run": item.name, "returncode": run_status.get("returncode"),
                           "stderr_tail": tail}
                 if run_status.get("missing_outputs"):
@@ -918,7 +934,10 @@ def _list_batches(base_dir: str, plan_id: str | None = None,
         return []
     found = []
     for path in registry.glob("*.json"):
-        entry = json.loads(path.read_text())
+        try:  # one torn or hand-edited entry must not break every listing
+            entry = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
         entry_labels = entry.get("labels", {})
         if plan_id and entry_labels.get("plan_id") != plan_id:
             continue
@@ -927,7 +946,7 @@ def _list_batches(base_dir: str, plan_id: str | None = None,
         found.append({key: entry.get(key) for key in
                       ("batch_id", "created_at", "labels", "total", "last_status", "source_inputs",
                        "tool", "tool_version")})
-    found.sort(key=lambda item: item["created_at"], reverse=True)
+    found.sort(key=lambda item: item["created_at"] or "", reverse=True)
     return found[:max(1, min(limit, 500))]
 
 

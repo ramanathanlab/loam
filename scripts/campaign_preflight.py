@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -71,27 +72,31 @@ def _inference_roles(hermes_home: Path, loam_config: Path) -> dict[str, tuple[st
     if tournament.get("enabled") is True:
         shared_url = str(tournament.get("inference_endpoint") or "").rstrip("/") or base_url
         shared_model = str(tournament.get("model") or "") or model
+        shared_key_env = str(tournament.get("api_key_env") or "").strip()
         for role in ("generation", "ranking"):
             override = tournament.get(role) or {}
+            # Same resolution as hypothesis_tournament._llm_config, so the smoke
+            # runs under the credential the tournament will really send.
+            key_env = str(override.get("api_key_env") or "").strip() or shared_key_env
             roles[role] = (
                 str(override.get("inference_endpoint") or shared_url).rstrip("/"),
-                api_key,
+                os.environ.get(key_env, "").strip() if key_env else "local-no-auth",
                 str(override.get("model") or shared_model),
             )
     return roles
 
 
 def check_inference(hermes_home: Path, loam_config: Path, timeout: float) -> dict[str, Any]:
-    """Smoke every configured role, skipping duplicate endpoint/model pairs."""
+    """Smoke every configured role, skipping duplicate endpoint/key/model triples."""
 
     results: dict[str, Any] = {}
-    seen: dict[tuple[str, str], str] = {}
+    seen: dict[tuple[str, str, str], str] = {}
     for role, (base_url, api_key, model) in _inference_roles(hermes_home, loam_config).items():
-        if (previous := seen.get((base_url, model))) is not None:
+        if (previous := seen.get((base_url, api_key, model))) is not None:
             results[role] = {"base_url": base_url, "model": model, "response": f"same as {previous}"}
             continue
         results[role] = _smoke_model(base_url, api_key, model, timeout)
-        seen[(base_url, model)] = role
+        seen[(base_url, api_key, model)] = role
     return results
 
 
@@ -138,8 +143,16 @@ def _port_open(host: str, port: int) -> bool:
         return False
 
 
-def ensure_hpc_started(repo: Path, env_file: Path, wait_seconds: int) -> dict[str, Any]:
-    if _port_open("127.0.0.1", 8000):
+def _host_port(url: str) -> tuple[str, int]:
+    parsed = urllib.parse.urlparse(url)
+    if not parsed.hostname:
+        raise RuntimeError(f"HPC MCP URL has no host: {url!r}")
+    return parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
+
+
+def ensure_hpc_started(repo: Path, env_file: Path, wait_seconds: int, url: str) -> dict[str, Any]:
+    host, port = _host_port(url)
+    if _port_open(host, port):
         return {"action": "already-listening"}
 
     scripts = repo / "skills" / "hpc-deployment" / "scripts"
@@ -164,7 +177,7 @@ def ensure_hpc_started(repo: Path, env_file: Path, wait_seconds: int) -> dict[st
 
     deadline = time.monotonic() + wait_seconds
     while time.monotonic() < deadline:
-        if _port_open("127.0.0.1", 8000):
+        if _port_open(host, port):
             return action
         time.sleep(5)
     raise RuntimeError(f"HPC MCP did not listen within {wait_seconds}s after {action}")
@@ -204,13 +217,16 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=120)
     parser.add_argument("--no-auto-start", action="store_true")
     args = parser.parse_args()
-    args.hpc_env = args.hpc_env or args.repo / "skills" / "hpc-deployment" / "set_env_akv.sh"
+    args.hpc_env = (args.hpc_env or os.environ.get("HPC_ENV_FILE")
+                    or args.repo / "skills" / "hpc-deployment" / "set_env.sh")
+    args.hpc_env = Path(args.hpc_env)
 
     report: dict[str, Any] = {"ready": False}
     try:
         report["inference"] = check_inference(args.hermes_home, args.loam_config, args.timeout)
         if not args.no_auto_start:
-            report["hpc_start"] = ensure_hpc_started(args.repo, args.hpc_env, args.wait_seconds)
+            report["hpc_start"] = ensure_hpc_started(
+                args.repo, args.hpc_env, args.wait_seconds, args.hpc_url)
         report["hpc"] = asyncio.run(check_hpc(args.hpc_url, args.timeout))
         report["ready"] = True
     except Exception as exc:

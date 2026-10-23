@@ -755,6 +755,39 @@ class EvidenceScoreAndNeutralizeTests(unittest.TestCase):
             "reuse the existing FASTA under chai_batch_test")
         self.assertNotIn("FASTA", cleaned)
 
+    def test_score_ignores_a_number_in_the_heading_lead_in(self) -> None:
+        # H1: `start` is the end of the "Evidence Score" match, so the rest of
+        # the heading line was still in the window: the `0` of "(0-1" was read
+        # as a neutral 0.0 score and recorded as "reported".
+        self.assertEqual(self.orch._evidence_score(
+            "### Evidence Score (0-1 scale)\n\n0.42"), 0.42)
+        self.assertEqual(self.orch._evidence_score(
+            "### Evidence Score\n\nBased on 3 folds, 0.42"), 0.42)
+        # A bare integer is still read when it is the first token of the body.
+        self.assertEqual(self.orch._evidence_score("### Evidence Score\n\n0"), 0.0)
+
+    def test_neutralize_keeps_ordinary_instructions_about_results(self) -> None:
+        # H1: the object lists matched any "verb + noun" pair on a line, so
+        # correct instructions were silently deleted.
+        for instruction in (
+            "Report the results you find in stdout.",
+            "Inspect the ipTM in the batch results.",
+            "Use the existing UniProt accession for the sequence.",
+        ):
+            self.assertEqual(self.orch._neutralize_fs_recovery(instruction), instruction)
+
+    def test_neutralize_reports_what_it_stripped(self) -> None:
+        # H1: the deletion used to be silent, so a gutted instruction looked to
+        # the child like a validator who wrote nothing useful.
+        import contextlib, io
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cleaned = self.orch._neutralize_fs_recovery(
+                "First inspect the campaign files to recover the hypothesis.")
+        self.assertEqual(cleaned, "")
+        self.assertIn("stripped filesystem-recovery clause", stderr.getvalue())
+
     def test_neutralize_keeps_a_legitimate_fetch_instruction(self) -> None:
         # H2: fetching from an authoritative source carries no on-disk qualifier.
         instruction = "Fetch the sequence from the UniProt REST API by accession."

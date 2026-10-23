@@ -219,6 +219,36 @@ class RunBatchTests(unittest.TestCase):
         self.assertEqual([b["batch_id"] for b in self._call("list_batches", hypothesis_id="H7")], [batch_id])
         self.assertEqual(self._call("list_batches", hypothesis_id="H9"), [])
 
+    def test_list_batches_survives_a_corrupt_entry_and_a_missing_created_at(self) -> None:
+        # H1: an unguarded json.loads broke every listing permanently, and a
+        # pre-`created_at` entry made the sort raise on None.
+        batch_id = self._new_batch()["batch_id"]
+        registry = self.base / "batches" / "registry"
+        (registry / "torn.json").write_text("{not json")
+        legacy = json.loads((registry / f"{batch_id}.json").read_text())
+        legacy.pop("created_at")
+        (registry / "legacy.json").write_text(json.dumps(legacy))
+        listed = self._call("list_batches")
+        self.assertEqual(sorted(b["batch_id"] for b in listed), [batch_id, batch_id])
+
+    def test_batch_status_tolerates_a_missing_stderr_file(self) -> None:
+        # H1: an unguarded whole-file read aborted the whole batch's status.
+        self.inputs.write_text('{"id": "a", "x": 1, "fail": true}\n')
+        batch_id = self._new_batch()["batch_id"]
+        self.client.run()
+        (self.base / "batches" / batch_id / "run_a" / "stderr.txt").unlink()
+        status = self._call("batch_status", batch_id)
+        self.assertEqual((status["failed"], status["failures"][0]["stderr_tail"]), (1, []))
+
+    def test_batch_id_cannot_escape_the_batch_root(self) -> None:
+        # H1: "." and ".." passed the id check and were joined onto the root.
+        for bad in (".", ".."):
+            with self.assertRaisesRegex(ValueError, "bad batch_id"):
+                self._call("run_batch", script_path=str(self.base / "sim.py"),
+                           inputs_path=str(self.inputs), batch_id=bad)
+            with self.assertRaisesRegex(ValueError, "bad batch_id"):
+                self._call("batch_status", bad)
+
     def test_rejects_paths_outside_roots_and_bad_rows(self) -> None:
         with self.assertRaisesRegex(ValueError, "outside"):
             self._call("run_batch", script_path="/etc/hosts", inputs_path=str(self.inputs))

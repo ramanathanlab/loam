@@ -23,13 +23,16 @@
 # scientific campaign.
 set -euo pipefail
 
-# Absolute, because the campaign directory may live anywhere. Set LOAM_REPO in
-# the command environment to run against another checkout; inherited Loam state
-# variables are deliberately ignored below so campaigns cannot contaminate one
-# another.
-LOAM_REPO="${LOAM_REPO:-/Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam}"
-
 CAMPAIGN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Absolute, because the campaign directory may live anywhere. Run from inside a
+# checkout, the checkout is used; a copied script needs LOAM_REPO set in the
+# command environment. Inherited Loam state variables are deliberately ignored
+# below so campaigns cannot contaminate one another.
+if [[ -z "${LOAM_REPO:-}" && -f "$CAMPAIGN_DIR/.loam/adapters/hermes/plugin/__init__.py" ]]; then
+  LOAM_REPO="$CAMPAIGN_DIR"
+fi
+LOAM_REPO="${LOAM_REPO:-}"
 CAMPAIGN_NAME="$(basename "$CAMPAIGN_DIR")"
 cd "$CAMPAIGN_DIR"
 
@@ -123,7 +126,7 @@ mkdir -p "$LOAM_STATE_DIR"
 # Fail closed on actual inference and returned Aurora execution, not merely open
 # TCP ports. When no HPC server exists, the preflight starts one bounded 1-node
 # debug allocation and waits for it; it never restarts a listening server.
-PREFLIGHT_PYTHON="${LOAM_PREFLIGHT_PYTHON:-/Users/architvasan/.loam-venv-312/bin/python}"
+PREFLIGHT_PYTHON="${LOAM_PREFLIGHT_PYTHON:-$HOME/.loam-venv-312/bin/python}"
 if [[ "${LOAM_SKIP_PREFLIGHT:-0}" != "1" ]]; then
   if [[ ! -x "$PREFLIGHT_PYTHON" ]]; then
     echo "run-campaign: preflight Python is unavailable: $PREFLIGHT_PYTHON" >&2

@@ -321,7 +321,16 @@ class ClusterPool:
                 await self._restart_cluster()
             return
         self._cluster_misses = 0
+        try:
+            await self._repair_clients()
+        finally:
+            # A rebuild that brought the cluster up but no clients returns with
+            # _ready cleared; once a sweep restores clients, release waiters.
+            if self._agents and not self._ready.is_set():
+                self._restart_failures = 0
+                self._ready.set()
 
+    async def _repair_clients(self) -> None:
         probed = await asyncio.gather(*(self._probe(agent) for agent in self._agents))
         survivors = [agent for agent in probed if agent is not None]
         dropped = [agent for agent, ok in zip(self._agents, probed) if ok is None]

@@ -158,24 +158,6 @@ def canonicalize_campaign_delegation(tool_name: str, args: dict[str, Any], **kwa
     }
 
 
-def post_tool_call(tool_name: str, args: dict[str, Any], result: str, **kwargs: Any) -> None:
-    profile = _profile()
-    if profile is None:
-        return
-    values = dict(kwargs)
-    values.update(payload_values(profile))
-    _invoke(
-        "post-tool.py",
-        _payload(
-            "post_tool_call",
-            tool_name=tool_name,
-            arguments=args,
-            result=result,
-            **values,
-        ),
-    )
-
-
 def pre_llm_call(session_id: str = "", **kwargs: Any) -> dict[str, Any] | None:
     """Run Loam's pre-LLM hook every N turns, independently per session."""
     profile = _profile()
@@ -251,9 +233,6 @@ def subagent_stop(**kwargs: Any) -> None:
 def register(ctx: Any) -> None:
     ctx.register_middleware("tool_request", canonicalize_campaign_delegation)
     ctx.register_hook("pre_tool_call", pre_tool_call)
-    # Temporarily disabled: keep post_tool_call/post-tool.py intact while the
-    # remaining lifecycle hooks are verified end to end.
-    # ctx.register_hook("post_tool_call", post_tool_call)
     ctx.register_hook("pre_llm_call", pre_llm_call)
     ctx.register_hook("subagent_start", subagent_start)
     ctx.register_hook("subagent_stop", subagent_stop)
