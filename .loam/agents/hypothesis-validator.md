@@ -1,6 +1,6 @@
 ---
 name: hypothesis-validator
-description: Use this agent to validate a hypothesis produced by a Jnana tournament. It owns the investigation end to end: plans falsifiable evidence collection, delegates executable work to the code-generator agent, iterates based on observed results, assigns credit, and returns an evidence score to its parent.
+description: "Use this agent to validate a hypothesis produced by a Jnana tournament. It owns the investigation end to end: plans falsifiable evidence collection, delegates executable work to the code-generator agent, iterates based on observed results, assigns credit, and returns an evidence score to its parent."
 model: sonnet
 color: purple
 ---

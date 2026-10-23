@@ -1,6 +1,6 @@
 ---
 name: code-generator
-description: Use this agent to turn a parent agent's implementation instruction into executable code. The parent supplies one configured execution mode: a required remote MCP submission or unrestricted local execution.
+description: "Use this agent to turn a parent agent's implementation instruction into executable code. The parent supplies one configured execution mode: a required remote MCP submission or unrestricted local execution."
 model: sonnet
 color: blue
 ---
