@@ -14,7 +14,9 @@ from typing import Any
 
 from hypothesis_orchestration import tool_policy
 from memory_recall import audit_duplicates
+from provenance import record as record_provenance
 from run_manifest import ensure as ensure_run_manifest
+from tool_audit import record as record_tool_call
 
 
 def _payload() -> dict[str, Any]:
@@ -27,15 +29,54 @@ def _payload() -> dict[str, Any]:
 def main() -> int:
     try:
         payload = _payload()
-        ensure_run_manifest(payload)
+    except Exception as exc:
+        # We cannot even parse the request, so we cannot tell whether it is a
+        # campaign-tagged call. Blocking every tool in every session over a
+        # parse bug would brick the harness, so we stay out of the way (the
+        # harness default is allow) but report loudly.
+        print(f"loam pre-tool: unparseable payload: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 0
+
+    # 1) ENFORCEMENT FIRST, in isolation. tool_policy is the role boundary; a
+    #    failure here must NOT silently become "allow" (the adapter maps any
+    #    nonzero hook exit to allow). For a tagged orchestration call we fail
+    #    CLOSED by emitting a block; a non-campaign call we leave alone.
+    result: dict[str, Any] | None = None
+    try:
         result = tool_policy(payload)
         if result is None and payload.get("tool_name") == "delegate_task":
             result = audit_duplicates(payload)
-        if result is not None:
-            print(json.dumps(result))
     except Exception as exc:
-        print(f"loam pre-tool audit failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return 1
+        print(f"loam pre-tool: tool_policy failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        if payload.get("loam_hypothesis_orchestration") is True:
+            result = {
+                "action": "block",
+                "message": (
+                    "Loam could not evaluate the campaign role boundary for this "
+                    "tagged call (orchestration state unreadable); blocked "
+                    "fail-closed. Retry once the state is consistent."
+                ),
+            }
+
+    # 2) Best-effort bookkeeping, each isolated so it can never void the policy
+    #    verdict above. record runs unconditionally (a call about to be blocked
+    #    is exactly the one worth auditing).
+    try:
+        record_tool_call(payload)
+    except Exception as exc:
+        print(f"loam pre-tool: record failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+    try:
+        # Layer 0 provenance (C4): observe-and-log the execution's input lineage.
+        record_provenance(payload)
+    except Exception as exc:
+        print(f"loam pre-tool: provenance failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+    try:
+        ensure_run_manifest(payload)
+    except Exception as exc:
+        print(f"loam pre-tool: run_manifest failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+
+    if result is not None:
+        print(json.dumps(result))
     return 0
 
 

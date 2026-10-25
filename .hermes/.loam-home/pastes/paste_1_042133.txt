@@ -1,7 +1,0 @@
-python3 .loam/reconcile/protein_structure_metadata.py \
-      --candidates .loam/state/candidate-results.jsonl \
-      --out .loam/state/validated-findings.jsonl
-
-    python3 .loam/reconcile/project_parent_memory.py \
-      --decisions .loam/state/validated-findings.jsonl \
-      --out .loam/state/parent-memory.jsonl

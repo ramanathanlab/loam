@@ -37,6 +37,22 @@ Never accept endpoint `online`, a queued/running scheduler job, raw MCP HTTP rea
 ## MCP smoke payload
 Use a minimal payload first: print JSON containing hostname, scheduler job ID, accelerator pin, campaign ID, and runtime. Then run the target deterministic computation. Fail closed if the returned object lacks stdout, stderr, and a successful return code.
 
+## Registered batch tools
+
+For services that support `register_tool` and `run_batch`, use the explicit artifact workflow: write the JSON-input script with `run_code`, register typed parameters with a smoke-test example, create ID-bearing JSONL input rows, retain the returned `batch_id`, and poll status until `complete: true`. Report completion counts and the results directory, rather than treating submission as completion.
+
+### Accelerator-backed scientific inference batches
+
+1. **Probe the requested runtime before scaling out.** Use `run_code` with the supplied venv to verify the package import, accelerator backend availability (for Aurora, inspect `torch.xpu.is_available()`), device count, hostname, and the inference entrypoint's accepted inputs/options.
+2. **Inspect model assets and input grammar.** Confirm weights are already available or select the intended shared download location before submitting the full batch. Read the installed parser/example or API signature; domain tools often require structured headers rather than a bare sequence identifier (e.g., Chai FASTA headers are `>protein|name=<id>`).
+3. **Create a deliberately lightweight test configuration.** For a functionality test, lower recycles/timesteps/sample count while preserving the real accelerator path. Label the batch with the model, device/backend, test settings, and sample count so results remain interpretable.
+4. **Launch all independent inputs concurrently** with one accelerator requested **per JSONL row** when each inference uses one device. For an explicit 12-tile-first run, create 12 rows and pass `gpus=1`: `gpus` is the number of tiles reserved by *each row*, not a batch-wide tile total, so `gpus=12` would allocate 12 tiles per folding task and can make the rows queue or execute serially. Crucially, `gpus=1` does **not** mean the whole batch has only one tile: it permits each row to receive one tile, so a 12-row batch can use 12 tiles concurrently when capacity is available. Label the batch with the row count, per-row tile count, and intended execution pattern (e.g., `12-concurrent-single-tile-runs`). Start with deterministic generated inputs (record seed, sequence, and length) or user-provided inputs exactly as received.
+5. **Report submission precisely, then monitor completion.** Immediately state the requested concurrency configuration and that submission is not completion. Never claim all rows are running or that the allocation was achieved until scheduler/task evidence supports it. On a later status request, call `batch_status` and report the current counts and whether results are available.
+6. **On an input-format failure, correct the shared script and submit a new batch.** Do not silently reinterpret a completed failed batch as a model failure. Keep its batch ID in the record, then report the successful retry and the specific correction.
+7. **Verify output artifacts and placement, not only exit status.** Have every task write `result.json` enumerating sequence metadata, backend, settings, candidate count, and generated structure filenames. Inspect at least one result when practical. After completion, read each task's `status.json` when placement or timing matters: it records `seconds`, `host`, and accelerator `gpu`. Do not infer achieved concurrency from the batch-level `gpus` field or aggregate `batch_status` counts alone.
+
+See `references/registered-batch-tools.md` for the compact recipe and example, and `references/chai-aurora-batch.md` for the Chai/Aurora-specific runbook.
+
 ## Common pitfalls
 
 - Treating a direct SDK success as MCP/agent success. They validate different layers.

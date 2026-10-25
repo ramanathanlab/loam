@@ -3,11 +3,29 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Mapping
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_FILENAME = "hypothesis-memory.jsonl"
+
+# How many active hypotheses recall injects into the pre-LLM context. Kept small
+# so the injected block stays short, but configurable (M14): a campaign tracking
+# more than a handful of live hypotheses can raise it via the environment rather
+# than silently losing the overflow. 0 or unset -> the default.
+_DEFAULT_MAX_HYPOTHESES = 6
+
+
+def _max_hypotheses() -> int:
+    raw = os.environ.get("LOAM_RECALL_MAX_HYPOTHESES", "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_MAX_HYPOTHESES
+    return value if value > 0 else _DEFAULT_MAX_HYPOTHESES
 
 
 def _path(payload: Mapping[str, Any]) -> Path:
@@ -48,8 +66,15 @@ def context_for(payload: Mapping[str, Any]) -> str:
     hypotheses = snapshot.get("active_hypotheses")
     if not isinstance(hypotheses, list) or not hypotheses:
         return ""
+    cap = _max_hypotheses()
+    if len(hypotheses) > cap:
+        logger.warning(
+            "recall: %d active hypotheses exceed the injection cap of %d; "
+            "%d will not be shown (raise LOAM_RECALL_MAX_HYPOTHESES to include them)",
+            len(hypotheses), cap, len(hypotheses) - cap,
+        )
     lines = ["Validated hypothesis state (evidence support, tournament ranking, and contribution credit are separate signals):"]
-    for hypothesis in hypotheses[:6]:
+    for hypothesis in hypotheses[:cap]:
         if not isinstance(hypothesis, Mapping):
             continue
         statement = " ".join(str(hypothesis.get("statement") or "").split())[:300]

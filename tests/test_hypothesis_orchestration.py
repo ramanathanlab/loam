@@ -141,7 +141,7 @@ class HypothesisOrchestrationTests(unittest.TestCase):
     def test_validator_directive_renders_ready_tagged_task_payload(self) -> None:
         orchestration = _load("loam_orchestration_ready_validator_tasks")
         with tempfile.TemporaryDirectory() as temporary:
-            payload = self._payload(Path(temporary))
+            payload = self._fixed(self._payload(Path(temporary)))
             directive = orchestration.context_for(payload)
 
         tasks = json.loads(directive.split("Required delegate_task tasks payload:\n", 1)[1])
@@ -163,7 +163,7 @@ class HypothesisOrchestrationTests(unittest.TestCase):
     def test_canonical_delegation_reconstructs_validator_code_generator(self) -> None:
         orchestration = _load("loam_orchestration_canonical_delegation")
         with tempfile.TemporaryDirectory() as temporary:
-            payload = self._payload(Path(temporary))
+            payload = self._fixed(self._payload(Path(temporary)))
             validator = {
                 **payload,
                 "child_subagent_id": "validator-1",
@@ -194,6 +194,7 @@ class HypothesisOrchestrationTests(unittest.TestCase):
                     "function_name": "run_code",
                     "input_schema": "hpc-run-code-v1",
                     "runtime": "python3.12",
+                    "code_source": "fixed",
                 },
             }
             validator = {
@@ -215,6 +216,11 @@ class HypothesisOrchestrationTests(unittest.TestCase):
         self.assertIn("do not execute code locally", context)
         self.assertIn("pbs_jobid", context)
         self.assertNotIn("Use local python3.11", context)
+
+    def _fixed(self, payload: dict) -> dict:
+        """Opt a payload out of the generated default, into the built-in check."""
+
+        return {**payload, "loam_execution": {**payload["loam_execution"], "code_source": "fixed"}}
 
     def _payload(self, root: Path) -> dict:
         state_file = root / "jnana.json"
@@ -377,6 +383,20 @@ class HypothesisOrchestrationTests(unittest.TestCase):
                     ),
                 }
                 orchestration.record_start(child)
+                # C2: a trustworthy score requires a completed code-generator
+                # execution for this plan+hypothesis. Stage one, as a real
+                # validator would delegate, before recording the validator stop.
+                code_gen = {
+                    **payload,
+                    "child_subagent_id": f"codegen-{index}",
+                    "child_session_id": f"codegen-session-{index}",
+                    "child_goal": (
+                        "Execute [loam-agent-role=code-generator] "
+                        f"[loam-plan-id={plan_id}] [loam-hypothesis-id={hypothesis_id}]"
+                    ),
+                }
+                orchestration.record_start(code_gen)
+                orchestration.record_stop({**code_gen, "child_status": "completed", "child_summary": "ran"})
                 orchestration.record_stop(
                     {
                         **child,
@@ -468,6 +488,310 @@ class HypothesisOrchestrationTests(unittest.TestCase):
 
         self.assertIsNone(row["evidence_score"])
         self.assertEqual(row["evidence_score_status"], "missing_or_invalid")
+
+    def test_validator_score_without_execution_is_unbacked(self) -> None:
+        # C2: a well-formed score is rejected as unbacked when NO code-generator
+        # child completed an execution for this plan+hypothesis.
+        orchestration = _load("loam_orchestration_unbacked_score")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            child = {
+                **payload,
+                "child_subagent_id": "validator-1",
+                "child_session_id": "validator-session-1",
+                "child_goal": (
+                    "Validate [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-1] "
+                    "[loam-hypothesis-id=h-1]"
+                ),
+            }
+            orchestration.record_start(child)
+            orchestration.record_stop(
+                {**child, "child_status": "completed", "child_summary": "### Evidence Score\n0.00 — inconclusive"}
+            )
+            row = json.loads(
+                (Path(payload["loam_state_dir"]) / "hypothesis-orchestration.jsonl").read_text().splitlines()[-1]
+            )
+        self.assertIsNone(row["evidence_score"])
+        self.assertEqual(row["evidence_score_status"], "unbacked_no_exec")
+        self.assertEqual(row["reported_evidence_score"], 0.0)
+
+    # -- generated code-generator mode ---------------------------------------
+
+    def _generated_payload(self, root: Path, **execution) -> dict:
+        payload = self._payload(root)
+        payload["loam_execution"] = {
+            "mode": "remote_mcp",
+            "tool_name": "mcp_hpc_run_code",
+            "endpoint": "http://127.0.0.1:8000/mcp",
+            "function_name": "run_code",
+            "input_schema": "hpc-run-code-v1",
+            "runtime": "python3.12",
+            "code_source": "generated",
+            "max_children": 2,
+            "workdir_root": "/lus/campaign/work",
+            **execution,
+        }
+        return payload
+
+    def _start_validator(self, orchestration, payload: dict) -> None:
+        orchestration.record_start(
+            {
+                **payload,
+                "child_subagent_id": "validator-1",
+                "child_session_id": "validator-session-1",
+                "child_goal": (
+                    "Validate [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-1] "
+                    "[loam-hypothesis-id=h-1]"
+                ),
+            }
+        )
+
+    def test_hpc_tool_names_derive_from_the_run_tool(self) -> None:
+        orchestration = _load("loam_orchestration_hpc_tool_names")
+        names = orchestration.hpc_tool_names(
+            {"tool_name": "mcp_hpc_run_code", "function_name": "run_code"}
+        )
+        self.assertEqual(names["run_batch"], "mcp_hpc_run_batch")
+        self.assertEqual(names["register_tool"], "mcp_hpc_register_tool")
+        explicit = orchestration.hpc_tool_names(
+            {"tool_name": "execute", "function_name": "run_code", "tool_prefix": "hpc__"}
+        )
+        self.assertEqual((explicit["run_code"], explicit["list_tools"]), ("execute", "hpc__list_tools"))
+        bare = orchestration.hpc_tool_names({"tool_name": "execute", "function_name": "run_code"})
+        self.assertEqual(bare, {"run_code": "execute"})
+
+    def test_generated_directive_lets_validator_design_children(self) -> None:
+        orchestration = _load("loam_orchestration_generated_directive")
+        with tempfile.TemporaryDirectory() as temporary:
+            directive = orchestration.context_for(self._generated_payload(Path(temporary)))
+
+        tasks = json.loads(directive.split("Required delegate_task tasks payload:\n", 1)[1])
+        self.assertIn("at most 2 leaf code-generator children", directive)
+        context = json.loads(tasks[0]["context"])
+        self.assertNotIn("required_child", context)
+        self.assertNotIn("Fraction", tasks[0]["context"])
+        self.assertEqual(context["loam_validator_contract"], "v1")
+        self.assertEqual(context["child_template"]["max_children"], 2)
+        self.assertIn("[loam-agent-role=code-generator]", context["child_template"]["goal_suffix"])
+        self.assertTrue(context["child_template"]["workdir"].startswith("/lus/campaign/work/plan_"))
+        self.assertIn("### Evidence Score", context["validator_instructions"])
+
+    def test_validator_definition_is_injected_not_referenced_as_a_path(self) -> None:
+        """A validator may call only delegate_task, so its prompt must be inlined.
+
+        Handing it `prompt_path` to read fails closed in tool_policy, which left
+        the validator running with no role instructions at all.
+        """
+
+        orchestration = _load("loam_orchestration_injected_definition")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._generated_payload(Path(temporary))
+            directive = orchestration.context_for(payload)
+            registry = orchestration.agent_registry(payload)
+
+        body = registry["hypothesis-validator"].prompt_body
+        self.assertTrue(body, "validator prompt body should be loaded")
+        self.assertFalse(body.startswith("---"), "front matter should be stripped")
+        self.assertNotIn("name: hypothesis-validator", body)
+        self.assertLessEqual(len(body), orchestration.MAX_AGENT_PROMPT_CHARS)
+
+        tasks = json.loads(directive.split("Required delegate_task tasks payload:\n", 1)[1])
+        raw_context = tasks[0]["context"]
+        context = json.loads(raw_context)
+        self.assertEqual(context["agent_definition"], body)
+        # The directive must not tell the child to read a file it cannot read.
+        self.assertNotIn("MUST read and follow", directive)
+
+        # The assignment must precede the role boilerplate in the serialized
+        # payload. sort_keys=True silently ordered `agent_definition` first and
+        # pushed `selected_hypothesis` ~9000 chars in, so assert on byte
+        # positions rather than dict keys, which carry no order through JSON.
+        self.assertLess(
+            raw_context.index('"selected_hypothesis"'),
+            raw_context.index('"agent_definition"'),
+            "selected_hypothesis must come before the long agent_definition",
+        )
+        self.assertLess(
+            raw_context.index('"validator_instructions"'),
+            raw_context.index('"agent_definition"'),
+        )
+        # tool_policy matches this exact substring; serialization must keep it.
+        self.assertIn('"loam_validator_contract": "v1"', raw_context)
+        # The validator must be told to pass the hypothesis text down, because a
+        # child cannot resolve a bare id.
+        self.assertIn("provenance tag", context["validator_instructions"])
+
+    def test_generated_canonical_keeps_instruction_and_forces_tags(self) -> None:
+        orchestration = _load("loam_orchestration_generated_canonical")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._generated_payload(Path(temporary))
+            self._start_validator(orchestration, payload)
+            canonical = orchestration.canonical_delegation_args(
+                {
+                    **payload,
+                    "session_id": "validator-session-1",
+                    "arguments": {
+                        "tasks": [
+                            {
+                                "goal": "Sweep T from 300 to 900 K [loam-plan-id=other-plan]",
+                                "context": "Use 500 points; report the peak.",
+                                "role": "orchestrator",
+                            }
+                        ]
+                    },
+                }
+            )
+            missing = orchestration.canonical_delegation_args(
+                {**payload, "session_id": "validator-session-1", "arguments": {"tasks": [{"goal": " "}]}}
+            )
+
+        task = canonical["tasks"][0]
+        self.assertEqual(task["role"], "leaf")
+        self.assertNotIn("other-plan", task["goal"])
+        # The goal now leads with the hypothesis (so the child can't miss it),
+        # then preserves the validator's instruction, then the forced tags.
+        self.assertIn("Test this binder hypothesis", task["goal"])
+        self.assertIn("Sweep T from 300 to 900 K", task["goal"])
+        self.assertIn("[loam-agent-role=code-generator]", task["goal"])
+        self.assertIn("[loam-plan-id=plan-1] [loam-hypothesis-id=h-1]", task["goal"])
+        self.assertIn("Use 500 points; report the peak.", task["context"])
+        self.assertIn("mcp_hpc_list_tools", task["context"])
+        self.assertIn("mcp_hpc_run_batch", task["context"])
+        self.assertIn("/lus/campaign/work/plan-1/h-1", task["context"])
+        self.assertIn("never /tmp", task["context"])
+        self.assertNotIn("Fraction", task["context"])
+        self.assertIsNone(missing)
+
+    def test_generated_policy_caps_children_and_allows_hpc_tools(self) -> None:
+        orchestration = _load("loam_orchestration_generated_policy")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = {**self._generated_payload(Path(temporary)), "loam_hypothesis_orchestration": True}
+            self._start_validator(orchestration, payload)
+            validator = {**payload, "session_id": "validator-session-1", "tool_name": "delegate_task"}
+            goal = "Run [loam-agent-role=code-generator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1]"
+            first = orchestration.tool_policy({**validator, "arguments": {"goal": goal}})
+            too_many = orchestration.tool_policy(
+                {**validator, "arguments": {"tasks": [{"goal": goal}, {"goal": goal}, {"goal": goal}]}}
+            )
+            for index in range(2):
+                orchestration.record_start(
+                    {
+                        **payload,
+                        "child_subagent_id": f"code-generator-{index}",
+                        "child_session_id": f"code-generator-session-{index}",
+                        "child_goal": goal,
+                    }
+                )
+            exhausted = orchestration.tool_policy({**validator, "arguments": {"goal": goal}})
+            code_generator = {**payload, "session_id": "code-generator-session-0"}
+            batch = orchestration.tool_policy({**code_generator, "tool_name": "mcp_hpc_run_batch", "arguments": {}})
+            register = orchestration.tool_policy(
+                {**code_generator, "tool_name": "mcp_hpc_register_tool", "arguments": {}}
+            )
+            terminal = orchestration.tool_policy({**code_generator, "tool_name": "terminal", "arguments": {}})
+
+        self.assertIsNone(first)
+        self.assertEqual(too_many["action"], "block")
+        self.assertIn("budget", exhausted["message"])
+        self.assertIsNone(batch)
+        self.assertIsNone(register)
+        self.assertEqual(terminal["action"], "block")
+
+    def test_missing_code_source_defaults_to_generated(self) -> None:
+        orchestration = _load("loam_orchestration_default_generated")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._generated_payload(Path(temporary))
+            del payload["loam_execution"]["code_source"]
+            del payload["loam_execution"]["max_children"]
+            directive = orchestration.context_for(payload)
+
+        context = json.loads(json.loads(directive.split("Required delegate_task tasks payload:\n", 1)[1])[0]["context"])
+        self.assertNotIn("required_child", context)
+        self.assertEqual(context["child_template"]["max_children"], 3)
+
+    def test_fixed_mode_code_generator_still_limited_to_run_tool(self) -> None:
+        orchestration = _load("loam_orchestration_fixed_policy")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = {
+                **self._generated_payload(Path(temporary), code_source="fixed"),
+                "loam_hypothesis_orchestration": True,
+            }
+            goal = "Run [loam-agent-role=code-generator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1]"
+            orchestration.record_start(
+                {**payload, "child_subagent_id": "cg", "child_session_id": "cg-session", "child_goal": goal}
+            )
+            batch = orchestration.tool_policy(
+                {**payload, "session_id": "cg-session", "tool_name": "mcp_hpc_run_batch", "arguments": {}}
+            )
+
+        self.assertEqual(batch["action"], "block")
+
+
+class EvidenceScoreAndNeutralizeTests(unittest.TestCase):
+    """M2 (evidence-score parsing) and H2 (fs-recovery neutralizer)."""
+
+    def setUp(self) -> None:
+        self.orch = _load("loam_orchestration_m2_h2")
+
+    def test_score_requires_a_heading_not_an_in_prose_mention(self) -> None:
+        # M2 false positive: a recap sentence must not be read as the score.
+        self.assertIsNone(self.orch._evidence_score(
+            "Earlier the prior Evidence Score was 0.00, but we re-ran it."))
+
+    def test_score_tolerates_markup_and_a_lead_in(self) -> None:
+        # M2 false negatives: bold markup and a lead-in line before the number.
+        self.assertEqual(self.orch._evidence_score(
+            "### Evidence Score\nsupported\n**+0.75** — ipTM 0.75"), 0.75)
+        self.assertEqual(self.orch._evidence_score("## Evidence Score\n\n0.18"), 0.18)
+
+    def test_last_heading_wins(self) -> None:
+        # A recap heading then the final verdict -> the final verdict's number.
+        self.assertEqual(self.orch._evidence_score(
+            "### Evidence Score\n0.10 (prior)\n\n### Evidence Score\n+0.90"), 0.90)
+
+    def test_neutralize_strips_reuse_existing_without_a_period(self) -> None:
+        # H2: a period-less "reuse the existing FASTA under ..." line is stripped.
+        cleaned = self.orch._neutralize_fs_recovery(
+            "reuse the existing FASTA under chai_batch_test")
+        self.assertNotIn("FASTA", cleaned)
+
+    def test_score_ignores_a_number_in_the_heading_lead_in(self) -> None:
+        # H1: `start` is the end of the "Evidence Score" match, so the rest of
+        # the heading line was still in the window: the `0` of "(0-1" was read
+        # as a neutral 0.0 score and recorded as "reported".
+        self.assertEqual(self.orch._evidence_score(
+            "### Evidence Score (0-1 scale)\n\n0.42"), 0.42)
+        self.assertEqual(self.orch._evidence_score(
+            "### Evidence Score\n\nBased on 3 folds, 0.42"), 0.42)
+        # A bare integer is still read when it is the first token of the body.
+        self.assertEqual(self.orch._evidence_score("### Evidence Score\n\n0"), 0.0)
+
+    def test_neutralize_keeps_ordinary_instructions_about_results(self) -> None:
+        # H1: the object lists matched any "verb + noun" pair on a line, so
+        # correct instructions were silently deleted.
+        for instruction in (
+            "Report the results you find in stdout.",
+            "Inspect the ipTM in the batch results.",
+            "Use the existing UniProt accession for the sequence.",
+        ):
+            self.assertEqual(self.orch._neutralize_fs_recovery(instruction), instruction)
+
+    def test_neutralize_reports_what_it_stripped(self) -> None:
+        # H1: the deletion used to be silent, so a gutted instruction looked to
+        # the child like a validator who wrote nothing useful.
+        import contextlib, io
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cleaned = self.orch._neutralize_fs_recovery(
+                "First inspect the campaign files to recover the hypothesis.")
+        self.assertEqual(cleaned, "")
+        self.assertIn("stripped filesystem-recovery clause", stderr.getvalue())
+
+    def test_neutralize_keeps_a_legitimate_fetch_instruction(self) -> None:
+        # H2: fetching from an authoritative source carries no on-disk qualifier.
+        instruction = "Fetch the sequence from the UniProt REST API by accession."
+        self.assertEqual(self.orch._neutralize_fs_recovery(instruction), instruction)
 
 
 if __name__ == "__main__":

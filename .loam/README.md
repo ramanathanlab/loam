@@ -146,7 +146,7 @@ profiles:
 - `pre-tool.py` may return `{"action":"block","message":"..."}` to veto a
   Hermes tool call.
 - `pre-llm.py` may return `{"context":"..."}` to add turn-local context.
-- Observer hooks (`post-tool.py`, `subagent-start.py`, `subagent-stop.py`) have
+- Observer hooks (`subagent-start.py`, `subagent-stop.py`) have
   no behavior-changing return value in Hermes.
 
 All hooks should fail closed with respect to themselves: malformed output or a

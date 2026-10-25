@@ -1,8 +1,0 @@
-16:16:25 ENTER: queued interrupt msg='This is round 1 of a five-round local-execution Loam campaig', agent_running=True
-16:16:25 interrupt fired: msg='This is round 1 of a five-round local-execution Loam campaig', children=0, parent._interrupt=True
-17:04:39 ENTER: queued interrupt msg='This is round 1 of a five-round local-execution Loam campaig', agent_running=True
-17:04:39 interrupt fired: msg='This is round 1 of a five-round local-execution Loam campaig', children=0, parent._interrupt=True
-17:07:27 ENTER: queued interrupt msg='Round 1. Follow the injected Loam directive exactly; do not ', agent_running=True
-17:07:27 interrupt fired: msg='Round 1. Follow the injected Loam directive exactly; do not ', children=0, parent._interrupt=True
-12:58:02 ENTER: queued interrupt msg='Does the handoff file say we are using polaris or aurora', agent_running=True
-12:58:02 interrupt fired: msg='Does the handoff file say we are using polaris or aurora', children=0, parent._interrupt=True

@@ -1,7 +1,7 @@
 {
-  "last_report_path": ".hermes/.loam-home/logs/curator/20261016-190541",
-  "last_run_at": "2026-10-16T19:05:41.756934+00:00",
-  "last_run_duration_seconds": 0.098602,
+  "last_report_path": "/Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/.hermes/.loam-home/logs/curator/20261020-142138",
+  "last_run_at": "2026-10-20T14:21:38.314127+00:00",
+  "last_run_duration_seconds": 0.296123,
   "last_run_summary": "auto: no changes; llm: skipped (consolidation off)",
   "last_run_summary_shown_at": null,
   "paused": false,

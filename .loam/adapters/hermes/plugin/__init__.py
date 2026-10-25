@@ -137,12 +137,15 @@ def canonicalize_campaign_delegation(tool_name: str, args: dict[str, Any], **kwa
     values = dict(kwargs)
     values.update(payload_values(profile))
     values.setdefault("session_id", values.get("parent_session_id", ""))
+    values.pop("arguments", None)
     try:
         if str(HOOKS_DIR) not in sys.path:
             sys.path.insert(0, str(HOOKS_DIR))
         from hypothesis_orchestration import canonical_delegation_args
 
-        canonical = canonical_delegation_args(_payload("tool_request", **values))
+        # The model's own args are passed so a generated-mode validator's
+        # instruction to its code-generator survives canonicalization.
+        canonical = canonical_delegation_args(_payload("tool_request", arguments=args, **values))
     except Exception as exc:
         logger.warning("Loam campaign delegation canonicalization failed: %s", exc)
         return None
@@ -153,24 +156,6 @@ def canonicalize_campaign_delegation(tool_name: str, args: dict[str, Any], **kwa
         "source": "loam-campaign",
         "reason": "canonical persisted campaign delegation",
     }
-
-
-def post_tool_call(tool_name: str, args: dict[str, Any], result: str, **kwargs: Any) -> None:
-    profile = _profile()
-    if profile is None:
-        return
-    values = dict(kwargs)
-    values.update(payload_values(profile))
-    _invoke(
-        "post-tool.py",
-        _payload(
-            "post_tool_call",
-            tool_name=tool_name,
-            arguments=args,
-            result=result,
-            **values,
-        ),
-    )
 
 
 def pre_llm_call(session_id: str = "", **kwargs: Any) -> dict[str, Any] | None:
@@ -192,7 +177,10 @@ def pre_llm_call(session_id: str = "", **kwargs: Any) -> dict[str, Any] | None:
     timeout_seconds = HOOK_TIMEOUT_SECONDS
     tournament = profile.hypothesis_tournament
     if tournament is not None:
-        timeout_seconds = max(timeout_seconds, tournament.timeout_seconds)
+        # The knowledge pre-pass runs inside the same hook, before generation.
+        knowledge = tournament.knowledge or {}
+        timeout_seconds = max(timeout_seconds,
+                              tournament.timeout_seconds + int(knowledge.get("timeout_seconds") or 0))
     return _invoke(
         "pre-llm.py",
         _payload(
@@ -245,7 +233,6 @@ def subagent_stop(**kwargs: Any) -> None:
 def register(ctx: Any) -> None:
     ctx.register_middleware("tool_request", canonicalize_campaign_delegation)
     ctx.register_hook("pre_tool_call", pre_tool_call)
-    ctx.register_hook("post_tool_call", post_tool_call)
     ctx.register_hook("pre_llm_call", pre_llm_call)
     ctx.register_hook("subagent_start", subagent_start)
     ctx.register_hook("subagent_stop", subagent_stop)

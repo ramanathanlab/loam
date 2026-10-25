@@ -7,7 +7,7 @@ variables remain explicit emergency overrides, not the normal operational API.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -39,6 +39,14 @@ class HypothesisTournamentConfig:
     api_key_env: str | None
     omit_temperature: bool
     json_max_tokens: int
+    # Optional knowledge-graph pre-pass before the first generation
+    # (.loam/hooks/knowledge_brief.py); None when switched off.
+    knowledge: Mapping[str, Any] | None = None
+    # Optional per-role model overrides, keyed by role name ("generation" for
+    # the hypothesis generators, "ranking" for the pairwise judge). Each value
+    # carries only the keys the profile actually set; the hook falls back to the
+    # fields above for everything else. Empty when no role block is configured.
+    roles: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
 
 
@@ -52,9 +60,25 @@ class ExecutionConfig:
     function_name: str = ""
     input_schema: str = ""
     runtime: str = ""
+    # Campaign-specific environment setup handed verbatim to every
+    # code-generator child (how to activate venvs, which tool CLIs exist, where
+    # weights live). The child runs on the remote host and cannot see the
+    # campaign's local files, so a recipe it must follow has to travel in the
+    # contract. Empty by default; generic Loam carries no host paths.
+    setup: str = ""
+    # generated (default): the code-generator writes its own code from the
+    # validator's instruction. fixed is for debugging the orchestration only:
+    # it runs Loam's built-in arithmetic check instead. Never a default.
+    code_source: str = "generated"
+    max_children: int = 3
+    workdir_root: str = ""
+    # Prefix of the HPC server's other MCP tool names (run_batch, list_tools,
+    # ...). Empty: derived from tool_name when it ends with function_name.
+    tool_prefix: str = ""
 
 
 _EXECUTION_MODES = {"remote_mcp", "local"}
+_CODE_SOURCES = {"fixed", "generated"}
 
 @dataclass(frozen=True)
 class LoamProfile:
@@ -95,11 +119,31 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
     raw = _as_mapping(value)
     if raw is None:
         return None
+    # A bad value in either field raises rather than returning None. `None`
+    # means "no execution block", which silently turns a configured HPC
+    # campaign into the local arithmetic self-test (no generated mode, an empty
+    # HPC tool allowlist, no max_children budget, no setup/workdir context) --
+    # with orchestration enabled it instead makes load_profile reject the whole
+    # profile, so every Loam hook goes inert. Neither belongs to a typo.
     mode = _clean_text(raw.get("mode"))
     if mode not in _EXECUTION_MODES:
-        return None
+        raise ValueError(
+            f"execution.mode must be one of {sorted(_EXECUTION_MODES)}: {mode!r}"
+        )
+    code_source = _clean_text(raw.get("code_source")) or "generated"
+    if code_source not in _CODE_SOURCES:
+        raise ValueError(
+            f"execution.code_source must be one of {sorted(_CODE_SOURCES)}: {code_source!r}"
+        )
+    extras = dict(
+        code_source=code_source,
+        max_children=_positive_int(raw.get("max_children"), 3 if code_source == "generated" else 1),
+        workdir_root=_clean_text(raw.get("workdir_root")),
+        tool_prefix=_clean_text(raw.get("tool_prefix")),
+        setup=_clean_text(raw.get("setup")),
+    )
     if mode == "local":
-        return ExecutionConfig(mode=mode, runtime=_clean_text(raw.get("runtime")))
+        return ExecutionConfig(mode=mode, runtime=_clean_text(raw.get("runtime")), **extras)
     tool_name = _clean_text(raw.get("tool_name"))
     endpoint = _clean_text(raw.get("endpoint"))
     function_name = _clean_text(raw.get("function_name"))
@@ -113,6 +157,7 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
         function_name=function_name,
         input_schema=input_schema,
         runtime=_clean_text(raw.get("runtime")),
+        **extras,
     )
 
 def _tournament_config(value: Any, state_dir: Path | None = None) -> HypothesisTournamentConfig | None:
@@ -147,7 +192,63 @@ def _tournament_config(value: Any, state_dir: Path | None = None) -> HypothesisT
         api_key_env=required["api_key_env"] or None,
         omit_temperature=raw.get("omit_temperature") is True,
         json_max_tokens=_positive_int(raw.get("json_max_tokens"), 1024),
+        knowledge=_knowledge_config(raw.get("knowledge")),
+        roles=_role_configs(raw),
     )
+
+
+# Tournament roles a profile may point at their own provider/model/endpoint, and
+# the keys such a block may carry. Everything else (jnana_root, state paths,
+# match counts, the knowledge pre-pass) stays shared across roles.
+_TOURNAMENT_ROLES = ("generation", "ranking")
+_ROLE_TEXT_KEYS = ("provider", "model", "inference_endpoint", "api_key_env")
+_ROLE_FLAG_KEYS = ("endpoint_is_chat_completions", "omit_temperature")
+
+
+def _role_configs(raw: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Collect `generation:` / `ranking:` model overrides, dropping empty blocks.
+
+    Only keys the profile actually set are carried through, so the hook can tell
+    "unset" from "set to the same value as the default" and fall back per key.
+    """
+
+    roles: dict[str, dict[str, Any]] = {}
+    for role in _TOURNAMENT_ROLES:
+        block = _as_mapping(raw.get(role))
+        if block is None:
+            continue
+        override: dict[str, Any] = {}
+        for key in _ROLE_TEXT_KEYS:
+            if text := _clean_text(block.get(key)):
+                override[key] = text
+        for key in _ROLE_FLAG_KEYS:
+            if key in block:
+                override[key] = block.get(key) is True
+        if "json_max_tokens" in block:
+            override["json_max_tokens"] = _positive_int(block.get("json_max_tokens"), 1024)
+        if override:
+            roles[role] = override
+    return roles
+
+
+def _knowledge_config(value: Any) -> dict[str, Any] | None:
+    """`knowledge: {enabled: true, ...}` turns the pre-pass on; anything else leaves it off."""
+
+    raw = _as_mapping(value)
+    if raw is None or raw.get("enabled") is not True:
+        return None
+    tools = raw.get("tools")
+    return {
+        "enabled": True,
+        "name": _clean_text(raw.get("name")) or "OKN",
+        "mcp_url": _clean_text(raw.get("mcp_url")) or "https://apps.okn.us/okn-mcp-dev/mcp",
+        "max_tool_calls": _positive_int(raw.get("max_tool_calls"), 12),
+        **({"model": model} if (model := _clean_text(raw.get("model"))) else {}),
+        "timeout_seconds": _positive_int(raw.get("timeout_seconds"), 900),
+        "max_brief_chars": _positive_int(raw.get("max_brief_chars"), 4000),
+        **({"tools": [str(t) for t in tools]} if isinstance(tools, list) else {}),
+        **({"seed_terms": [str(s) for s in seeds]} if isinstance(seeds := raw.get("seed_terms"), list) else {}),
+    }
 
 
 def config_path() -> Path:
@@ -251,6 +352,11 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "function_name": execution.function_name,
             "input_schema": execution.input_schema,
             "runtime": execution.runtime,
+            "setup": execution.setup,
+            "code_source": execution.code_source,
+            "max_children": execution.max_children,
+            "workdir_root": execution.workdir_root,
+            "tool_prefix": execution.tool_prefix,
         }
     run_id = _clean_text(os.environ.get("LOAM_RUN_ID"))
     if run_id:
@@ -276,4 +382,8 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "omit_temperature": tournament.omit_temperature,
             "json_max_tokens": tournament.json_max_tokens,
         }
+        if tournament.knowledge is not None:
+            values["loam_hypothesis_tournament"]["knowledge"] = dict(tournament.knowledge)
+        for role, override in tournament.roles.items():
+            values["loam_hypothesis_tournament"][role] = dict(override)
     return values
