@@ -30,6 +30,10 @@ auth.json
 .hermes/.loam-home/cron/
 # Vendored pyright install (34 MB, plus a symlink into node_modules).
 .hermes/.loam-home/lsp/
+# Installed binaries: platform-specific, not source. tirith (sheeki03/tirith,
+# AGPL-3.0) was tracked here as a 33 MB macOS arm64 build -- unusable on Linux
+# or Aurora, and referenced by nothing in Loam. Install such tools yourself.
+.hermes/.loam-home/bin/
 .hermes/.loam-home/state.db
 .hermes/.loam-home/state.db-shm
 .hermes/.loam-home/state.db-wal
