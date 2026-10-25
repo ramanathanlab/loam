@@ -125,9 +125,18 @@ class HypothesisTournamentTests(unittest.TestCase):
         self.assertEqual(config._execution_config(remote).max_children, 3)
         fixed = config._execution_config({**remote, "code_source": "fixed"})
         self.assertEqual((fixed.code_source, fixed.max_children), ("fixed", 1))
-        # A typo must fail loudly rather than discard the whole execution block.
-        with self.assertRaises(ValueError):
+        # A typo in either field must fail loudly rather than discard the whole
+        # execution block: a dropped block degrades a configured HPC campaign to
+        # the local arithmetic self-test, or makes load_profile reject the
+        # profile outright, with no error anywhere.
+        with self.assertRaisesRegex(ValueError, "code_source"):
             config._execution_config({**remote, "code_source": "llm"})
+        with self.assertRaisesRegex(ValueError, "mode"):
+            config._execution_config({**remote, "mode": "remote-mcp"})
+        with self.assertRaisesRegex(ValueError, "mode"):
+            config._execution_config({key: value for key, value in remote.items() if key != "mode"})
+        # An absent execution block still means "not configured", not an error.
+        self.assertIsNone(config._execution_config(None))
 
     def test_runtime_state_directory_overrides_profile_and_enables_emergency_mode(self) -> None:
         config = _load("loam_config_runtime_state", CONFIG)

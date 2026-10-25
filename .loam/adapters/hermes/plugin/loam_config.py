@@ -119,16 +119,19 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
     raw = _as_mapping(value)
     if raw is None:
         return None
+    # A bad value in either field raises rather than returning None. `None`
+    # means "no execution block", which silently turns a configured HPC
+    # campaign into the local arithmetic self-test (no generated mode, an empty
+    # HPC tool allowlist, no max_children budget, no setup/workdir context) --
+    # with orchestration enabled it instead makes load_profile reject the whole
+    # profile, so every Loam hook goes inert. Neither belongs to a typo.
     mode = _clean_text(raw.get("mode"))
     if mode not in _EXECUTION_MODES:
-        return None
+        raise ValueError(
+            f"execution.mode must be one of {sorted(_EXECUTION_MODES)}: {mode!r}"
+        )
     code_source = _clean_text(raw.get("code_source")) or "generated"
     if code_source not in _CODE_SOURCES:
-        # Not `return None`: that means "no execution block", which silently
-        # turns a configured HPC campaign into the local arithmetic self-test
-        # (no generated mode, an empty HPC tool allowlist, no max_children
-        # budget, no setup/workdir context). A typo in a new, optional,
-        # free-text field must not do that quietly.
         raise ValueError(
             f"execution.code_source must be one of {sorted(_CODE_SOURCES)}: {code_source!r}"
         )
