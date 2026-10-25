@@ -1,0 +1,86 @@
+name: tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: pytest (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # academy-py and aiohttp are what tests/test_hpc_batch.py,
+      # tests/test_hpc_control.py and tests/test_pool_repair.py gate on through
+      # their HAVE_DEPS guard: without them the entire HPC surface -- the batch
+      # registry, the tool library, pool repair -- skips silently. Neither is
+      # heavy, so they are installed unconditionally rather than left optional.
+      # fastmcp/parsl/globus-compute-sdk (the rest of pyproject's dependencies)
+      # are deliberately NOT installed: nothing under tests/ imports them.
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "academy-py>=0.5,<2" aiohttp pyyaml pytest
+
+      # Fail loudly here rather than reporting a green run that skipped the
+      # tests this repository exists to protect.
+      - name: Assert the HPC test dependencies are importable
+        run: python -c "import academy, aiohttp; print('academy + aiohttp OK')"
+
+      - name: Run the test suite
+        run: python -m pytest tests -q -rs
+
+  tests-jnana:
+    # The four tests in tests/test_hypothesis_tournament.py that actually drive
+    # Jnana need a sibling checkout of acadev/Jnana, which is not a dependency
+    # of this package; they skip by name without it (see HAVE_JNANA /
+    # HAVE_JNANA_LLM). This job supplies it so they really run. It tracks
+    # another repository's default branch, so it is advisory: a break upstream
+    # must not block a merge here. Check it when touching the tournament hook.
+    name: pytest (tournament, with Jnana)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: loam
+
+      - uses: actions/checkout@v4
+        with:
+          repository: acadev/Jnana
+          path: jnana
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Only openai on top of the base set: Jnana's LLM factory imports it
+      # eagerly for every OpenAI-compatible provider, which is how this repo's
+      # no-auth local endpoints are configured. The rest of Jnana's
+      # requirements.txt (pandas, textual, google-generativeai, ...) is not
+      # reached by the modules these tests import.
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "academy-py>=0.5,<2" aiohttp pyyaml pytest openai
+
+      - name: Assert Jnana and openai are available
+        working-directory: loam
+        run: |
+          test -d ../jnana || { echo "sibling jnana checkout missing"; exit 1; }
+          python -c "import openai; print('openai OK')"
+
+      - name: Run the tournament tests
+        working-directory: loam
+        run: python -m pytest tests/test_hypothesis_tournament.py -q -rs

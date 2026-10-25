@@ -13,6 +13,13 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 JNANA_ROOT = ROOT.parent / "jnana"
+# Jnana is a sibling checkout (acadev/Jnana), not a dependency of this package,
+# so the tests that actually drive it are opt-in: without it they would fail at
+# `patch("jnana.protognosis...")` rather than report anything useful. Its LLM
+# factory additionally imports `openai`, which the no-auth local endpoints this
+# repo talks to never need.
+HAVE_JNANA = JNANA_ROOT.is_dir()
+HAVE_JNANA_LLM = HAVE_JNANA and importlib.util.find_spec("openai") is not None
 HOOKS = ROOT / ".loam" / "hooks"
 CONFIG = ROOT / ".loam" / "adapters" / "hermes" / "plugin" / "loam_config.py"
 
@@ -156,6 +163,7 @@ class HypothesisTournamentTests(unittest.TestCase):
         self.assertEqual(profile.hypothesis_tournament.state_file, runtime_state / "jnana-memory.json")
         self.assertEqual(profile.hypothesis_tournament.reports_dir, runtime_state / "tournament-reports")
 
+    @unittest.skipUnless(HAVE_JNANA_LLM, "jnana checkout and openai required")
     def test_context_for_runs_runner_writes_report_and_renders_compact_ranking(self) -> None:
         hook = _load("loam_hypothesis_tournament", HOOKS / "hypothesis_tournament.py")
         with tempfile.TemporaryDirectory() as tmp:
@@ -209,6 +217,7 @@ class HypothesisTournamentTests(unittest.TestCase):
             report = json.loads(reports[0].read_text())
             self.assertEqual(report["result"]["matches_completed"], 2)
 
+    @unittest.skipUnless(HAVE_JNANA, "jnana checkout required")
     def test_context_for_generates_initial_hypotheses_before_running_tournament(self) -> None:
         hook = _load("loam_hypothesis_tournament_generation", HOOKS / "hypothesis_tournament.py")
         with tempfile.TemporaryDirectory() as tmp:
@@ -289,6 +298,7 @@ class HypothesisTournamentTests(unittest.TestCase):
             report = json.loads(next(reports_dir.glob("tournament-*.json")).read_text())
             self.assertEqual(report["result"]["generation"]["generated_hypotheses"], 3)
 
+    @unittest.skipUnless(HAVE_JNANA, "jnana checkout required")
     def test_existing_hypotheses_do_not_require_current_user_message(self) -> None:
         """Later pre-LLM turns rank persistent state even without a new prompt."""
 
@@ -387,6 +397,7 @@ class HypothesisTournamentTests(unittest.TestCase):
         emitted = json.loads("".join(call.args[0] for call in stdout.write.call_args_list))
         self.assertEqual(emitted["context"], "Validated memory\n\nTournament ranking")
 
+    @unittest.skipUnless(HAVE_JNANA_LLM, "jnana checkout and openai required")
     def test_endpoint_normalization_and_no_auth_config(self) -> None:
         hook = _load("loam_hypothesis_tournament_endpoint", HOOKS / "hypothesis_tournament.py")
         self.assertEqual(
