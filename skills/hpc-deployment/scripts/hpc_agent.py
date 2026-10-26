@@ -306,8 +306,12 @@ class HpcClientAgent(HpcAgent):
         self._client.start()
 
     async def agent_on_shutdown(self):
+        # EL's ClusterClient shutdown method is teardown(), NOT stop(): stop()
+        # lives on EnsembleLauncher (HpcClusterAgent above uses self._el.stop())
+        # and on the pipeline objects that teardown() itself stops, so .stop()
+        # on a ClusterClient raises AttributeError on every repair/rebuild sweep.
         if self._client is not None:
-            self._client.stop()
+            self._client.teardown()
 
 
     def _create_task(self, payload: str, workdir: str, timeout: float, venv_path: str | None = None):
