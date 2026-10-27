@@ -42,10 +42,16 @@ class FakeTask:
 
 
 class FakeClient:
-    """Records submitted tasks; run() executes them in-process like EL would."""
+    """Records submitted tasks; run() executes them in-process like EL would.
+
+    Its lifecycle method is teardown() with NO stop(), mirroring the real EL
+    ClusterClient API, so a regression to self._client.stop() in
+    agent_on_shutdown fails loudly here instead of only in production.
+    """
 
     def __init__(self) -> None:
         self.submitted: list[FakeTask] = []
+        self.torn_down = False
 
     def submit_batch(self, tasks):
         self.submitted.extend(tasks)
@@ -55,6 +61,9 @@ class FakeClient:
         for task in self.submitted[:only]:
             task.executable(*task.args)
         self.submitted.clear()
+
+    def teardown(self) -> None:
+        self.torn_down = True
 
 
 @unittest.skipUnless(HAVE_DEPS, "hpc-deployment dependencies not installed")
@@ -89,6 +98,15 @@ class RunBatchTests(unittest.TestCase):
     def _new_batch(self):
         return self._call("run_batch", script_path=str(self.base / "sim.py"),
                           inputs_path=str(self.inputs), labels=self.labels)
+
+    def test_agent_on_shutdown_tears_down_the_client(self) -> None:
+        # agent_on_shutdown must release the ClusterClient via its real API,
+        # teardown(). FakeClient exposes teardown() and NO stop(), so a
+        # regression to self._client.stop() raises AttributeError here (the real
+        # EL ClusterClient has no stop(), and the normal suite runs without EL).
+        self.assertFalse(self.client.torn_down)
+        asyncio.run(self.agent.agent_on_shutdown())
+        self.assertTrue(self.client.torn_down)
 
     def test_new_batch_freezes_inputs_and_registers(self) -> None:
         result = self._new_batch()
