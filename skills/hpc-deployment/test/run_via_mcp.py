@@ -13,7 +13,7 @@ URL = "http://127.0.0.1:8000/mcp"
 # that carries torch; _run_subprocess appends bin/python to venv_path.
 FRAMEWORKS = "/opt/aurora/26.181.0/frameworks/aurora_frameworks-2026.1.0"
 
-CHAI_VENV = "/flare/FRAME-IDP/agentic_campaign_09_26/binder_design/envs/chai-2026-venv"
+CHAI_VENV = "/tmp/ht1410/copper/flare/FRAME-IDP/agentic_campaign_09_26/binder_design/envs/chai-2026-venv"
 
 # Simple end-to-end check: which node, which tile, which interpreter.
 ENV_PAYLOAD = """
