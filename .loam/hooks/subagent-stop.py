@@ -13,7 +13,7 @@ import json
 import sys
 from typing import Any
 
-from hypothesis_orchestration import record_stop
+from hypothesis_orchestration import record_stop, workspace_stop
 from ledger import write_stop_and_candidate
 from run_manifest import ensure as ensure_run_manifest
 
@@ -43,7 +43,9 @@ def main() -> int:
     # dangling "...started" that deadlocks the plan). A failure writing the
     # manifest must not drop either, and a failure in one must not drop the
     # other -- so they do not share a try with the manifest or with each other.
-    for step in (write_stop_and_candidate, record_stop):
+    # workspace_stop runs last because it mirrors the row record_stop writes,
+    # and in its own try, so a workspace failure can never drop that row.
+    for step in (write_stop_and_candidate, record_stop, workspace_stop):
         try:
             step(payload)
         except Exception as exc:  # observer failures must not change Hermes behavior

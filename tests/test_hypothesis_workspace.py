@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -606,6 +607,299 @@ class WorkspacePolicyTests(_OrchestrationHelpers, unittest.TestCase):
                     "arguments": {"payload": "print(1)", "workdir": f"{self.REMOTE}/scratch/r1"}}
             self.assertEqual(self._pre_tool(call), "")
             self.assertEqual((root / "src" / "r1_01.py").read_text(), "print(1)\n")
+
+
+
+class WorkspaceStopTests(_OrchestrationHelpers, unittest.TestCase):
+    """Group 4: finalize runs, close the workspace, audit, cross-hypothesis inputs."""
+
+    REMOTE = "/lus/campaign/work/plan-1"
+
+    def _orchestration(self):
+        return _load(f"loam_orch_ws_stop_{self.id().rsplit('.', 1)[-1]}", ORCHESTRATION)
+
+    def _hypothesis(self, orchestration, payload: dict, hyp: str, goals: list[str]) -> tuple[Path, list[dict]]:
+        """Start validator-<hyp> and delegate ``goals``; children are not started. Returns (root, tasks)."""
+
+        goal = f"Validate [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-1] [loam-hypothesis-id={hyp}]"
+        self._start(orchestration, payload, f"validator-{hyp}", goal)
+        tasks = orchestration.canonical_delegation_args(
+            {**payload, "session_id": f"validator-{hyp}", "arguments": {"tasks": [{"goal": g} for g in goals]}}
+        )["tasks"]
+        return Path(payload["loam_workspace"]["root"]) / "plan-1" / hyp, tasks
+
+    def _stop(self, orchestration, payload: dict, session: str, status: str = "completed", summary: str = "done") -> None:
+        stop = {**payload, "child_subagent_id": session, "child_session_id": session,
+                "child_status": status, "child_summary": summary}
+        orchestration.record_stop(stop)
+        orchestration.workspace_stop(stop)
+
+    def _log(self, root: Path) -> list[dict]:
+        return [json.loads(line) for line in (root / "log.jsonl").read_text().splitlines()]
+
+    def _run(self, root: Path, run_id: str) -> dict:
+        return json.loads((root / "runs" / run_id / "run.json").read_text())
+
+    def _completed_local_run(self, orchestration, payload: dict, hyp: str, files: dict[str, str]) -> Path:
+        root, tasks = self._hypothesis(orchestration, payload, hyp, ["Make results."])
+        self._start(orchestration, payload, f"child-{hyp}", tasks[0]["goal"])
+        for name, text in files.items():
+            (root / "outputs" / "r1" / name).write_text(text)
+        self._stop(orchestration, payload, f"child-{hyp}")
+        return root
+
+    # finalize_run --------------------------------------------------------------------
+    def test_child_stop_completes_hashes_logs_and_freezes_the_run(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold B with T."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            (root / "outputs" / "r1" / "deep").mkdir()
+            (root / "outputs" / "r1" / "scores.csv").write_text("iptm,0.8\n")
+            (root / "outputs" / "r1" / "deep" / "model.cif").write_text("data_x\n")
+            (root / "scratch" / "r1" / "tmp.bin").write_text("ignored")
+            self._stop(orchestration, payload, "child-1", summary="ipTM 0.8")
+
+            run = self._run(root, "r1")
+            self.assertEqual((run["state"], run["child_status"], run["manifest_status"]), ("completed", "completed", "recorded"))
+            self.assertEqual([m["path"] for m in run["manifest"]], ["outputs/r1/deep/model.cif", "outputs/r1/scores.csv"])
+            self.assertEqual(run["manifest"][1]["bytes"], len("iptm,0.8\n"))
+            result = self._log(root)[-1]
+            self.assertEqual((result["kind"], result["run"], result["state"]), ("result", "r1", "completed"))
+            self.assertEqual(result["results"], "ipTM 0.8")
+            self.assertEqual(result["artifacts"], ["outputs/r1/deep/model.cif", "outputs/r1/scores.csv"])
+            verdict = orchestration.workspace_policy(
+                {**payload, "session_id": "child-1", "tool_name": "write_file",
+                 "arguments": {"path": str(root / "outputs" / "r1" / "late.csv"), "content": "x"}}
+            )
+            self.assertIn("frozen", verdict["message"])
+
+    def test_child_status_maps_to_run_state(self) -> None:
+        workspace = _load("loam_workspace_run_state")
+        self.assertEqual(workspace.run_state("completed"), "completed")
+        for status in ("interrupted", "cancelled"):
+            self.assertEqual(workspace.run_state(status), "dropped")
+        for status in ("error", "failed", "timeout", ""):
+            self.assertEqual(workspace.run_state(status), "failed")
+
+    def test_finalize_is_idempotent(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            self._stop(orchestration, payload, "child-1", status="error")
+            orchestration.workspace_stop({**payload, "child_subagent_id": "child-1", "child_session_id": "child-1",
+                                          "child_status": "completed", "child_summary": "again"})
+            self.assertEqual(self._run(root, "r1")["state"], "failed")
+            self.assertEqual([e["kind"] for e in self._log(root)].count("result"), 1)
+
+    # remote manifest -----------------------------------------------------------------
+    def test_remote_manifest_snippet_round_trips(self) -> None:
+        """Run the exact program the child is given, then parse its output."""
+
+        import subprocess
+
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            outputs = Path(tmp) / "remote" / "outputs" / "r1"
+            (outputs / "sub").mkdir(parents=True)
+            (outputs / "a.csv").write_text("1\n")
+            (outputs / "sub" / "b.cif").write_text("data_b\n")
+            block = orchestration._layout_block(str(Path(tmp) / "remote"), "r1", remote=True)
+            program = block.split("paste its complete output verbatim at the end of your report:\n", 1)[1]
+            printed = subprocess.run([sys.executable, "-c", program], text=True, capture_output=True, check=True).stdout
+
+            workspace = _load("loam_workspace_remote_manifest")
+            entries, status = workspace.remote_manifest(f"Report.\n{printed}\nThanks.", "r1")
+            self.assertEqual(status, "recorded")
+            self.assertEqual([e["path"] for e in entries], ["outputs/r1/a.csv", "outputs/r1/sub/b.cif"])
+            self.assertEqual(entries[0]["sha256"], hashlib.sha256(b"1\n").hexdigest())
+
+    def test_remote_manifest_missing_or_invalid_is_never_guessed(self) -> None:
+        workspace = _load("loam_workspace_remote_manifest_bad")
+        good = json.dumps({"path": "a.csv", "sha256": "0" * 64, "bytes": 1})
+        self.assertEqual(workspace.remote_manifest("no block here", "r1"), ([], "missing"))
+        for line in (json.dumps({"path": "../../x", "sha256": "0" * 64, "bytes": 1}),
+                     json.dumps({"path": "/etc/passwd", "sha256": "0" * 64, "bytes": 1}),
+                     json.dumps({"path": "a.csv", "sha256": "nothex", "bytes": 1}),
+                     "not json"):
+            self.assertEqual(workspace.remote_manifest(f"LOAM_MANIFEST\n{line}\nEND_LOAM_MANIFEST", "r1"), ([], "invalid"))
+        # The LAST block wins, so a recap earlier in the report doesn't count.
+        two = f"LOAM_MANIFEST\nnot json\nEND_LOAM_MANIFEST\n...\nLOAM_MANIFEST\n{good}\nEND_LOAM_MANIFEST"
+        self.assertEqual(workspace.remote_manifest(two, "r1")[1], "recorded")
+
+    def test_remote_child_stop_records_the_reported_manifest(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self.assertIn("LOAM_MANIFEST", tasks[0]["context"])
+            self.assertIn(f"root = '{self.REMOTE}/h-1/outputs/r1'", tasks[0]["context"])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            line = json.dumps({"path": "fold.cif", "sha256": "a" * 64, "bytes": 10})
+            self._stop(orchestration, payload, "child-1", summary=f"ok\nLOAM_MANIFEST\n{line}\nEND_LOAM_MANIFEST")
+            run = self._run(root, "r1")
+            self.assertEqual(run["manifest"], [{"path": "outputs/r1/fold.cif", "sha256": "a" * 64, "bytes": 10}])
+
+    # close_workspace -----------------------------------------------------------------
+    def test_validator_stop_closes_workspace_and_drops_unstarted_runs(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold.", "Score."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])  # r2 is never started
+            self._stop(orchestration, payload, "child-1")
+            self._stop(orchestration, payload, "validator-h-1", summary="### Evidence Score\n+0.40")
+
+            experiment = json.loads((root / "experiment.json").read_text())
+            self.assertEqual(experiment["state"], "closed")
+            # Copied from the validator_completed row record_stop wrote, not re-decided.
+            self.assertEqual((experiment["evidence_score"], experiment["evidence_score_status"]), (0.4, "reported"))
+            self.assertEqual(self._run(root, "r2")["state"], "dropped")
+            self.assertEqual(self._run(root, "r2")["dropped_reason"], "child never started")
+            kinds = [e["kind"] for e in self._log(root)]
+            self.assertEqual(kinds[-1], "report")
+            self.assertIn("note", kinds)
+            # The completion row itself is unchanged.
+            completed = [r for r in self._rows(payload) if r.get("event") == "validator_completed"][-1]
+            self.assertNotIn("workspace", completed)
+
+    def test_close_is_idempotent_and_blocks_new_runs(self) -> None:
+        orchestration = self._orchestration()
+        workspace = _load("loam_workspace_close_twice")
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            root, _ = self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._stop(orchestration, payload, "validator-h-1")
+            lines = (root / "log.jsonl").read_text()
+            self.assertEqual(workspace.close_workspace(root, {"status": "completed"}, remote=False), [])
+            self.assertEqual((root / "log.jsonl").read_text(), lines)
+            with self.assertRaises(ValueError):
+                workspace.reserve_runs(root, 1)
+
+    # audit ---------------------------------------------------------------------------
+    def test_audit_reports_tampering_and_strays_without_repairing(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            root = self._completed_local_run(orchestration, payload, "h-1", {"a.csv": "1", "b.csv": "2"})
+            (root / "outputs" / "r1" / "a.csv").write_text("edited")
+            (root / "outputs" / "r1" / "b.csv").unlink()
+            (root / "outputs" / "r1" / "c.csv").write_text("late")
+            (root / "checkpoints").mkdir()
+            (root / "outputs" / "r9").mkdir()
+            lines = (root / "log.jsonl").read_text().splitlines()
+            (root / "log.jsonl").write_text("\n".join([lines[0].replace("dispatched", "DISPATCHED"), *lines[1:]]) + "\n")
+            self._stop(orchestration, payload, "validator-h-1")
+
+            problems = [e["what"] for e in self._log(root) if e["kind"] == "violation"]
+            for fragment in ("outputs/r1/a.csv changed", "outputs/r1/b.csv was removed", "outputs/r1/c.csv was added",
+                             "stray top-level entry checkpoints", "outputs/r9 is not a run", "log.jsonl line 2"):
+                self.assertTrue(any(fragment in p for p in problems), (fragment, problems))
+            self.assertTrue((root / "checkpoints").is_dir())  # reported, not removed
+            campaign = Path(payload["loam_state_dir"]) / "hypothesis-campaign.jsonl"
+            rows = [json.loads(line) for line in campaign.read_text().splitlines()]
+            violation = [r for r in rows if r["event"] == "workspace_violation"][-1]
+            self.assertEqual((violation["hypothesis_id"], violation["workspace"]), ("h-1", str(root)))
+
+    def test_clean_workspace_audits_clean(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            root = self._completed_local_run(orchestration, payload, "h-1", {"a.csv": "1"})
+            self._stop(orchestration, payload, "validator-h-1")
+            self.assertEqual([e for e in self._log(root) if e["kind"] == "violation"], [])
+            campaign = Path(payload["loam_state_dir"]) / "hypothesis-campaign.jsonl"
+            self.assertNotIn("workspace_violation", campaign.read_text())
+
+    # cross-hypothesis inputs ---------------------------------------------------------
+    def test_completed_outputs_of_another_hypothesis_are_readable_and_recorded(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            source = self._completed_local_run(orchestration, payload, "h-2", {"scores.csv": "iptm,0.8\n"})
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Reuse h-2 scores."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            call = {**payload, "session_id": "child-1", "tool_name": "read_file",
+                    "arguments": {"path": str(source / "outputs" / "r1" / "scores.csv")}}
+            self.assertIsNone(orchestration.workspace_policy(call))
+            orchestration.workspace_capture(call)
+            orchestration.workspace_capture(call)  # recorded once
+
+            inputs = self._run(root, "r1")["inputs"]
+            self.assertEqual(len(inputs), 1)
+            self.assertEqual(
+                {k: inputs[0][k] for k in ("plan_id", "hypothesis_id", "run", "path")},
+                {"plan_id": "plan-1", "hypothesis_id": "h-2", "run": "r1", "path": "outputs/r1/scores.csv"},
+            )
+            self.assertEqual(inputs[0]["sha256"], hashlib.sha256(b"iptm,0.8\n").hexdigest())
+            note = [e for e in self._log(root) if e["kind"] == "note" and "input" in e][-1]
+            self.assertIn("h-2/outputs/r1/scores.csv", note["what"])
+
+    def test_only_completed_outputs_of_other_hypotheses_are_readable(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            source = self._completed_local_run(orchestration, payload, "h-2", {"scores.csv": "1"})
+            h3, h3_tasks = self._hypothesis(orchestration, payload, "h-3", ["Still running."])
+            self._start(orchestration, payload, "child-h-3", h3_tasks[0]["goal"])  # h-3/r1 is started, not completed
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Reuse."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+
+            def verdict(tool: str, **arguments):
+                return orchestration.workspace_policy({**payload, "session_id": "child-1", "tool_name": tool, "arguments": arguments})
+
+            self.assertIn("not completed", verdict("read_file", path=str(h3 / "outputs" / "r1" / "x"))["message"])
+            self.assertIn("only outputs/rK/", verdict("read_file", path=str(source / "scratch" / "r1" / "x"))["message"])
+            self.assertIn("only outputs/rK/", verdict("read_file", path=str(source / "log.jsonl"))["message"])
+            self.assertIn("read-only to you", verdict("write_file", path=str(source / "outputs" / "r1" / "x"), content="x")["message"])
+            workdir = str(root / "scratch" / "r1")
+            self.assertIsNone(verdict("terminal", command=f"cp {source}/outputs/r1/scores.csv {workdir}/", workdir=workdir))
+            self.assertIn("read-only to you", verdict("terminal", command=f"echo x > {source}/outputs/r1/x", workdir=workdir)["message"])
+
+    def test_remote_code_may_read_completed_outputs_across_plans(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            # A completed run of h-0 in an EARLIER plan, made directly on disk.
+            earlier = Path(payload["loam_workspace"]["root"]) / "plan-0" / "h-0"
+            (earlier / "runs" / "r1").mkdir(parents=True)
+            (earlier / "runs" / "r1" / "run.json").write_text(json.dumps(
+                {"state": "completed", "manifest": [{"path": "outputs/r1/lib.fasta", "sha256": "b" * 64, "bytes": 3}]}
+            ))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Reuse the earlier library."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            code = "open('/lus/campaign/work/plan-0/h-0/outputs/r1/lib.fasta').read()"
+            call = {**payload, "session_id": "child-1", "tool_name": "mcp_hpc_run_code",
+                    "arguments": {"payload": code, "workdir": f"{self.REMOTE}/h-1/scratch/r1"}}
+            self.assertIsNone(orchestration.workspace_policy(call))
+            orchestration.workspace_capture(call)
+            inputs = self._run(root, "r1")["inputs"]
+            self.assertEqual((inputs[0]["plan_id"], inputs[0]["hypothesis_id"], inputs[0]["sha256"]), ("plan-0", "h-0", "b" * 64))
+            blocked = {**call, "arguments": {**call["arguments"], "payload": "open('/lus/campaign/work/plan-0/h-0/scratch/r1/t')"}}
+            self.assertIn("only outputs/rK/", orchestration.workspace_policy(blocked)["message"])
+
+    # end to end through the real subagent-stop.py script ------------------------------------
+    def test_subagent_stop_script_finalizes_and_closes(self) -> None:
+        import subprocess
+
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            (root / "outputs" / "r1" / "a.csv").write_text("1")
+            for session, summary in (("child-1", "done"), ("validator-h-1", "### Evidence Score\n0.10")):
+                stop = {**payload, "event": "subagent_stop", "child_subagent_id": session, "child_session_id": session,
+                        "child_status": "completed", "child_summary": summary}
+                completed = subprocess.run([sys.executable, str(HOOKS / "subagent-stop.py")], input=json.dumps(stop),
+                                           text=True, capture_output=True, cwd=str(ROOT), check=False)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(self._run(root, "r1")["state"], "completed")
+            experiment = json.loads((root / "experiment.json").read_text())
+            self.assertEqual((experiment["state"], experiment["evidence_score"]), ("closed", 0.1))
 
 
 if __name__ == "__main__":

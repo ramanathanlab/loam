@@ -313,20 +313,46 @@ def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
-def _layout_block(base: str, run_id: str) -> str:
-    """Where a child's files go in its hypothesis workspace (hypothesis_workspace.py)."""
+def _layout_block(base: str, run_id: str, remote: bool = False) -> str:
+    """Where a child's files go in its hypothesis workspace (hypothesis_workspace.py).
+
+    On HPC the stop hook cannot list the run's outputs, so a remote child is
+    also told to report them as a LOAM_MANIFEST block, which
+    hypothesis_workspace.remote_manifest parses from its final report.
+    """
 
     if not run_id:
         return ""
-    return "\n".join((
+    lines = [
         f"WORKSPACE LAYOUT (enforced by Loam; your run is {run_id}):",
         f"- code and scripts you write: {base}/src/",
         f"- result files: {base}/outputs/{run_id}/",
         f"- temporary files: {base}/scratch/{run_id}/",
         f"- inputs: read from {base}/data/ and never write there",
+        "- earlier results of OTHER hypotheses: readable only from their completed runs' outputs/rK/; "
+        "Loam records each such read as an input of your run",
         "Write nothing anywhere else, and never /tmp: /tmp is local to one node and the next tool call "
         "may run on another. Other runs' outputs are frozen; do not modify them.",
-    ))
+    ]
+    if remote:
+        lines += [
+            "OUTPUT MANIFEST (required): as your LAST tool call, run this program with run_code, then paste its "
+            "complete output verbatim at the end of your report:",
+            "import hashlib, json, os",
+            f"root = {f'{base}/outputs/{run_id}'!r}",
+            "print('LOAM_MANIFEST')",
+            "for folder, _, files in sorted(os.walk(root)):",
+            "    for name in sorted(files):",
+            "        path = os.path.join(folder, name)",
+            "        digest = hashlib.sha256()",
+            "        with open(path, 'rb') as handle:",
+            "            for chunk in iter(lambda: handle.read(1 << 20), b''):",
+            "                digest.update(chunk)",
+            "        print(json.dumps({'path': os.path.relpath(path, root), 'sha256': digest.hexdigest(), "
+            "'bytes': os.path.getsize(path)}))",
+            "print('END_LOAM_MANIFEST')",
+        ]
+    return "\n".join(lines)
 
 
 def _generated_child_context(instruction: str, execution: Mapping[str, Any] | None, workdir: str,
@@ -526,13 +552,14 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
     # Reserve only once every task is known to be valid, so a rejected batch
     # leaves no reserved runs behind.
     run_ids, layout_base = _reserve_child_runs(payload, execution, workdir, plan_id, hypothesis_id, len(parsed))
+    remote = isinstance(execution, Mapping) and _text(execution.get("mode")) == "remote_mcp"
     out = []
     for (goal, instruction), run_id in zip(parsed, run_ids):
         out.append(
             {
                 "goal": _child_goal(hypothesis, goal, plan_id, hypothesis_id, run_id),
                 "context": _generated_child_context(
-                    instruction, execution, workdir, hypothesis, _layout_block(layout_base, run_id)
+                    instruction, execution, workdir, hypothesis, _layout_block(layout_base, run_id, remote)
                 ),
                 "role": "leaf",
             }
@@ -831,6 +858,46 @@ def workspace_capture(payload: Mapping[str, Any]) -> None:
 
     if hypothesis_workspace.settings(payload) is not None:
         hypothesis_workspace.capture_code(payload, _session_start(payload))
+
+
+def workspace_stop(payload: Mapping[str, Any]) -> None:
+    """Close a stopped child's workspace run, or its validator's workspace.
+
+    Runs after record_stop, whose completion row it mirrors (it never decides
+    completion itself). The start row is found the way record_stop finds it.
+    Audit problems are also reported to the campaign ledger.
+    """
+
+    if hypothesis_workspace.settings(payload) is None:
+        return
+    rows = _read_rows(_state_path(payload))
+    child_id = _text(payload.get("child_subagent_id"))
+    child_session = _text(payload.get("child_session_id"))
+
+    def _same_child(row: Mapping[str, Any]) -> bool:
+        return _text(row.get("child_subagent_id")) == child_id or _text(row.get("child_session_id")) == child_session
+
+    start = next((row for row in reversed(rows) if row.get("event") == "agent_started" and _same_child(row)), None)
+    if start is None:
+        return
+    completion = next(
+        (row for row in reversed(rows) if row.get("event") == "validator_completed" and _same_child(row)), None
+    )
+    problems = hypothesis_workspace.on_agent_stopped(payload, start, completion)
+    if problems:
+        _append_campaign(
+            payload,
+            {
+                "event": "workspace_violation",
+                "observed_at": _timestamp(),
+                "run_id": _text(payload.get("loam_run_id")),
+                "workflow_id": _text(payload.get("workflow_id")),
+                "plan_id": _text(start.get("plan_id")),
+                "hypothesis_id": _text(start.get("hypothesis_id")),
+                "workspace": _text(start.get("workspace")),
+                "problems": problems,
+            },
+        )
 
 
 def is_campaign_child(payload: Mapping[str, Any]) -> bool:

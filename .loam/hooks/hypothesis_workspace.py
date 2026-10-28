@@ -413,8 +413,12 @@ class _Scope:
         config = settings(payload) or {}
         self.root = Path(_text(start.get("workspace")))
         self.real_root = os.path.realpath(self.root)
-        self.real_base = os.path.realpath(Path(_text(config.get("root"))).expanduser())
+        self.base = Path(_text(config.get("root"))).expanduser()
+        self.real_base = os.path.realpath(self.base)
         self.run_id = _text(start.get("run"))
+        # Completed outputs of OTHER hypotheses this call reads; capture_code
+        # records them as the run's inputs.
+        self.reads: list[dict[str, str]] = []
         execution = payload.get("loam_execution")
         workdir_root = _text(execution.get("workdir_root")) if isinstance(execution, Mapping) else ""
         self.remote_base = os.path.normpath(workdir_root) if workdir_root else ""
@@ -439,10 +443,35 @@ class _Scope:
     def _local(self, real: str, raw: str, writing: bool) -> str | None:
         parts = _within(real, self.real_root)
         if parts is None:
-            if _within(real, self.real_base) is not None:
-                return f"{raw} belongs to another hypothesis's workspace"
+            foreign = _within(real, self.real_base)
+            if foreign is not None:
+                return self._foreign(foreign, raw, writing)
             return f"{raw} is outside this hypothesis's workspace {self.root}" if writing else None
         return _layout_problem(parts, self.run_id) if writing else None
+
+    def _foreign(self, parts: list[str], raw: str, writing: bool) -> str | None:
+        """A path in ANOTHER hypothesis's workspace; ``parts`` are relative to the base.
+
+        Other hypotheses are never writable. Their finished results are
+        readable, Pando-style (a run consuming ``output:eN/rM``): only
+        ``outputs/rK/`` of a run whose state is ``completed``, never scratch/,
+        a run still in progress, or a failed or dropped one. An allowed read is
+        collected in ``self.reads`` so it is recorded as an input.
+        """
+
+        if writing:
+            return f"{raw} belongs to another hypothesis's workspace, which is read-only to you"
+        legal = "only outputs/rK/ of another hypothesis's completed runs may be read"
+        if len(parts) < 4 or parts[2] != "outputs" or not _RUN_ID.fullmatch(parts[3]):
+            return f"{raw}: {legal}"
+        plan_id, hypothesis_id, run_id = parts[0], parts[1], parts[3]
+        state = read_json(self.base / plan_id / hypothesis_id / "runs" / run_id / RUN_FILE).get("state")
+        if state != "completed":
+            return f"{raw}: run {run_id} of {hypothesis_id} is {state or 'unknown'}, not completed; {legal}"
+        self.reads.append(
+            {"plan_id": plan_id, "hypothesis_id": hypothesis_id, "run": run_id, "path": "/".join(parts[2:])}
+        )
+        return None
 
     # remote (HPC) paths --------------------------------------------------------
     def remote(self, raw: str, writing: bool, required: bool = False, label: str = "path") -> str | None:
@@ -455,20 +484,30 @@ class _Scope:
         path = os.path.normpath(raw if os.path.isabs(raw) else os.path.join(self.remote_root, raw))
         parts = _within(path, self.remote_root)
         if parts is None:
-            if _within(path, self.remote_base) is not None:
-                return f"{raw} belongs to another hypothesis's HPC workspace"
+            foreign = _within(path, self.remote_base)
+            if foreign is not None:
+                # The HPC folder mirrors the local layout, so the local run.json
+                # says whether that remote run completed.
+                return self._foreign(foreign, raw, writing)
             return f"{label} {raw} is outside this hypothesis's HPC workspace {self.remote_root}" if required else None
         return _layout_problem(parts, self.run_id) if writing else None
 
     def code(self, text: str) -> str | None:
-        """Block code that names another hypothesis's workspace, locally or on HPC."""
+        """Check paths into other hypotheses' workspaces named in code, locally or on HPC.
 
-        for base in {self.real_base, str(self.root.parent.parent), self.remote_base} - {""}:
-            pattern = re.escape(base.rstrip("/")) + r"/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)"
+        Code can't be analysed for what it does with a path, so each one is held
+        to the read rule: allowed only for a completed run's outputs.
+        """
+
+        for base in {self.real_base, str(self.base), self.remote_base} - {""}:
+            pattern = re.escape(base.rstrip("/")) + r"/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)((?:/[^\s'\"(),;\]]*)?)"
             for match in re.finditer(pattern, text):
-                where = os.path.join(base, match.group(1), match.group(2))
-                if where not in {self.real_root, str(self.root), self.remote_root}:
-                    return f"code refers to another hypothesis's workspace ({where})"
+                if os.path.join(base, match.group(1), match.group(2)) in {self.real_root, str(self.root), self.remote_root}:
+                    continue
+                parts = [match.group(1), match.group(2), *(p for p in match.group(3).split("/") if p)]
+                problem = self._foreign(parts, match.group(0), writing=False)
+                if problem:
+                    return f"code refers to another hypothesis's workspace: {problem}"
         return None
 
     # shell ---------------------------------------------------------------------
@@ -645,13 +684,15 @@ def _verdict(
 
 
 def capture_code(payload: Mapping[str, Any], start: Mapping[str, Any] | None) -> None:
-    """Record what code an allowed code-generator call runs, in the run's record.
+    """Record what an allowed code-generator call runs and reads, in the run's record.
 
     Code passed inline (HPC run_code ``payload``, local execute_code ``code``) is
     saved as src/rM_NN.py, so the exact program behind a result is kept even
     when it ran remotely. Calls that point at files (write_file, run_batch,
     register_tool) are recorded by path, with a hash when the content is in the
-    call. Best effort; the caller isolates failures.
+    call. Completed outputs of other hypotheses that the call reads become the
+    run's ``inputs``, with the source file's hash when its manifest has one.
+    Best effort; the caller isolates failures.
     """
 
     if settings(payload) is None or not isinstance(start, Mapping) or _text(start.get("role")) != "code-generator":
@@ -659,12 +700,59 @@ def capture_code(payload: Mapping[str, Any], start: Mapping[str, Any] | None) ->
     root, run_id = Path(_text(start.get("workspace"))), _text(start.get("run"))
     if not _text(start.get("workspace")) or not _RUN_ID.fullmatch(run_id):
         return
+    scope = _Scope(payload, start)
+    _violation(payload, scope)  # the policy already allowed this call; this collects scope.reads
+    entry = _call_entry(payload)
+    if entry is None and not scope.reads:
+        return
+    with _locked(root):
+        path = root / "runs" / run_id / RUN_FILE
+        run = read_json(path)
+        if run.get("state") != "started":
+            return
+        if entry is not None:
+            code = entry.pop("code", "")
+            if code:
+                number = sum(1 for _ in (root / "src").glob(f"{run_id}_*.py")) + 1
+                source = root / "src" / f"{run_id}_{number:02d}.py"
+                source.write_text(code + ("" if code.endswith("\n") else "\n"), encoding="utf-8")
+                entry["src"] = f"src/{source.name}"
+            run["calls"] = [*run.get("calls", []), entry]
+        inputs = list(run.get("inputs", []))
+        known = {(i.get("plan_id"), i.get("hypothesis_id"), i.get("run"), i.get("path")) for i in inputs}
+        for read in scope.reads:
+            key = (read["plan_id"], read["hypothesis_id"], read["run"], read["path"])
+            if key in known:
+                continue
+            known.add(key)
+            item = {**read, **_source_hash(scope.base, read)}
+            inputs.append(item)
+            _append_log_unlocked(
+                root,
+                "note",
+                {
+                    "run": run_id,
+                    "what": f"reads completed output {read['hypothesis_id']}/{read['path']} (plan {read['plan_id']})",
+                    "input": item,
+                    "actor": {"role": "code-generator", "session_id": _text(start.get("child_session_id"))},
+                },
+            )
+        run["inputs"] = inputs
+        _write_json(path, run)
+
+
+def _call_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The run.json ``calls`` entry for a tool call, or None for calls not worth recording.
+
+    Inline code is returned under ``code`` for the caller to save to src/.
+    """
+
     tool, args = _text(payload.get("tool_name")), _arguments(payload)
     function = _hpc_function(tool)
     code = _text(args.get("payload")) if function == "run_code" else _text(args.get("code")) if tool == "execute_code" else ""
     entry: dict[str, Any] = {"tool": tool, "ts": _timestamp()}
     if code:
-        entry["sha256"] = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        entry.update(code=code, sha256=hashlib.sha256(code.encode("utf-8")).hexdigest())
         if function == "run_code" and _text(args.get("workdir")):
             entry["workdir"] = _text(args.get("workdir"))
     elif tool == "write_file":
@@ -672,16 +760,231 @@ def capture_code(payload: Mapping[str, Any], start: Mapping[str, Any] | None) ->
     elif function in {"run_batch", "register_tool"}:
         entry.update({key: _text(args.get(key)) for key in ("script_path", "inputs_path", "tool", "name") if _text(args.get(key))})
     else:
-        return
+        return None
+    return entry
+
+
+def _source_hash(base: Path, read: Mapping[str, str]) -> dict[str, str]:
+    """The source run's recorded sha256 for a read file, when its manifest lists it."""
+
+    run = read_json(base / read["plan_id"] / read["hypothesis_id"] / "runs" / read["run"] / RUN_FILE)
+    for item in run.get("manifest", []):
+        if isinstance(item, Mapping) and item.get("path") == read["path"] and item.get("sha256"):
+            return {"sha256": str(item["sha256"])}
+    return {}
+
+
+# --- lifecycle at stop (subagent_stop) -----------------------------------------
+
+# Bound on the child/validator report copied into a log entry.
+MAX_RESULT_CHARS = 4_000
+_MANIFEST_BLOCK = re.compile(r"LOAM_MANIFEST[ \t]*\n(.*?)\n[ \t]*END_LOAM_MANIFEST", re.DOTALL)
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def run_state(child_status: str) -> str:
+    """A run's terminal state from Hermes's child_status, read as ledger._observation_status does."""
+
+    if child_status == "completed":
+        return "completed"
+    if child_status in {"interrupted", "cancelled"}:
+        return "dropped"
+    return "failed"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _local_manifest(root: Path, run_id: str) -> list[dict[str, Any]]:
+    outputs = root / "outputs" / run_id
+    return [
+        {"path": path.relative_to(root).as_posix(), "sha256": _sha256_file(path), "bytes": path.stat().st_size}
+        for path in sorted(outputs.rglob("*"))
+        if path.is_file()
+    ]
+
+
+def remote_manifest(summary: str, run_id: str) -> tuple[list[dict[str, Any]], str]:
+    """Parse the child's LAST ``LOAM_MANIFEST`` block from its report: (entries, status).
+
+    On HPC the hook cannot list the run's files, so the child is told (see
+    hypothesis_orchestration._layout_block) to print this block. Status is
+    ``recorded``, ``missing`` (no block) or ``invalid`` (a malformed entry, or a
+    path that leaves outputs/rM). Nothing is guessed.
+    """
+
+    blocks = _MANIFEST_BLOCK.findall(summary)
+    if not blocks:
+        return [], "missing"
+    entries: list[dict[str, Any]] = []
+    for line in blocks[-1].splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+            relative = os.path.normpath(str(item["path"]))
+            digest, size = str(item["sha256"]), int(item["bytes"])
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return [], "invalid"
+        if os.path.isabs(relative) or relative.split(os.sep)[0] == os.pardir or not _SHA256.fullmatch(digest):
+            return [], "invalid"
+        entries.append({"path": f"outputs/{run_id}/{relative}", "sha256": digest, "bytes": size})
+    return entries, "recorded"
+
+
+def finalize_run(root: Path, run_id: str, child_status: str, summary: str, remote: bool) -> dict[str, Any] | None:
+    """Close a code-generator's run: terminal state, output manifest, a ``result`` entry.
+
+    From here on the run is frozen: fs_policy refuses every write to a run that
+    is not ``started``, and the validator-stop audit re-hashes local outputs
+    against this manifest. Returns the updated run record, or None when the run
+    was not started (already finalized, or never began).
+    """
+
     with _locked(root):
         path = root / "runs" / run_id / RUN_FILE
         run = read_json(path)
         if run.get("state") != "started":
-            return
-        if code:
-            number = sum(1 for _ in (root / "src").glob(f"{run_id}_*.py")) + 1
-            source = root / "src" / f"{run_id}_{number:02d}.py"
-            source.write_text(code + ("" if code.endswith("\n") else "\n"), encoding="utf-8")
-            entry["src"] = f"src/{source.name}"
-        run["calls"] = [*run.get("calls", []), entry]
+            return None
+        if remote:
+            manifest, manifest_status = remote_manifest(summary, run_id)
+        else:
+            manifest, manifest_status = _local_manifest(root, run_id), "recorded"
+        run.update(
+            state=run_state(child_status),
+            child_status=child_status,
+            ended_at=_timestamp(),
+            manifest=manifest,
+            manifest_status=manifest_status,
+        )
         _write_json(path, run)
+        _append_log_unlocked(
+            root,
+            "result",
+            {
+                "run": run_id,
+                "state": run["state"],
+                "results": summary[:MAX_RESULT_CHARS],
+                "artifacts": [item["path"] for item in manifest],
+                "manifest_status": manifest_status,
+                "actor": {"role": "code-generator", "session_id": _text(run.get("child_session_id"))},
+            },
+        )
+        return run
+
+
+def close_workspace(root: Path, completion: Mapping[str, Any], remote: bool) -> list[str]:
+    """Mirror the validator's completion into the workspace, then audit it.
+
+    The completion signal itself stays the ``validator_completed`` row that
+    hypothesis_orchestration.record_stop writes; ``completion`` is that row,
+    copied here, never re-decided. Runs still ``reserved`` (the child never
+    started) or ``started`` (it never stopped) are closed as ``dropped``.
+    Returns the audit's problems, each also logged as a ``violation``.
+    Idempotent: a second call on a closed workspace does nothing.
+    """
+
+    with _locked(root):
+        experiment = read_json(root / EXPERIMENT_FILE)
+        if experiment.get("state") != "open":
+            return []
+        for run_id in experiment.get("runs", []):
+            path = root / "runs" / run_id / RUN_FILE
+            run = read_json(path)
+            if run.get("state") not in {"reserved", "started"}:
+                continue
+            reason = "child never started" if run["state"] == "reserved" else "validator finished before this child stopped"
+            run.update(state="dropped", ended_at=_timestamp(), dropped_reason=reason)
+            _write_json(path, run)
+            _append_log_unlocked(root, "note", {"run": run_id, "what": f"run {run_id} dropped: {reason}"})
+        experiment.update(
+            state="closed",
+            closed_at=_timestamp(),
+            validator_status=_text(completion.get("status")),
+            evidence_score=completion.get("evidence_score"),
+            evidence_score_status=completion.get("evidence_score_status"),
+        )
+        _write_json(root / EXPERIMENT_FILE, experiment)
+        _append_log_unlocked(
+            root,
+            "report",
+            {
+                "what": "hypothesis-validator finished",
+                "status": _text(completion.get("status")),
+                "evidence_score": completion.get("evidence_score"),
+                "evidence_score_status": completion.get("evidence_score_status"),
+                "results": _text(completion.get("summary"))[:MAX_RESULT_CHARS],
+                "actor": {"role": "hypothesis-validator", "session_id": _text(completion.get("child_session_id"))},
+            },
+        )
+        problems = _audit_unlocked(root, experiment, remote)
+        for problem in problems:
+            _append_log_unlocked(root, "violation", {"what": f"audit: {problem}", "blocked": False})
+        return problems
+
+
+def _audit_unlocked(root: Path, experiment: Mapping[str, Any], remote: bool) -> list[str]:
+    """What the pre-tool checks could not prevent: tampering, edits after freeze, strays.
+
+    Observe and report only; nothing is repaired or removed.
+    """
+
+    problems = [f"log.jsonl {problem}" for problem in verify_log(root)]
+    runs = [run_id for run_id in experiment.get("runs", []) if isinstance(run_id, str)]
+    for entry in sorted(root.iterdir()):
+        transient = entry.name.startswith(".") and entry.name.endswith(".tmp")
+        if entry.name not in LAYOUT_DIRS and entry.name not in RECORD_FILES and not transient:
+            problems.append(f"stray top-level entry {entry.name}")
+    for folder in ("runs", "outputs", "scratch"):
+        for entry in sorted((root / folder).iterdir()) if (root / folder).is_dir() else []:
+            if entry.name not in runs:
+                problems.append(f"{folder}/{entry.name} is not a run of this hypothesis")
+    for run_id in runs:
+        run = read_json(root / "runs" / run_id / RUN_FILE)
+        if run.get("state") != "completed" or remote or run.get("manifest_status") != "recorded":
+            continue  # remote outputs live on HPC; only local bytes can be re-hashed
+        recorded = {item["path"]: item.get("sha256") for item in run.get("manifest", []) if isinstance(item, Mapping)}
+        present = {path.relative_to(root).as_posix(): path for path in (root / "outputs" / run_id).rglob("*") if path.is_file()}
+        for relative, digest in recorded.items():
+            if relative not in present:
+                problems.append(f"{relative} was removed after run {run_id} finished")
+            elif _sha256_file(present[relative]) != digest:
+                problems.append(f"{relative} changed after run {run_id} finished")
+        for relative in sorted(set(present) - set(recorded)):
+            problems.append(f"{relative} was added after run {run_id} finished")
+    return problems
+
+
+def on_agent_stopped(
+    payload: Mapping[str, Any], start: Mapping[str, Any], completion: Mapping[str, Any] | None
+) -> list[str]:
+    """Workspace side of subagent_stop. Returns audit problems (validator stop only).
+
+    ``start`` is the child's agent_started row; ``completion`` is the row
+    record_stop just wrote for it. Raises on failure; subagent-stop.py isolates
+    this step so it can never drop the completion rows.
+    """
+
+    if settings(payload) is None or not _text(start.get("workspace")):
+        return []
+    root = Path(_text(start.get("workspace")))
+    execution = payload.get("loam_execution")
+    remote = isinstance(execution, Mapping) and _text(execution.get("mode")) == "remote_mcp"
+    role = _text(start.get("role"))
+    if role == "code-generator" and _text(start.get("run")):
+        finalize_run(
+            root,
+            _text(start.get("run")),
+            _text(payload.get("child_status")) or "error",
+            _text(payload.get("child_summary")),
+            remote,
+        )
+        return []
+    if role == "hypothesis-validator" and completion is not None:
+        return close_workspace(root, completion, remote)
+    return []
