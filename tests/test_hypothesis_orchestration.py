@@ -779,7 +779,8 @@ class EvidenceScoreAndNeutralizeTests(unittest.TestCase):
     def test_neutralize_reports_what_it_stripped(self) -> None:
         # H1: the deletion used to be silent, so a gutted instruction looked to
         # the child like a validator who wrote nothing useful.
-        import contextlib, io
+        import contextlib
+        import io
 
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):

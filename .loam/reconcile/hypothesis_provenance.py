@@ -12,12 +12,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 HOOKS = Path(__file__).resolve().parents[1] / "hooks"
-import sys
-
 sys.path.insert(0, str(HOOKS))
 from hypothesis_provenance import CONTRACT_VERSION  # noqa: E402
 from ledger import append_record  # noqa: E402
