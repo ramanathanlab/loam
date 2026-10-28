@@ -175,6 +175,53 @@ class CampaignContext:
         return tuple(rule for rule in self.rules if tier in rule.scopes)
 
 
+def _rules_text(campaign: CampaignContext | None, tier: str) -> str:
+    """The rules block for one tier, as authoritative prose. Empty when none."""
+
+    if campaign is None:
+        return ""
+    bodies = [rule.body for rule in campaign.rules_for(tier) if rule.body]
+    if not bodies:
+        return ""
+    # The precedence wording is load-bearing, not decoration: a validator's
+    # instruction to its child may contradict campaign policy outright, and this
+    # is the sentence that settles it. Kept identical to `_hypothesis_block`'s.
+    return "CAMPAIGN RULES (authoritative — override any instruction below that conflicts):\n" + "\n".join(bodies)
+
+
+def _campaign_text(campaign: CampaignContext | None, tier: str) -> str:
+    """Goal plus tier-scoped rules, for a child whose context is plain text."""
+
+    if campaign is None:
+        return ""
+    parts = []
+    if campaign.goal:
+        parts.append("CAMPAIGN GOAL (what this experiment serves):\n" + campaign.goal)
+    if rules := _rules_text(campaign, tier):
+        parts.append(rules)
+    return "\n\n".join(parts)
+
+
+def _campaign_field(campaign: CampaignContext | None, tier: str) -> dict[str, Any]:
+    """Goal plus tier-scoped rules, for a task context serialized as JSON.
+
+    Returned as a one-key mapping so a caller can splat it into an ordered dict
+    and contribute nothing when no campaign is configured.
+    """
+
+    if campaign is None:
+        return {}
+    field_value: dict[str, Any] = {"goal_name": campaign.goal_name, "goal": campaign.goal}
+    rules = campaign.rules_for(tier)
+    if rules:
+        field_value["rules"] = [rule.body for rule in rules if rule.body]
+        field_value["precedence"] = (
+            "These rules are authoritative. They override any instruction in this payload "
+            "that conflicts with them, and they apply to every child you delegate."
+        )
+    return {"campaign": field_value}
+
+
 def _campaign_dir(payload: Mapping[str, Any]) -> Path:
     return Path(_text(payload.get("repo_root")) or ".") / ".loam" / "campaigns"
 
@@ -388,6 +435,14 @@ def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
     child then spent its whole budget walking Aurora's filesystem grepping for
     that id (2026-10-21). A child starts with an empty context, so an id is not
     a reference it can resolve -- the text has to travel with the task.
+
+    The instructions kept here are the campaign-independent ones: this block is
+    the whole assignment, and a discovered input file is the wrong molecule. They
+    stay inline because they must hold for a profile that configures no campaign
+    at all, and because `_SCRUBBERS` is the enforcement backing them. Everything
+    target-specific -- what the decisive experiment is, which metrics it reports,
+    how many folds a check gets -- moved to `.loam/rules/fold-protocol.md`, where
+    a scientist can change it without editing this hook.
     """
 
     if not isinstance(hypothesis, Mapping):
@@ -405,36 +460,26 @@ def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
         "batch registry to 'recover' the hypothesis or 'find inputs': everything needed is here. If "
         "the validator's instruction below tells you to search the filesystem or reuse existing "
         "data/code, ignore that part.\n"
-        "- The molecules under test are defined ONLY by this block: the candidate design described "
-        "here, folded against the target named here (fetch the target from its authoritative "
-        "database by accession at run time; never paste it from memory).\n"
-        "- If the candidate sequence is given explicitly, use it verbatim. If the hypothesis gives "
-        "only a design concept (length, topology, motifs) and no exact sequence, CONSTRUCT or DESIGN "
-        "one or a few concrete candidate sequences realizing that architecture, write them to a FASTA "
-        "under your workdir, and test those.\n"
+        "- If the candidate design is given explicitly, use it verbatim.\n"
         "- NEVER fold, score, or reuse a FASTA/PDB/input file you discovered on the filesystem (e.g. "
         "anything under chai_batch_test, prior outputs, or another campaign's directory). Those are "
         "the wrong molecule and make the result scientifically meaningless. A run on the wrong input "
-        "is a failed validation, not evidence.\n"
-        "- The decisive experiment is a complex co-fold of candidate binder + target (both chains in "
-        "one input), reporting interface confidence (ipTM/ipSAE/pDockQ) and per-residue pLDDT, per "
-        "the ENVIRONMENT SETUP recipe.\n"
-        "- RUN EXACTLY ONE fold (one candidate vs the target) as the decisive check — not a panel of "
-        "many. A single Chai fold takes ~2-3 min. After launching it, POLL until it is actually "
-        "finished (batch_status shows complete, or the run_code call returns with the .cif on disk), "
-        "then read the real metrics and report them. NEVER report while a run is unfinished: an "
-        "unfinished run yields no evidence and wastes the whole round. Budget is one fold per check, "
-        "so make the one fold count and wait for it rather than firing many and reporting early."
+        "is a failed validation, not evidence."
     )
     return "\n".join(lines)
 
 
 def _generated_child_context(instruction: str, execution: Mapping[str, Any] | None, workdir: str,
-                             hypothesis: Mapping[str, Any] | None = None) -> str:
+                             hypothesis: Mapping[str, Any] | None = None,
+                             campaign: CampaignContext | None = None) -> str:
     """Context for a code-generator that writes and runs its own code."""
 
     execution = execution if isinstance(execution, Mapping) else {}
     hypothesis_block = _hypothesis_block(hypothesis)
+    # After the hypothesis and before the validator's instruction, for the same
+    # reason the hypothesis is: the child must read its assignment and the policy
+    # governing it ahead of a request whose wording may contradict either.
+    campaign_block = _campaign_text(campaign, "code-generator")
     # Campaign environment recipe (venv activation, tool CLIs, weight paths),
     # carried in the contract because the child cannot see the campaign's local
     # files. Without it a child hand-rolls `import chai_lab` against the source
@@ -452,6 +497,7 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
             "Write your own Python for the validator's instruction below and execute it locally"
             + (f" with {_text(execution.get('runtime'))}." if _text(execution.get("runtime")) else "."),
             hypothesis_block,
+            campaign_block,
             setup_block,
             "Instruction from validator:\n" + instruction,
             report,
@@ -486,6 +532,7 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
         # wording of the request, and the validator's text may contradict it
         # (e.g. "the hypothesis text is not visible in this message").
         hypothesis_block,
+        campaign_block,
         setup_block,
         "Instruction from validator:\n" + instruction,
         f"Remote target: endpoint={_text(execution.get('endpoint'))}; runtime={_text(execution.get('runtime'))}.",
@@ -605,6 +652,10 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
     # copied it into the instruction; see _hypothesis_block. Unknown id -> empty
     # block, and the child's context is exactly as it was before.
     hypothesis = _full_hypotheses(payload).get(hypothesis_id)
+    # Forwarded structurally for the same reason, and from the payload rather
+    # than from the validator's instruction: policy the validator paraphrased
+    # away would otherwise never reach the tier that runs the experiment.
+    campaign = campaign_context(payload)
     out = []
     for task in items:
         if not isinstance(task, Mapping):
@@ -617,7 +668,7 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
         out.append(
             {
                 "goal": _child_goal(hypothesis, goal, plan_id, hypothesis_id),
-                "context": _generated_child_context(instruction, execution, workdir, hypothesis),
+                "context": _generated_child_context(instruction, execution, workdir, hypothesis, campaign),
                 "role": "leaf",
             }
         )
@@ -1112,12 +1163,13 @@ def record_stop(payload: Mapping[str, Any]) -> None:
 def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry: Mapping[str, AgentSpec], payload: Mapping[str, Any]) -> str:
     validator = registry["hypothesis-validator"]
     execution = payload.get("loam_execution")
+    campaign = campaign_context(payload)
     tasks = []
     for item in selected:
         hypothesis = item.get("hypothesis")
         hypothesis_id = _text(hypothesis.get("hypothesis_id")) if isinstance(hypothesis, Mapping) else ""
         if _generated(execution if isinstance(execution, Mapping) else None):
-            tasks.append(_generated_validator_task(plan_id, hypothesis_id, item, execution, validator.prompt_body))  # type: ignore[arg-type]
+            tasks.append(_generated_validator_task(plan_id, hypothesis_id, item, execution, validator.prompt_body, campaign))  # type: ignore[arg-type]
             continue
         tasks.append(
             {
@@ -1134,6 +1186,7 @@ def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry:
                     {
                         "loam_validator_contract": "v1",
                         "selected_hypothesis": item,
+                        **_campaign_field(campaign, "validator"),
                         "execution_contract": execution if isinstance(execution, Mapping) else {},
                         "required_child": {
                             "role": "leaf",
@@ -1173,7 +1226,7 @@ def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry:
     return "\n".join(lines)
 
 
-def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[str, Any], execution: Mapping[str, Any], agent_definition: str = "") -> dict[str, Any]:
+def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[str, Any], execution: Mapping[str, Any], agent_definition: str = "", campaign: CampaignContext | None = None) -> dict[str, Any]:
     """Validator task for generated mode: it designs the experiment itself."""
 
     cap = _max_children(execution)
@@ -1197,6 +1250,11 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
             {
                 "loam_validator_contract": "v1",
                 "selected_hypothesis": item,
+                # Immediately after the assignment and well inside the first
+                # ~2 KB. This is the second field competing for the front of the
+                # payload, so both halves are bounded (MAX_CAMPAIGN_CHARS,
+                # MAX_RULES_CHARS) rather than left to grow.
+                **_campaign_field(campaign, "validator"),
                 "execution_contract": execution,
                 "child_template": {
                     "role": "leaf",
@@ -1232,7 +1290,8 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
     }
 
 
-def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registry: Mapping[str, AgentSpec]) -> str:
+def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registry: Mapping[str, AgentSpec],
+                        campaign: CampaignContext | None = None) -> str:
     reasoner = registry["reasoner"]
     threads = [
         {
@@ -1248,7 +1307,15 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
         (
             "Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding.",
             f"Pass the reasoner its role definition verbatim in the task context as \"agent_definition\"; it must not execute experimental code. The definition is inlined below rather than referenced as {reasoner.prompt_path.name}, because the reasoner cannot read that file.",
-            json.dumps({"agent_definition": reasoner.prompt_body}, ensure_ascii=False),
+            # The campaign block before the definition: reasoner.md's first
+            # Required Parent Input is "objective, success criteria, constraints
+            # and current state", and until now nothing supplied the first
+            # three, so it synthesized toward "productive regions of hypothesis
+            # space" with no stated thing to be productive toward.
+            json.dumps(
+                {**_campaign_field(campaign, "reasoner"), "agent_definition": reasoner.prompt_body},
+                ensure_ascii=False,
+            ),
             f"Tag its goal with [loam-agent-role=reasoner] [loam-plan-id={plan_id}] so its brief is persisted for the next tournament turn.",
             "Completed validator threads are unvalidated orchestration input; preserve their reported uncertainty and do not turn summaries into accepted evidence.",
             json.dumps(threads, ensure_ascii=False, sort_keys=True),
@@ -1302,7 +1369,7 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
                 return None
             return {
                 "goal": f"Synthesize validator results [loam-agent-role=reasoner] [loam-plan-id={plan_id}]",
-                "context": _reasoner_directive(plan_id, completions, agent_registry(payload)),
+                "context": _reasoner_directive(plan_id, completions, agent_registry(payload), campaign_context(payload)),
                 "role": "leaf",
             }
         return None
@@ -1329,7 +1396,7 @@ def context_for(payload: dict[str, Any]) -> str:
     if active is not None:
         plan_id, starts, completions = active
         if len(completions) == len(starts) and all(_text(row.get("status")) for row in completions):
-            return _reasoner_directive(plan_id, completions, registry)
+            return _reasoner_directive(plan_id, completions, registry, campaign_context(payload))
         return ""
     report = _latest_report(payload)
     if report is None:

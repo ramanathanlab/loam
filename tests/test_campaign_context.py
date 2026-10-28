@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import tempfile
 import unittest
@@ -185,6 +186,147 @@ class CampaignContextTests(unittest.TestCase):
         assert context is not None
         self.assertEqual(len(context.goal), orchestration.MAX_CAMPAIGN_CHARS)
         self.assertEqual(len(context.rules[0].body), orchestration.MAX_RULES_CHARS)
+
+
+def _orchestration_payload(root: Path, campaign: dict | None = None) -> dict:
+    """A payload shaped like a live turn, against the repo's real campaign files."""
+
+    state_file = root / "jnana.json"
+    reports_dir = root / "reports"
+    reports_dir.mkdir()
+    state_file.write_text(
+        json.dumps(
+            {"hypotheses": [{"hypothesis_id": "h-1", "content": "A candidate binder engages the target interface."}]}
+        ),
+        encoding="utf-8",
+    )
+    (reports_dir / "tournament-001.json").write_text(
+        json.dumps(
+            {
+                "workflow_id": "research-v1",
+                "result": {
+                    "status": "completed",
+                    "top_hypotheses": [{"hypothesis_id": "h-1", "elo_rating": 1210.0}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    payload = {
+        "repo_root": str(ROOT),
+        "workflow_id": "research-v1",
+        "session_id": "session-1",
+        "loam_state_dir": str(root / "loam-state"),
+        "loam_hypothesis_tournament": {"state_file": str(state_file), "reports_dir": str(reports_dir)},
+        "loam_execution": {
+            "mode": "remote_mcp",
+            "tool_name": "globus_execute",
+            "endpoint": "https://compute.example/mcp",
+            "function_name": "run_python",
+            "input_schema": "run-python-v1",
+            "runtime": "python3.11",
+        },
+    }
+    if campaign is not None:
+        payload["loam_campaign"] = campaign
+    return payload
+
+
+CAMPAIGN = {"goal": "egfr-binders", "rules": ["design-integrity", "fold-protocol"]}
+
+
+def _validator_context(directive: str) -> str:
+    """The first validator task's context, as the child will receive it.
+
+    `_validator_directive` ends with the ready-to-run task array, and each task's
+    context is itself a JSON string, so the keys appear escaped in the directive
+    text. Ordering must be asserted inside this payload, not against the
+    surrounding prose -- which mentions the same key names.
+    """
+
+    tasks = json.loads(directive.rsplit("\n", 1)[1])
+    return tasks[0]["context"]
+
+
+class CampaignInjectionTests(unittest.TestCase):
+    def test_validator_payload_carries_the_goal_ahead_of_the_role_definition(self) -> None:
+        """Guards the 2026-10-21 regression: policy must not land behind 8.6 KB of boilerplate."""
+
+        orchestration = _load("loam_campaign_validator_inject")
+        with tempfile.TemporaryDirectory() as temporary:
+            directive = orchestration.context_for(_orchestration_payload(Path(temporary), CAMPAIGN))
+
+        context = _validator_context(directive)
+        self.assertIn("EGFR", context)
+        self.assertLess(context.index('"campaign"'), context.index('"validator_instructions"'))
+        self.assertLess(context.index('"campaign"'), context.index('"agent_definition"'))
+        # The whole point of the ordering: policy lands where the model reads it.
+        self.assertLess(context.index('"campaign"'), 2_000)
+
+    def test_validator_payload_omits_a_child_scoped_rule(self) -> None:
+        orchestration = _load("loam_campaign_validator_scope")
+        with tempfile.TemporaryDirectory() as temporary:
+            directive = orchestration.context_for(_orchestration_payload(Path(temporary), CAMPAIGN))
+
+        self.assertIn("authoritative source", directive)  # design-integrity, scope: all
+        self.assertNotIn("EXACTLY ONE fold", directive)  # fold-protocol, scope: code-generator
+
+    def test_no_campaign_block_leaves_the_directive_unchanged(self) -> None:
+        orchestration = _load("loam_campaign_validator_absent")
+        with tempfile.TemporaryDirectory() as temporary:
+            directive = orchestration.context_for(_orchestration_payload(Path(temporary)))
+
+        self.assertIn("Loam orchestration directive", directive)
+        self.assertNotIn('"campaign"', directive)
+
+    def test_child_context_carries_goal_and_rules_before_the_instruction(self) -> None:
+        orchestration = _load("loam_campaign_child_inject")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = {
+                **_orchestration_payload(Path(temporary), CAMPAIGN),
+                "arguments": {"tasks": [{"goal": "Co-fold the candidate.", "context": "Inputs follow."}]},
+            }
+            tasks = orchestration._generated_child_tasks(payload, "plan-1", "h-1")
+
+        assert tasks is not None
+        context = tasks["tasks"][0]["context"]
+        self.assertIn("CAMPAIGN GOAL", context)
+        self.assertIn("EXACTLY ONE fold", context)
+        self.assertLess(context.index("CAMPAIGN RULES"), context.index("Instruction from validator"))
+
+    def test_reasoner_directive_carries_the_campaign(self) -> None:
+        """reasoner.md requires an objective; until now nothing supplied one."""
+
+        orchestration = _load("loam_campaign_reasoner_inject")
+        registry = orchestration.agent_registry({"repo_root": str(ROOT)})
+        context = orchestration.campaign_context({"repo_root": str(ROOT), "loam_campaign": CAMPAIGN})
+        directive = orchestration._reasoner_directive(
+            "plan-1",
+            [{"hypothesis_id": "h-1", "status": "supported", "evidence_score": 0.5, "summary": "Report."}],
+            registry,
+            context,
+        )
+
+        self.assertIn("EGFR", directive)
+        # Asserted inside the JSON block, because the surrounding prose names
+        # "agent_definition" before it appears as a key.
+        block = next(line for line in directive.splitlines() if '"agent_definition"' in line and line.startswith("{"))
+        self.assertLess(block.index('"campaign"'), block.index('"agent_definition"'))
+        self.assertNotIn("EXACTLY ONE fold", directive)  # code-generator scope only
+
+
+class HypothesisBlockExtractionTests(unittest.TestCase):
+    def test_campaign_specific_protocol_moved_out_of_the_hook(self) -> None:
+        orchestration = _load("loam_campaign_extraction")
+        block = orchestration._hypothesis_block({"hypothesis_id": "h-1", "content": "A claim."})
+
+        self.assertIn("A claim.", block)
+        # Kept: campaign-independent, and backed by _SCRUBBERS.
+        self.assertIn("NEVER fold, score, or reuse", block)
+        self.assertIn("complete assignment", block)
+        # Moved to .loam/rules/fold-protocol.md.
+        self.assertNotIn("EXACTLY ONE fold", block)
+        self.assertNotIn("ipTM", block)
 
 
 if __name__ == "__main__":
