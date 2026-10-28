@@ -30,6 +30,11 @@ MAX_HYPOTHESIS_CHARS = 4_000
 # Bound on an injected agent definition. The checked-in prompts are ~4-10 KB;
 # this leaves headroom while keeping a runaway edit out of every child context.
 MAX_AGENT_PROMPT_CHARS = 24_000
+# Campaign context competes with the hypothesis for the front of a validator's
+# payload (see `_hypothesis_block`), so both halves are bounded tightly.
+MAX_CAMPAIGN_CHARS = 4_000
+MAX_RULES_CHARS = 4_000
+RULE_TIERS = ("validator", "code-generator", "reasoner")
 # Tools of the hpc-deployment MCP server a generated-mode code-generator may use.
 HPC_TOOLS = ("run_code", "run_batch", "batch_status", "list_batches", "register_tool", "list_tools", "inspect_filesystem")
 _LOAM_TAG = re.compile(r"\[loam-[a-z-]+=[^\]]*\]")
@@ -92,8 +97,12 @@ def _front_matter(path: Path) -> dict[str, str]:
     raise ValueError(f"agent prompt has unterminated front matter: {path}")
 
 
-def _prompt_body(path: Path) -> str:
-    """Return the agent prompt with its front matter removed, bounded in size."""
+def _prompt_body(path: Path, limit: int = MAX_AGENT_PROMPT_CHARS) -> str:
+    """Return a front-matter document's body, bounded in size.
+
+    Shared by the agent prompts and the campaign/rules files, which use the same
+    `---` front matter followed by prose.
+    """
 
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -104,7 +113,7 @@ def _prompt_body(path: Path) -> str:
                 break
         else:
             raise ValueError(f"agent prompt has unterminated front matter: {path}")
-    return "\n".join(lines).strip()[:MAX_AGENT_PROMPT_CHARS]
+    return "\n".join(lines).strip()[:limit]
 
 
 def agent_registry(payload: Mapping[str, Any]) -> dict[str, AgentSpec]:
@@ -132,6 +141,117 @@ def agent_registry(payload: Mapping[str, Any]) -> dict[str, AgentSpec]:
             prompt_body=_prompt_body(path),
         )
     return registry
+
+
+@dataclass(frozen=True)
+class RuleSpec:
+    """One campaign rules file: policy text plus the tiers it applies to."""
+
+    name: str
+    scopes: frozenset[str]
+    body: str
+    # Advisory note naming the `tool_policy` clause that actually enforces this
+    # rule, when one exists. Injected text cannot enforce anything on its own
+    # (see `_SCRUBBERS`, which exists because it could not), so a rule that must
+    # hold needs a veto in `pre-tool.py`; recording which keeps the distinction
+    # between "stated" and "enforced" visible instead of implied.
+    enforced_by: str = ""
+
+
+@dataclass(frozen=True)
+class CampaignContext:
+    """The invariant half of a campaign's context: its goal and its rules.
+
+    The evolving half -- current state -- is not here. It already reaches the
+    model as the reasoner brief and the reconciled findings the recall hooks
+    inject.
+    """
+
+    goal_name: str
+    goal: str
+    rules: tuple[RuleSpec, ...] = ()
+
+    def rules_for(self, tier: str) -> tuple[RuleSpec, ...]:
+        return tuple(rule for rule in self.rules if tier in rule.scopes)
+
+
+def _campaign_dir(payload: Mapping[str, Any]) -> Path:
+    return Path(_text(payload.get("repo_root")) or ".") / ".loam" / "campaigns"
+
+
+def _rules_dir(payload: Mapping[str, Any]) -> Path:
+    return Path(_text(payload.get("repo_root")) or ".") / ".loam" / "rules"
+
+
+def _scopes(value: str, path: Path) -> frozenset[str]:
+    """Parse `scope:` into the tiers a rule reaches.
+
+    Space- or comma-separated tier names, or `all`. There is deliberately no
+    `both`: with three tiers it names no particular two.
+    """
+
+    parts = [part for part in value.replace(",", " ").split() if part]
+    if parts == ["all"]:
+        return frozenset(RULE_TIERS)
+    unknown = sorted({part for part in parts if part not in RULE_TIERS})
+    if unknown:
+        raise ValueError(f"rules file has unknown scope {unknown}, expected {list(RULE_TIERS)} or all: {path}")
+    return frozenset(parts)
+
+
+def _rule_spec(name: str, path: Path) -> RuleSpec:
+    front_matter = _front_matter(path)
+    if front_matter.get("name") != name:
+        raise ValueError(f"rules file name mismatch: {path}")
+    # Required rather than defaulted to `all`: a rule that silently reached a
+    # tier it was not written for would be read as authoritative there.
+    scope = _text(front_matter.get("scope"))
+    if not scope:
+        raise ValueError(f"rules file must declare a scope ({'|'.join(RULE_TIERS)}, or all): {path}")
+    return RuleSpec(
+        name=name,
+        scopes=_scopes(scope, path),
+        body=_prompt_body(path, MAX_RULES_CHARS),
+        enforced_by=_text(front_matter.get("enforced_by")),
+    )
+
+
+def campaign_context(payload: Mapping[str, Any]) -> CampaignContext | None:
+    """Load the campaign goal and rules named by the profile's `campaign:` block.
+
+    `None` means the profile declares no campaign context. A named-but-missing or
+    malformed file raises instead: the point of the block is that every reasoning
+    tier knows what the campaign is for, and a run that quietly lost its
+    objective while still looking governed is the failure this avoids. The raise
+    surfaces through the calling hook's handler as a logged hook failure.
+    """
+
+    campaign = payload.get("loam_campaign")
+    if not isinstance(campaign, Mapping):
+        return None
+    goal_name = _text(campaign.get("goal"))
+    if not goal_name:
+        return None
+    goal_path = _campaign_dir(payload) / f"{goal_name}.md"
+    if not goal_path.is_file():
+        raise FileNotFoundError(f"campaign goal file not found: {goal_path}")
+    if _front_matter(goal_path).get("name") != goal_name:
+        raise ValueError(f"campaign goal name mismatch: {goal_path}")
+    raw_rules = campaign.get("rules")
+    rules: list[RuleSpec] = []
+    for item in raw_rules if isinstance(raw_rules, list) else []:
+        name = _text(item)
+        if not name:
+            continue
+        path = _rules_dir(payload) / f"{name}.md"
+        if not path.is_file():
+            raise FileNotFoundError(f"campaign rules file not found: {path}")
+        rules.append(_rule_spec(name, path))
+    return CampaignContext(
+        goal_name=goal_name,
+        goal=_prompt_body(goal_path, MAX_CAMPAIGN_CHARS),
+        rules=tuple(rules),
+    )
 
 
 def _read_rows(path: Path) -> list[dict[str, Any]]:
