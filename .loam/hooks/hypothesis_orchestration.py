@@ -313,12 +313,15 @@ def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
-def _layout_block(base: str, run_id: str, remote: bool = False) -> str:
+def _layout_block(base: str, run_id: str, remote: bool = False, batch_root: str = "",
+                  plan_id: str = "", hypothesis_id: str = "") -> str:
     """Where a child's files go in its hypothesis workspace (hypothesis_workspace.py).
 
     On HPC the stop hook cannot list the run's outputs, so a remote child is
     also told to report them as a LOAM_MANIFEST block, which
-    hypothesis_workspace.remote_manifest parses from its final report.
+    hypothesis_workspace.remote_manifest parses from its final report. With a
+    batch root it is also told how to name a run_batch and how to harvest its
+    results into outputs/rM, which run_batch alone does not do.
     """
 
     if not run_id:
@@ -329,11 +332,21 @@ def _layout_block(base: str, run_id: str, remote: bool = False) -> str:
         f"- result files: {base}/outputs/{run_id}/",
         f"- temporary files: {base}/scratch/{run_id}/",
         f"- inputs: read from {base}/data/ and never write there",
-        "- earlier results of OTHER hypotheses: readable only from their completed runs' outputs/rK/; "
-        "Loam records each such read as an input of your run",
+        "- earlier results of OTHER runs (this hypothesis's or another's): readable only from their "
+        "completed runs' outputs/rK/; Loam records each such read as an input of your run",
         "Write nothing anywhere else, and never /tmp: /tmp is local to one node and the next tool call "
         "may run on another. Other runs' outputs are frozen; do not modify them.",
     ]
+    if remote and batch_root:
+        prefix = hypothesis_workspace.batch_prefix(hypothesis_id, run_id)
+        labels = hypothesis_workspace.batch_labels(plan_id, hypothesis_id, run_id)
+        lines += [
+            f"RUN_BATCH (if you use it): pass batch_id='{prefix}<name>' and labels={json.dumps(labels)}. "
+            "run_batch writes its results to the shared batch folder, not to your outputs. Poll batch_status "
+            "until the batch is complete, then copy its results into your outputs by running this program "
+            "with run_code (set batch_id first), BEFORE the output manifest step:",
+            hypothesis_workspace.harvest_program(batch_root, f"{base}/outputs/{run_id}"),
+        ]
     if remote:
         lines += [
             "OUTPUT MANIFEST (required): as your LAST tool call, run this program with run_code, then paste its "
@@ -541,13 +554,14 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
     # leaves no reserved runs behind.
     run_ids, layout_base = _reserve_child_runs(payload, execution, workdir, plan_id, hypothesis_id, len(parsed))
     remote = isinstance(execution, Mapping) and _text(execution.get("mode")) == "remote_mcp"
+    batch_root = hypothesis_workspace.batch_root_for(execution if isinstance(execution, Mapping) else None) if remote else ""
     out = []
     for (goal, instruction), run_id in zip(parsed, run_ids):
         out.append(
             {
                 "goal": _child_goal(hypothesis, goal, plan_id, hypothesis_id, run_id),
                 "context": _generated_child_context(
-                    instruction, execution, workdir, hypothesis, _layout_block(layout_base, run_id, remote)
+                    instruction, execution, workdir, hypothesis, _layout_block(layout_base, run_id, remote, batch_root, plan_id, hypothesis_id)
                 ),
                 "role": "leaf",
             }

@@ -410,6 +410,39 @@ def _layout_problem(parts: list[str], run_id: str) -> str | None:
     return f"{head} is not part of the workspace layout; write into {own}"
 
 
+def batch_root_for(execution: Mapping[str, Any] | None) -> str:
+    """Where the HPC server keeps batches: execution.batch_root, else <workdir_root>/../batches.
+
+    The server's HPC_BATCH_ROOT defaults to <HPC_BASE_DIR>/batches, and
+    workdir_root is normally <HPC_BASE_DIR>/work, hence the default.
+    """
+
+    if not isinstance(execution, Mapping):
+        return ""
+    configured, workdir_root = _text(execution.get("batch_root")), _text(execution.get("workdir_root"))
+    if configured:
+        return os.path.normpath(configured)
+    return os.path.join(os.path.dirname(os.path.normpath(workdir_root)), "batches") if workdir_root else ""
+
+
+def batch_prefix(hypothesis_id: str, run_id: str) -> str:
+    """The prefix a run's batch ids must start with.
+
+    Batch ids are global on the HPC server, so this names the owner. Long
+    hypothesis ids are shortened with a digest to stay within the server's
+    64-character batch id limit.
+    """
+
+    short = hypothesis_id if len(hypothesis_id) <= 24 else f"{hypothesis_id[:15]}-{hashlib.sha256(hypothesis_id.encode()).hexdigest()[:8]}"
+    return f"{short}-{run_id}-"
+
+
+def batch_labels(plan_id: str, hypothesis_id: str, run_id: str) -> dict[str, str]:
+    """The labels a run's batches must carry; the server refuses to resume a batch under other labels."""
+
+    return {"plan_id": plan_id, "hypothesis_id": hypothesis_id, "run": run_id}
+
+
 class _Scope:
     """The places one code-generator may touch, locally and on HPC."""
 
@@ -436,6 +469,11 @@ class _Scope:
         workdir_root = _text(execution.get("workdir_root"))
         self.remote_base = self._canonical(os.path.normpath(workdir_root)) if workdir_root else ""
         self.remote_root = os.path.join(self.remote_base, self.plan_id, self.hypothesis_id) if self.remote_base else ""
+        batch_root = batch_root_for(execution)
+        self.batch_root = self._canonical(batch_root) if batch_root else ""
+        # This run's own batches, as recorded by capture_code.
+        run = read_json(self.root / "runs" / self.run_id / RUN_FILE) if self.run_id else {}
+        self.batches = {b for b in run.get("batches", []) if isinstance(b, str)}
 
     def _canonical(self, path: str) -> str:
         """Rewrite an aliased HPC spelling (/lus/flare/projects/X) to its canonical one (/flare/X)."""
@@ -523,6 +561,9 @@ class _Scope:
                 return f"pass {label}={self.remote_root}/scratch/{self.run_id} (your run's HPC folder)"
             return None
         path = self._canonical(os.path.normpath(raw if os.path.isabs(raw) else os.path.join(self.remote_root, raw)))
+        in_batches = _within(path, self.batch_root) if self.batch_root else None
+        if in_batches is not None:
+            return self._batch_path(in_batches, raw, writing)
         parts = _within(path, self.remote_root)
         if parts is None:
             foreign = _within(path, self.remote_base)
@@ -533,13 +574,40 @@ class _Scope:
             return f"{label} {raw} is outside this hypothesis's HPC workspace {self.remote_root}" if required else None
         return self._own(parts, raw, writing)
 
+    def _batch_path(self, parts: list[str], raw: str, writing: bool) -> str | None:
+        """A path in the server's shared batch folder; ``parts`` are relative to it.
+
+        Batches of every run of every hypothesis share that folder. A child may
+        read only its own run's batches (and their registry entries); another
+        run's batch results are read from that run's outputs/rK/, where they
+        were harvested, checked and hashed.
+        """
+
+        if writing:
+            return f"{raw} is in the shared batch folder; write into outputs/{self.run_id}/ or scratch/{self.run_id}/"
+        batch_id = parts[0] if parts else ""
+        if batch_id == "registry":
+            batch_id = parts[1][: -len(".json")] if len(parts) > 1 and parts[1].endswith(".json") else ""
+        if batch_id and batch_id in self.batches:
+            return None
+        return (
+            f"{raw}: batch {batch_id or '(all)'} is not one of your run's batches; "
+            "read another run's batch results from its outputs/rK/ instead"
+        )
+
+    def _spellings(self, path: str) -> set[str]:
+        """``path`` and its aliased spellings."""
+
+        spellings = {path}
+        for alias, canonical in self.aliases:
+            if path == canonical or path.startswith(canonical + "/"):
+                spellings.add(alias + path[len(canonical):])
+        return spellings
+
     def _code_bases(self) -> set[str]:
         """Every spelling of the workspaces roots that code might use."""
 
-        bases = {self.real_base, str(self.base), self.remote_base}
-        for alias, canonical in self.aliases:
-            if self.remote_base == canonical or self.remote_base.startswith(canonical + "/"):
-                bases.add(alias + self.remote_base[len(canonical):])
+        bases = {self.real_base, str(self.base)} | (self._spellings(self.remote_base) if self.remote_base else set())
         return bases - {""}
 
     def code(self, text: str) -> str | None:
@@ -562,6 +630,13 @@ class _Scope:
                     where = "another hypothesis's workspace"
                 if problem:
                     return f"code refers to {where}: {problem}"
+        for base in self._spellings(self.batch_root) if self.batch_root else ():
+            pattern = re.escape(base.rstrip("/")) + r"/([A-Za-z0-9._-]+)((?:/[^\s'\"(),;\]]*)?)"
+            for match in re.finditer(pattern, text):
+                parts = [match.group(1), *(p for p in match.group(2).split("/") if p)]
+                problem = self._batch_path(parts, match.group(0), writing=False)
+                if problem:
+                    return f"code refers to a batch: {problem}"
         return None
 
     # shell ---------------------------------------------------------------------
@@ -670,6 +745,19 @@ def _violation(payload: Mapping[str, Any], scope: _Scope) -> str | None:
         return scope.remote(_text(args.get("workdir")), writing=True, required=True, label="workdir") or scope.code(
             _text(args.get("payload"))
         )
+    if function == "run_batch":
+        problem = _batch_identity(args, scope)
+        if problem:
+            return problem
+    if function == "batch_status":
+        batch_id = _text(args.get("batch_id"))
+        if batch_id not in scope.batches:
+            return f"batch {batch_id or '(none)'} is not one of run {scope.run_id}'s batches"
+        return None
+    if function == "list_batches":
+        if _text(args.get("hypothesis_id")) != scope.hypothesis_id or _text(args.get("plan_id")) not in {"", scope.plan_id}:
+            return f"pass hypothesis_id={scope.hypothesis_id!r} (and plan_id={scope.plan_id!r}) to list only this hypothesis's batches"
+        return None
     if function in {"run_batch", "register_tool"}:
         for key in ("script_path", "inputs_path"):
             if _text(args.get(key)):
@@ -679,6 +767,26 @@ def _violation(payload: Mapping[str, Any], scope: _Scope) -> str | None:
         return None
     if function == "inspect_filesystem":
         return scope.remote(_text(args.get("path")), writing=False)
+    return None
+
+
+def _batch_identity(args: Mapping[str, Any], scope: _Scope) -> str | None:
+    """A run_batch call must name its owner: a prefixed batch_id and matching labels.
+
+    The batch id is how Loam records the batch in run.json (the hook sees the
+    call, not its result), and the labels make the server itself refuse to
+    resume the batch under another hypothesis.
+    """
+
+    prefix = batch_prefix(scope.hypothesis_id, scope.run_id)
+    labels = batch_labels(scope.plan_id, scope.hypothesis_id, scope.run_id)
+    batch_id = _text(args.get("batch_id"))
+    if not batch_id.startswith(prefix) or len(batch_id) == len(prefix):
+        return f"pass batch_id='{prefix}<name>' so the batch is recorded as part of run {scope.run_id}"
+    given = args.get("labels")
+    given = given if isinstance(given, Mapping) else {}
+    if any(_text(given.get(key)) != value for key, value in labels.items()):
+        return f"pass labels={json.dumps(labels)} (other keys may be added)"
     return None
 
 
@@ -772,6 +880,8 @@ def capture_code(payload: Mapping[str, Any], start: Mapping[str, Any] | None) ->
                 source.write_text(code + ("" if code.endswith("\n") else "\n"), encoding="utf-8")
                 entry["src"] = f"src/{source.name}"
             run["calls"] = [*run.get("calls", []), entry]
+            if _hpc_function(entry["tool"]) == "run_batch" and entry.get("batch_id"):
+                run["batches"] = sorted({*run.get("batches", []), entry["batch_id"]})
         inputs = list(run.get("inputs", []))
         known = {(i.get("plan_id"), i.get("hypothesis_id"), i.get("run"), i.get("path")) for i in inputs}
         for read in scope.reads:
@@ -812,7 +922,11 @@ def _call_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
     elif tool == "write_file":
         entry.update(path=_text(args.get("path")), sha256=hashlib.sha256(_text(args.get("content")).encode("utf-8")).hexdigest())
     elif function in {"run_batch", "register_tool"}:
-        entry.update({key: _text(args.get(key)) for key in ("script_path", "inputs_path", "tool", "name") if _text(args.get(key))})
+        # The call's own `tool` argument names a registered HPC tool; keep it
+        # apart from entry["tool"], the Hermes tool that was called.
+        fields = {"script_path": "script_path", "inputs_path": "inputs_path", "tool": "registered_tool",
+                  "name": "name", "batch_id": "batch_id"}
+        entry.update({out: _text(args.get(key)) for key, out in fields.items() if _text(args.get(key))})
     else:
         return None
     return entry
@@ -887,6 +1001,34 @@ def manifest_program(outputs_dir: str) -> str:
         "        print(json.dumps({'path': os.path.relpath(path, root), 'sha256': digest.hexdigest(), "
         "'bytes': os.path.getsize(path)}))",
         "print('END_LOAM_MANIFEST')",
+    ))
+
+
+def harvest_program(batch_root: str, outputs_dir: str) -> str:
+    """The Python that copies one finished batch's results into a run's outputs.
+
+    Each row folder's top level holds the promoted outputs of its successful
+    attempt plus its stdout/stderr/status; failed attempts stay under
+    attempt_*/, and lease.json / done are bookkeeping, so those are skipped.
+    The child sets ``batch_id`` and runs it with run_code after batch_status
+    reports the batch complete. Lands in <outputs_dir>/<batch_id>/run_<id>/.
+    """
+
+    return "\n".join((
+        "import os, shutil",
+        "batch_id = 'SET_YOUR_BATCH_ID'",
+        f"source = os.path.join({batch_root!r}, batch_id)",
+        f"target = os.path.join({outputs_dir!r}, batch_id)",
+        "for row in sorted(os.listdir(source)):",
+        "    if not row.startswith('run_'):",
+        "        continue",
+        "    for name in sorted(os.listdir(os.path.join(source, row))):",
+        "        if name.startswith('attempt_') or name in ('lease.json', 'done'):",
+        "            continue",
+        "        src, dst = os.path.join(source, row, name), os.path.join(target, row, name)",
+        "        os.makedirs(os.path.dirname(dst), exist_ok=True)",
+        "        (shutil.copytree if os.path.isdir(src) else shutil.copy2)(src, dst)",
+        "print('harvested', batch_id, 'into', target)",
     ))
 
 
@@ -1064,6 +1206,8 @@ def on_agent_stopped(
         )
         if remote and run is not None and run.get("state") == "completed" and run.get("manifest_status") not in VERIFIED_MANIFESTS:
             _launch_verifier(payload, start, root, ["fill", "--run", run_id])
+        if remote and run is not None and run.get("batches"):
+            _launch_verifier(payload, start, root, ["batches", "--run", run_id])
         return []
     if role == "hypothesis-validator" and completion is not None:
         problems = close_workspace(root, completion, remote)
@@ -1140,6 +1284,25 @@ def manifest_changes(recorded: list[dict[str, Any]], fresh: list[dict[str, Any]]
     problems += [f"{path} changed after run {run_id} finished" for path in sorted(set(before) & set(after)) if before[path] != after[path]]
     problems += [f"{path} was added after run {run_id} finished" for path in sorted(set(after) - set(before))]
     return problems
+
+
+def record_batch_check(root: Path, run_id: str, unfinished: list[str]) -> None:
+    """Store which of a run's batches were still unfinished when the run closed.
+
+    The run stays ``completed`` (Loam's completion signals are unchanged);
+    the flag and a violation per batch make the incomplete harvest visible.
+    """
+
+    with _locked(root):
+        path = root / "runs" / run_id / RUN_FILE
+        run = read_json(path)
+        run.update(batches_unfinished=unfinished, batches_checked_at=_timestamp())
+        _write_json(path, run)
+        for batch_id in unfinished:
+            _append_log_unlocked(
+                root, "violation",
+                {"run": run_id, "what": f"batch {batch_id} was unfinished when run {run_id} closed", "blocked": False},
+            )
 
 
 def log_violations(root: Path, problems: list[str], run_id: str = "") -> None:

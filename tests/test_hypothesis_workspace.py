@@ -531,14 +531,17 @@ class WorkspacePolicyTests(_OrchestrationHelpers, unittest.TestCase):
     def test_batch_scripts_must_live_in_the_hypothesis_hpc_folder(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             orchestration, payload, _ = self._child(Path(tmp), mode="remote_mcp")
+            # A correctly named batch (group 6), so these calls reach the path checks.
+            owned = {"batch_id": "h-1-r1-fold", "labels": {"plan_id": "plan-1", "hypothesis_id": "h-1", "run": "r1"}}
             ok = self._call(
                 orchestration, payload, "mcp_hpc_run_batch",
-                script_path=f"{self.REMOTE}/src/fold.py", inputs_path=f"{self.REMOTE}/scratch/r1/rows.jsonl",
+                script_path=f"{self.REMOTE}/src/fold.py", inputs_path=f"{self.REMOTE}/scratch/r1/rows.jsonl", **owned,
             )
             self.assertIsNone(ok)
-            self.assertIsNone(self._call(orchestration, payload, "mcp_hpc_run_batch", tool="chai_fold", inputs_path=f"{self.REMOTE}/data/rows.jsonl"))
+            self.assertIsNone(self._call(orchestration, payload, "mcp_hpc_run_batch", tool="chai_fold",
+                                         inputs_path=f"{self.REMOTE}/data/rows.jsonl", **owned))
             self.assertBlocked(
-                self._call(orchestration, payload, "mcp_hpc_run_batch", script_path="/home/me/fold.py"), "outside"
+                self._call(orchestration, payload, "mcp_hpc_run_batch", script_path="/home/me/fold.py", **owned), "outside"
             )
             self.assertBlocked(
                 self._call(orchestration, payload, "mcp_hpc_register_tool", name="t", script_path="/lus/campaign/work/plan-1/h-2/src/t.py"),
@@ -554,7 +557,8 @@ class WorkspacePolicyTests(_OrchestrationHelpers, unittest.TestCase):
                 self._call(orchestration, payload, "mcp_hpc_inspect_filesystem", operation="cat", path="/lus/campaign/work/plan-1/h-2/x"),
                 "another hypothesis",
             )
-            self.assertIsNone(self._call(orchestration, payload, "mcp_hpc_batch_status", batch_id="b-1"))
+            # batch_status is limited to the run's own batches (group 6); none recorded yet.
+            self.assertBlocked(self._call(orchestration, payload, "mcp_hpc_batch_status", batch_id="b-1"), "not one of run r1's batches")
             self.assertIsNone(self._call(orchestration, payload, "mcp_hpc_list_tools"))
 
     # capture ------------------------------------------------------------------------
@@ -1153,6 +1157,192 @@ class WorkspaceVerificationTests(_StopHelpers, unittest.TestCase):
                                       "/lus/campaign/work/plan-1/h-1", "--mcp-url", "http://x/mcp"])
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(out.getvalue())["result"], "recorded")
+
+
+
+class WorkspaceBatchTests(_StopHelpers, unittest.TestCase):
+    """Group 6: run_batch naming, batch-folder reads, harvest into outputs/rM, unfinished batches."""
+
+    BATCHES = "/lus/campaign/batches"  # default: <workdir_root>/../batches
+    OWNED = {"batch_id": "h-1-r1-fold", "labels": {"plan_id": "plan-1", "hypothesis_id": "h-1", "run": "r1"}}
+
+    def _child(self, tmp: Path):
+        orchestration = self._orchestration()
+        payload = self._payload(tmp)
+        root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold many."])
+        self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+        return orchestration, payload, root, tasks[0]
+
+    def _policy(self, orchestration, base: dict, tool_name: str, /, session: str = "child-1", **arguments):
+        # Positional-only, so tool arguments named `payload` or `tool` don't collide.
+        return orchestration.workspace_policy({**base, "session_id": session, "tool_name": tool_name, "arguments": arguments})
+
+    def _submit(self, orchestration, payload: dict, **extra) -> None:
+        """An allowed run_batch, captured, so the batch is recorded on run r1."""
+
+        call = {**payload, "session_id": "child-1", "tool_name": "mcp_hpc_run_batch",
+                "arguments": {"tool": "chai_fold", "inputs_path": f"{self.REMOTE}/h-1/scratch/r1/rows.jsonl", **self.OWNED, **extra}}
+        self.assertIsNone(orchestration.workspace_policy(call))
+        orchestration.workspace_capture(call)
+
+    # naming -----------------------------------------------------------------------
+    def test_batch_root_and_prefix(self) -> None:
+        workspace = _load("loam_workspace_batch_naming")
+        self.assertEqual(workspace.batch_root_for({"workdir_root": "/flare/P/u/hpc-run/work/"}), "/flare/P/u/hpc-run/batches")
+        self.assertEqual(workspace.batch_root_for({"workdir_root": "/x/work", "batch_root": "/y/b/"}), "/y/b")
+        self.assertEqual(workspace.batch_root_for({}), "")
+        self.assertEqual(workspace.batch_prefix("h-1", "r3"), "h-1-r3-")
+        long = workspace.batch_prefix("hypothesis_" + "x" * 60, "r12")
+        self.assertLessEqual(len(long) + 20, 64)  # leaves room for a name under the server's 64-char limit
+        self.assertNotEqual(long, workspace.batch_prefix("hypothesis_" + "y" * 60, "r12"))
+
+    def test_run_batch_must_name_its_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, _, _ = self._child(Path(tmp))
+            inputs = {"tool": "chai_fold", "inputs_path": f"{self.REMOTE}/h-1/scratch/r1/rows.jsonl"}
+            missing = self._policy(orchestration, payload, "mcp_hpc_run_batch", **inputs)
+            self.assertIn("pass batch_id='h-1-r1-<name>'", missing["message"])
+            wrong = self._policy(orchestration, payload, "mcp_hpc_run_batch", **inputs, batch_id="h-2-r1-fold", labels=self.OWNED["labels"])
+            self.assertIn("h-1-r1-", wrong["message"])
+            bare = self._policy(orchestration, payload, "mcp_hpc_run_batch", **inputs, batch_id="h-1-r1-", labels=self.OWNED["labels"])
+            self.assertIn("pass batch_id", bare["message"])
+            unlabeled = self._policy(orchestration, payload, "mcp_hpc_run_batch", **inputs, batch_id="h-1-r1-fold")
+            self.assertIn('pass labels={"plan_id": "plan-1", "hypothesis_id": "h-1", "run": "r1"}', unlabeled["message"])
+            extra = {**self.OWNED["labels"], "note": "sweep"}
+            self.assertIsNone(self._policy(orchestration, payload, "mcp_hpc_run_batch", **inputs, batch_id="h-1-r1-fold", labels=extra))
+
+    def test_submitted_batch_is_recorded_and_its_status_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root, _ = self._child(Path(tmp))
+            self.assertIn("not one of run r1's batches", self._policy(orchestration, payload, "mcp_hpc_batch_status", batch_id="h-1-r1-fold")["message"])
+            self._submit(orchestration, payload)
+            self._submit(orchestration, payload)  # a resume: recorded once
+            run = self._run(root, "r1")
+            self.assertEqual(run["batches"], ["h-1-r1-fold"])
+            self.assertEqual(run["calls"][-1]["batch_id"], "h-1-r1-fold")
+            # The registered tool must not overwrite the Hermes tool name.
+            self.assertEqual((run["calls"][-1]["tool"], run["calls"][-1]["registered_tool"]), ("mcp_hpc_run_batch", "chai_fold"))
+            self.assertIsNone(self._policy(orchestration, payload, "mcp_hpc_batch_status", batch_id="h-1-r1-fold"))
+            self.assertIn("not one of run r1's batches", self._policy(orchestration, payload, "mcp_hpc_batch_status", batch_id="h-2-r1-x")["message"])
+
+    def test_list_batches_only_for_this_hypothesis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, _, _ = self._child(Path(tmp))
+            self.assertIn("pass hypothesis_id='h-1'", self._policy(orchestration, payload, "mcp_hpc_list_batches")["message"])
+            self.assertIn("pass hypothesis_id", self._policy(orchestration, payload, "mcp_hpc_list_batches", hypothesis_id="h-2")["message"])
+            self.assertIn("pass hypothesis_id", self._policy(orchestration, payload, "mcp_hpc_list_batches", hypothesis_id="h-1", plan_id="plan-9")["message"])
+            self.assertIsNone(self._policy(orchestration, payload, "mcp_hpc_list_batches", hypothesis_id="h-1"))
+            self.assertIsNone(self._policy(orchestration, payload, "mcp_hpc_list_batches", hypothesis_id="h-1", plan_id="plan-1"))
+
+    # the shared batch folder --------------------------------------------------------
+    def test_batch_folder_reads_are_limited_to_own_batches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, _, _ = self._child(Path(tmp))
+            payload["loam_execution"]["workdir_aliases"] = {"/alias/campaign": "/lus/campaign"}
+            self._submit(orchestration, payload)
+            inspect = "mcp_hpc_inspect_filesystem"
+            for path in (f"{self.BATCHES}/h-1-r1-fold/run_0/stdout.txt", f"{self.BATCHES}/registry/h-1-r1-fold.json",
+                         "/alias/campaign/batches/h-1-r1-fold"):
+                self.assertIsNone(self._policy(orchestration, payload, inspect, operation="ls", path=path), path)
+            for path in (f"{self.BATCHES}/h-2-r1-x/run_0", f"{self.BATCHES}/registry/h-2-r1-x.json", self.BATCHES,
+                         f"{self.BATCHES}/registry"):
+                self.assertIn("not one of your run's batches", self._policy(orchestration, payload, inspect, operation="ls", path=path)["message"], path)
+            workdir = self._policy(orchestration, payload, "mcp_hpc_run_code", payload="print(1)", workdir=f"{self.BATCHES}/h-1-r1-fold")
+            self.assertIn("shared batch folder", workdir["message"])
+            other = f"open('{self.BATCHES}/h-2-r1-x/run_0/scores.csv')"
+            blocked = self._policy(orchestration, payload, "mcp_hpc_run_code", payload=other, workdir=f"{self.REMOTE}/h-1/scratch/r1")
+            self.assertIn("code refers to a batch", blocked["message"])
+            own = f"open('{self.BATCHES}/h-1-r1-fold/run_0/scores.csv')"
+            self.assertIsNone(self._policy(orchestration, payload, "mcp_hpc_run_code", payload=own, workdir=f"{self.REMOTE}/h-1/scratch/r1"))
+
+    # harvest ------------------------------------------------------------------------
+    def test_child_is_told_how_to_name_and_harvest_batches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, _, task = self._child(Path(tmp))
+            context = task["context"]
+            self.assertIn("RUN_BATCH", context)
+            self.assertIn("batch_id='h-1-r1-<name>'", context)
+            self.assertIn('labels={"plan_id": "plan-1", "hypothesis_id": "h-1", "run": "r1"}', context)
+            self.assertIn(f"os.path.join({self.BATCHES!r}, batch_id)", context)
+            self.assertLess(context.index("RUN_BATCH"), context.index("OUTPUT MANIFEST"))
+            self.assertIn("this hypothesis's or another's", context)
+
+    def test_harvest_program_copies_promoted_outputs_only(self) -> None:
+        import subprocess
+
+        workspace = _load("loam_workspace_harvest")
+        with tempfile.TemporaryDirectory() as tmp:
+            batch = Path(tmp) / "batches" / "h-1-r1-fold"
+            for row in ("run_0", "run_1"):
+                folder = batch / row
+                (folder / "attempt_1").mkdir(parents=True)
+                (folder / "attempt_1" / "partial.cif").write_text("failed try")
+                (folder / "model").mkdir()
+                (folder / "model" / "fold.cif").write_text(f"data_{row}")
+                for name in ("scores.csv", "stdout.txt", "status.json", "input.json", "done", "lease.json"):
+                    (folder / name).write_text(name)
+            (batch / "batch.json").write_text("{}")
+            outputs = Path(tmp) / "work" / "plan-1" / "h-1" / "outputs" / "r1"
+            program = workspace.harvest_program(str(Path(tmp) / "batches"), str(outputs)).replace("SET_YOUR_BATCH_ID", "h-1-r1-fold")
+            subprocess.run([sys.executable, "-c", program], check=True, capture_output=True)
+            copied = sorted(p.relative_to(outputs).as_posix() for p in outputs.rglob("*") if p.is_file())
+            expected = sorted(f"h-1-r1-fold/{row}/{name}" for row in ("run_0", "run_1")
+                              for name in ("model/fold.cif", "scores.csv", "stdout.txt", "status.json", "input.json"))
+            self.assertEqual(copied, expected)
+
+    # unfinished batches ------------------------------------------------------------
+    def test_child_stop_with_batches_launches_the_batch_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, _, _ = self._child(Path(tmp))
+            payload["loam_workspace"].update(verifier_python="/venv/bin/python", verifier_mcp_url="http://x/mcp")
+            self._submit(orchestration, payload)
+            line = json.dumps({"path": "a.csv", "sha256": "a" * 64, "bytes": 1})
+            with patch("subprocess.Popen") as popen:
+                self._stop(orchestration, payload, "child-1", summary=f"LOAM_MANIFEST\n{line}\nEND_LOAM_MANIFEST")
+            commands = [call.args[0] for call in popen.call_args_list]
+            # The child reported its manifest, so only the batch check runs (no fill).
+            self.assertEqual([(c[2], c[c.index("--run") + 1]) for c in commands], [("batches", "r1")])
+
+    def test_verifier_flags_unfinished_batches(self) -> None:
+        verifier = _load("loam_verify_batches", VERIFIER)
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root, _ = self._child(Path(tmp))
+            self._submit(orchestration, payload)
+            self._submit(orchestration, payload, batch_id="h-1-r1-score")
+            self._submit(orchestration, payload, batch_id="h-1-r1-lost")
+            self._stop(orchestration, payload, "child-1")
+            statuses = {"h-1-r1-fold": {"complete": True, "ok": True}, "h-1-r1-score": {"complete": False, "unfinished": 3}}
+
+            def status(batch_id: str):
+                if batch_id not in statuses:
+                    raise ValueError(f"unknown batch_id {batch_id!r}")
+                return statuses[batch_id]
+
+            self.assertEqual(verifier.batches(root, "r1", status), ["h-1-r1-lost", "h-1-r1-score"])
+            run = self._run(root, "r1")
+            self.assertEqual((run["state"], run["batches_unfinished"]), ("completed", ["h-1-r1-lost", "h-1-r1-score"]))
+            self.assertIn("batches_checked_at", run)
+            violations = [e["what"] for e in self._log(root) if e["kind"] == "violation"]
+            self.assertTrue(any("could not read batch h-1-r1-lost" in v for v in violations))
+            self.assertTrue(any("batch h-1-r1-score was unfinished" in v for v in violations))
+            self.assertEqual(sys.modules["hypothesis_workspace"].verify_log(root), [])
+
+    def test_verifier_cli_runs_batches(self) -> None:
+        import contextlib
+        import io
+
+        verifier = _load("loam_verify_batches_cli", VERIFIER)
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root, _ = self._child(Path(tmp))
+            self._submit(orchestration, payload)
+            self._stop(orchestration, payload, "child-1")
+            out = io.StringIO()
+            with patch.object(verifier, "mcp_batch_status", return_value=lambda batch_id: {"complete": True}), \
+                    contextlib.redirect_stdout(out):
+                code = verifier.main(["batches", "--workspace", str(root), "--run", "r1",
+                                      "--remote-root", f"{self.REMOTE}/h-1", "--mcp-url", "http://x/mcp"])
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out.getvalue())["unfinished"], [])
 
 
 if __name__ == "__main__":

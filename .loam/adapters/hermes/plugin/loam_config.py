@@ -79,6 +79,9 @@ class ExecutionConfig:
     # on Aurora /lus/flare/projects/X and /flare/X are one directory. The
     # workspace checks compare HPC paths as text, so they need to be told.
     workdir_aliases: tuple[tuple[str, str], ...] = ()
+    # Where the HPC server keeps run_batch results (its HPC_BATCH_ROOT).
+    # Empty: <workdir_root>/../batches (hypothesis_workspace.batch_root_for).
+    batch_root: str = ""
 
 
 _EXECUTION_MODES = {"remote_mcp", "local"}
@@ -164,6 +167,7 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
         tool_prefix=_clean_text(raw.get("tool_prefix")),
         setup=_clean_text(raw.get("setup")),
         workdir_aliases=_aliases(raw.get("workdir_aliases")),
+        batch_root=_clean_text(raw.get("batch_root")),
     )
     if mode == "local":
         return ExecutionConfig(mode=mode, runtime=_clean_text(raw.get("runtime")), **extras)
@@ -410,6 +414,8 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
         }
         if execution.workdir_aliases:
             values["loam_execution"]["workdir_aliases"] = dict(execution.workdir_aliases)
+        if execution.batch_root:
+            values["loam_execution"]["batch_root"] = execution.batch_root
     workspace = profile.workspace
     if workspace is not None:
         values["loam_workspace"] = {

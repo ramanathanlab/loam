@@ -73,6 +73,9 @@ profiles:
       input_schema: '{"payload": "str", "workdir": "str|None", "timeout": "float", "venv_path": "str|None"}'
       runtime: Aurora frameworks python 3.12 via EL
       workdir_root: /flare/<PROJECT>/<USER>/hpc-run/work
+      # Where the HPC server keeps run_batch results (its HPC_BATCH_ROOT).
+      # Default: <workdir_root>/../batches.
+      # batch_root: /flare/<PROJECT>/<USER>/hpc-run/batches
       # Other spellings of the same HPC directory (Aurora mounts Flare twice);
       # the workspace checks compare HPC paths as text.
       workdir_aliases:

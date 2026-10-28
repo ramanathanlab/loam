@@ -179,10 +179,20 @@ On HPC the same layout lives under `<execution.workdir_root>/<plan_id>/<hypothes
   `report` and audits the folder (log chain, strays, local outputs changed after
   freeze). Problems are logged and reported as a `workspace_violation` campaign
   row; nothing is repaired. The completion signal is unchanged.
+- **Batches.** `run_batch` writes to the server's shared batch folder
+  (`execution.batch_root`, default `<workdir_root>/../batches`), not to the run.
+  A child must name each batch `<hypothesis>-<run>-<name>` with labels
+  `{plan_id, hypothesis_id, run}`, so it is recorded in `run.json` `batches` and
+  the server refuses to resume it under another hypothesis. `batch_status` and
+  batch-folder reads are limited to the run's own batches. The child is given a
+  program that copies a finished batch into `outputs/rM/<batch_id>/`, so batch
+  results are hashed, frozen and shareable like any other output.
 - **HPC verifier.** The hooks can't reach HPC files. When configured,
   `.loam/reconcile/verify_workspace.py` is launched detached: `fill` hashes a
   remote run whose child reported no manifest (`recorded_by_loam`), and `recheck`
-  re-hashes completed remote runs at validator stop. It can also be run by hand.
+  re-hashes completed remote runs at validator stop, and `batches` flags a run's
+  batches that were still unfinished when it closed (`batches_unfinished`). It can
+  also be run by hand.
 
 ```yaml
     workspace:
@@ -193,6 +203,7 @@ On HPC the same layout lives under `<execution.workdir_root>/<plan_id>/<hypothes
       verifier_mcp_url: http://127.0.0.1:8000/mcp     # the HPC MCP server
     execution:
       workdir_root: /flare/<PROJECT>/<USER>/hpc-run/work
+      batch_root: ""         # default: <workdir_root>/../batches (the server's HPC_BATCH_ROOT)
       workdir_aliases:       # other spellings of the same HPC directory
         /lus/flare/projects/<PROJECT>: /flare/<PROJECT>
 ```
