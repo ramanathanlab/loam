@@ -18,7 +18,7 @@ from typing import Any
 _ADAPTER_DIR = Path(__file__).resolve().parent
 if str(_ADAPTER_DIR) not in sys.path:
     sys.path.insert(0, str(_ADAPTER_DIR))
-from loam_config import effective_profile, payload_values
+from loam_config import effective_profile, payload_values  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

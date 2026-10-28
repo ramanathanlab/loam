@@ -6,9 +6,7 @@ filesystem result. Run it only after the endpoint allocation/agent pool is up.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-import sys
 
 from fastmcp import Client
 

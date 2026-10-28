@@ -21,9 +21,7 @@ HOOKS = Path(__file__).resolve().parents[1] / "hooks"
 sys.path.insert(0, str(HOOKS))
 from ledger import append_record  # noqa: E402
 from protein_structure_metadata import (  # noqa: E402
-    CONTRACT_VERSION,
     SOURCE_RCSB_PDB,
-    SOURCE_UNIPROT,
     stable_id,
 )
 

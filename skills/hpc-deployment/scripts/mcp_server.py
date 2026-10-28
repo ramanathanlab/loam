@@ -14,7 +14,6 @@ import json
 import logging
 import os
 import signal
-import sys
 from contextlib import asynccontextmanager
 
 from academy.exchange import HttpExchangeFactory
