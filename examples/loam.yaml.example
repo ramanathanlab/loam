@@ -56,6 +56,15 @@ profiles:
       top_k: 3                # hypotheses handed to validators per round
       timeout_seconds: 600
 
+    # Pando-style folder per hypothesis, enforced by the hooks
+    # (.loam/README.md, "Hypothesis workspace"). Off unless enabled.
+    workspace:
+      enabled: false
+      strict: true
+      # Hashes remote outputs a child didn't report; needs fastmcp.
+      verifier_python: /ABS/PATH/TO/.loam-venv-312/bin/python
+      verifier_mcp_url: http://127.0.0.1:8000/mcp
+
     execution:
       mode: remote_mcp                    # or: local (for CAMPAIGN_TEST.md)
       tool_name: mcp__hpc__run_code
@@ -64,6 +73,10 @@ profiles:
       input_schema: '{"payload": "str", "workdir": "str|None", "timeout": "float", "venv_path": "str|None"}'
       runtime: Aurora frameworks python 3.12 via EL
       workdir_root: /flare/<PROJECT>/<USER>/hpc-run/work
+      # Other spellings of the same HPC directory (Aurora mounts Flare twice);
+      # the workspace checks compare HPC paths as text.
+      workdir_aliases:
+        /lus/flare/projects/<PROJECT>: /flare/<PROJECT>
       # Handed verbatim to every code-generator child. The child runs on the
       # HPC node and cannot see local files, so the activation recipe and every
       # tool command must be self-contained here. Use run_code SYNCHRONOUSLY for

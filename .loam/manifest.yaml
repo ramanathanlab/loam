@@ -7,8 +7,9 @@ wire_protocol:
   stdin: |
     One JSON object. Every payload contains `event` and `repo_root`; active Loam
     profiles additionally provide `workflow_id`, `loam_state_dir`, `loam_run_id`,
-    and `loam_execution`. Adapters add event-specific fields such as `tool_name`,
-    `arguments`, `session_id`, or `child_summary`.
+    and `loam_execution`, plus `loam_workspace` when the per-hypothesis
+    workspace is enabled. Adapters add event-specific fields such as
+    `tool_name`, `arguments`, `session_id`, or `child_summary`.
   stdout: |
     Optional JSON object. Empty stdout means no action. Supported portable
     response forms: `{ "action": "block", "message": "..." }` for a
@@ -17,6 +18,8 @@ wire_protocol:
 hooks:
   pre_tool_call:
     script: hooks/pre-tool.py
+    # Blocks on the campaign role boundary and, with loam_workspace, on a
+    # code-generator writing outside its run's place in the workspace layout.
     behavior: may_block
   pre_llm_call:
     script: hooks/pre-llm.py

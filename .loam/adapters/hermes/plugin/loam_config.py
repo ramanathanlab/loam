@@ -75,6 +75,10 @@ class ExecutionConfig:
     # Prefix of the HPC server's other MCP tool names (run_batch, list_tools,
     # ...). Empty: derived from tool_name when it ends with function_name.
     tool_prefix: str = ""
+    # Other spellings of a workdir_root prefix, as (alias, canonical) pairs:
+    # on Aurora /lus/flare/projects/X and /flare/X are one directory. The
+    # workspace checks compare HPC paths as text, so they need to be told.
+    workdir_aliases: tuple[tuple[str, str], ...] = ()
 
 
 _EXECUTION_MODES = {"remote_mcp", "local"}
@@ -90,6 +94,11 @@ class WorkspaceConfig:
     root: str = ""
     # true: pre-tool blocks layout violations. false: they are only logged.
     strict: bool = True
+    # Background verifier for HPC runs (.loam/reconcile/verify_workspace.py):
+    # an interpreter that has fastmcp, and the HPC MCP server's URL. Both empty:
+    # no verifier is launched and a missing remote manifest stays missing.
+    verifier_python: str = ""
+    verifier_mcp_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -154,6 +163,7 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
         workdir_root=_clean_text(raw.get("workdir_root")),
         tool_prefix=_clean_text(raw.get("tool_prefix")),
         setup=_clean_text(raw.get("setup")),
+        workdir_aliases=_aliases(raw.get("workdir_aliases")),
     )
     if mode == "local":
         return ExecutionConfig(mode=mode, runtime=_clean_text(raw.get("runtime")), **extras)
@@ -179,7 +189,24 @@ def _workspace_config(value: Any) -> WorkspaceConfig | None:
     raw = _as_mapping(value)
     if raw is None or raw.get("enabled") is not True:
         return None
-    return WorkspaceConfig(root=_clean_text(raw.get("root")), strict=raw.get("strict") is not False)
+    return WorkspaceConfig(
+        root=_clean_text(raw.get("root")),
+        strict=raw.get("strict") is not False,
+        verifier_python=_clean_text(raw.get("verifier_python")),
+        verifier_mcp_url=_clean_text(raw.get("verifier_mcp_url")),
+    )
+
+
+def _aliases(value: Any) -> tuple[tuple[str, str], ...]:
+    """`workdir_aliases: {alias: canonical}` as normalized absolute-path pairs."""
+
+    raw = _as_mapping(value) or {}
+    pairs = []
+    for alias, canonical in raw.items():
+        alias, canonical = _clean_text(alias).rstrip("/"), _clean_text(canonical).rstrip("/")
+        if alias.startswith("/") and canonical.startswith("/") and alias != canonical:
+            pairs.append((alias, canonical))
+    return tuple(sorted(pairs))
 
 
 def _tournament_config(value: Any, state_dir: Path | None = None) -> HypothesisTournamentConfig | None:
@@ -381,6 +408,8 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "workdir_root": execution.workdir_root,
             "tool_prefix": execution.tool_prefix,
         }
+        if execution.workdir_aliases:
+            values["loam_execution"]["workdir_aliases"] = dict(execution.workdir_aliases)
     workspace = profile.workspace
     if workspace is not None:
         values["loam_workspace"] = {
@@ -388,6 +417,9 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "root": str(Path(workspace.root).expanduser() if workspace.root else profile.state_dir / "hypotheses"),
             "strict": workspace.strict,
         }
+        for key in ("verifier_python", "verifier_mcp_url"):
+            if getattr(workspace, key):
+                values["loam_workspace"][key] = getattr(workspace, key)
     run_id = _clean_text(os.environ.get("LOAM_RUN_ID"))
     if run_id:
         values["loam_run_id"] = run_id

@@ -27,6 +27,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +41,9 @@ LAYOUT_DIRS = ("src", "runs", "outputs", "scratch", "data")
 # Hook-owned top-level files. With LAYOUT_DIRS this is the whole legal top level.
 RECORD_FILES = (EXPERIMENT_FILE, LOG_FILE, LOCK_FILE)
 LOG_KINDS = ("plan", "result", "note", "report", "violation")
+# A run's outputs may be read by other runs only with one of these: hashed by the
+# hook (local), reported by the child (remote), or hashed later by the verifier.
+VERIFIED_MANIFESTS = ("recorded", "recorded_by_loam")
 # The hash a first log line chains to.
 GENESIS_SHA256 = "0" * 64
 # A plan or hypothesis id becomes a path segment. Both come from model-written
@@ -416,14 +420,30 @@ class _Scope:
         self.base = Path(_text(config.get("root"))).expanduser()
         self.real_base = os.path.realpath(self.base)
         self.run_id = _text(start.get("run"))
-        # Completed outputs of OTHER hypotheses this call reads; capture_code
-        # records them as the run's inputs.
+        self.plan_id, self.hypothesis_id = _text(start.get("plan_id")), _text(start.get("hypothesis_id"))
+        # Completed outputs of OTHER runs this call reads (this hypothesis's or
+        # another's); capture_code records them as the run's inputs.
         self.reads: list[dict[str, str]] = []
         execution = payload.get("loam_execution")
-        workdir_root = _text(execution.get("workdir_root")) if isinstance(execution, Mapping) else ""
-        self.remote_base = os.path.normpath(workdir_root) if workdir_root else ""
-        plan_id, hypothesis_id = _text(start.get("plan_id")), _text(start.get("hypothesis_id"))
-        self.remote_root = os.path.join(self.remote_base, plan_id, hypothesis_id) if self.remote_base else ""
+        execution = execution if isinstance(execution, Mapping) else {}
+        aliases = execution.get("workdir_aliases")
+        # Longest alias first, so a more specific spelling wins.
+        self.aliases = sorted(
+            ((_text(a).rstrip("/"), _text(c).rstrip("/")) for a, c in (aliases.items() if isinstance(aliases, Mapping) else ())),
+            key=lambda pair: len(pair[0]),
+            reverse=True,
+        )
+        workdir_root = _text(execution.get("workdir_root"))
+        self.remote_base = self._canonical(os.path.normpath(workdir_root)) if workdir_root else ""
+        self.remote_root = os.path.join(self.remote_base, self.plan_id, self.hypothesis_id) if self.remote_base else ""
+
+    def _canonical(self, path: str) -> str:
+        """Rewrite an aliased HPC spelling (/lus/flare/projects/X) to its canonical one (/flare/X)."""
+
+        for alias, canonical in self.aliases:
+            if path == alias or path.startswith(alias + "/"):
+                return canonical + path[len(alias):]
+        return path
 
     # local paths -------------------------------------------------------------
     def local_write(self, raw: str) -> str | None:
@@ -445,29 +465,50 @@ class _Scope:
         if parts is None:
             foreign = _within(real, self.real_base)
             if foreign is not None:
-                return self._foreign(foreign, raw, writing)
+                return self._other_run(foreign, raw, writing)
             return f"{raw} is outside this hypothesis's workspace {self.root}" if writing else None
-        return _layout_problem(parts, self.run_id) if writing else None
+        return self._own(parts, raw, writing)
 
-    def _foreign(self, parts: list[str], raw: str, writing: bool) -> str | None:
-        """A path in ANOTHER hypothesis's workspace; ``parts`` are relative to the base.
+    def _own(self, parts: list[str], raw: str, writing: bool) -> str | None:
+        """A path inside this hypothesis's folder; ``parts`` are relative to its root.
 
-        Other hypotheses are never writable. Their finished results are
-        readable, Pando-style (a run consuming ``output:eN/rM``): only
-        ``outputs/rK/`` of a run whose state is ``completed``, never scratch/,
-        a run still in progress, or a failed or dropped one. An allowed read is
-        collected in ``self.reads`` so it is recorded as an input.
+        Writes follow the layout. Reads are free, except another run's
+        outputs/ or scratch/: those get the same rule as another hypothesis's.
         """
 
         if writing:
+            return _layout_problem(parts, self.run_id)
+        if len(parts) > 1 and parts[0] in {"outputs", "scratch"} and parts[1] != self.run_id:
+            return self._other_run([self.plan_id, self.hypothesis_id, *parts], raw, writing=False)
+        return None
+
+    def _other_run(self, parts: list[str], raw: str, writing: bool) -> str | None:
+        """A path belonging to ANOTHER run; ``parts`` are relative to the workspaces root.
+
+        That run may be in another hypothesis (never writable) or an earlier run
+        of this one (writes already refused by the layout). Either way only its
+        finished results are readable, Pando-style (a run consuming
+        ``output:eN/rM``): ``outputs/rK/`` of a run that is ``completed`` and
+        whose output manifest is verified. Never scratch/, a run still in
+        progress, a failed or dropped one, or one whose hashes are unknown. An
+        allowed read is collected in ``self.reads`` so it is recorded as an input.
+        """
+
+        own = parts[:2] == [self.plan_id, self.hypothesis_id]
+        if writing:
             return f"{raw} belongs to another hypothesis's workspace, which is read-only to you"
-        legal = "only outputs/rK/ of another hypothesis's completed runs may be read"
+        legal = f"only outputs/rK/ of {'this' if own else 'another'} hypothesis's completed, verified runs may be read"
         if len(parts) < 4 or parts[2] != "outputs" or not _RUN_ID.fullmatch(parts[3]):
             return f"{raw}: {legal}"
         plan_id, hypothesis_id, run_id = parts[0], parts[1], parts[3]
-        state = read_json(self.base / plan_id / hypothesis_id / "runs" / run_id / RUN_FILE).get("state")
-        if state != "completed":
-            return f"{raw}: run {run_id} of {hypothesis_id} is {state or 'unknown'}, not completed; {legal}"
+        run = read_json(self.base / plan_id / hypothesis_id / "runs" / run_id / RUN_FILE)
+        if run.get("state") != "completed":
+            return f"{raw}: run {run_id} of {hypothesis_id} is {run.get('state') or 'unknown'}, not completed; {legal}"
+        if run.get("manifest_status") not in VERIFIED_MANIFESTS:
+            return (
+                f"{raw}: run {run_id} of {hypothesis_id} has no verified output manifest yet "
+                f"({run.get('manifest_status') or 'none'}); {legal}"
+            )
         self.reads.append(
             {"plan_id": plan_id, "hypothesis_id": hypothesis_id, "run": run_id, "path": "/".join(parts[2:])}
         )
@@ -481,33 +522,46 @@ class _Scope:
             if required:
                 return f"pass {label}={self.remote_root}/scratch/{self.run_id} (your run's HPC folder)"
             return None
-        path = os.path.normpath(raw if os.path.isabs(raw) else os.path.join(self.remote_root, raw))
+        path = self._canonical(os.path.normpath(raw if os.path.isabs(raw) else os.path.join(self.remote_root, raw)))
         parts = _within(path, self.remote_root)
         if parts is None:
             foreign = _within(path, self.remote_base)
             if foreign is not None:
                 # The HPC folder mirrors the local layout, so the local run.json
                 # says whether that remote run completed.
-                return self._foreign(foreign, raw, writing)
+                return self._other_run(foreign, raw, writing)
             return f"{label} {raw} is outside this hypothesis's HPC workspace {self.remote_root}" if required else None
-        return _layout_problem(parts, self.run_id) if writing else None
+        return self._own(parts, raw, writing)
+
+    def _code_bases(self) -> set[str]:
+        """Every spelling of the workspaces roots that code might use."""
+
+        bases = {self.real_base, str(self.base), self.remote_base}
+        for alias, canonical in self.aliases:
+            if self.remote_base == canonical or self.remote_base.startswith(canonical + "/"):
+                bases.add(alias + self.remote_base[len(canonical):])
+        return bases - {""}
 
     def code(self, text: str) -> str | None:
-        """Check paths into other hypotheses' workspaces named in code, locally or on HPC.
+        """Check paths into other runs' folders named in code, locally or on HPC.
 
         Code can't be analysed for what it does with a path, so each one is held
-        to the read rule: allowed only for a completed run's outputs.
+        to the read rule: allowed only for a completed, verified run's outputs.
+        That covers another hypothesis's runs and this hypothesis's earlier ones.
         """
 
-        for base in {self.real_base, str(self.base), self.remote_base} - {""}:
+        for base in self._code_bases():
             pattern = re.escape(base.rstrip("/")) + r"/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)((?:/[^\s'\"(),;\]]*)?)"
             for match in re.finditer(pattern, text):
-                if os.path.join(base, match.group(1), match.group(2)) in {self.real_root, str(self.root), self.remote_root}:
-                    continue
                 parts = [match.group(1), match.group(2), *(p for p in match.group(3).split("/") if p)]
-                problem = self._foreign(parts, match.group(0), writing=False)
+                if parts[:2] == [self.plan_id, self.hypothesis_id]:
+                    problem = self._own(parts[2:], match.group(0), writing=False)
+                    where = "another run of this hypothesis"
+                else:
+                    problem = self._other_run(parts, match.group(0), writing=False)
+                    where = "another hypothesis's workspace"
                 if problem:
-                    return f"code refers to another hypothesis's workspace: {problem}"
+                    return f"code refers to {where}: {problem}"
         return None
 
     # shell ---------------------------------------------------------------------
@@ -778,7 +832,8 @@ def _source_hash(base: Path, read: Mapping[str, str]) -> dict[str, str]:
 
 # Bound on the child/validator report copied into a log entry.
 MAX_RESULT_CHARS = 4_000
-_MANIFEST_BLOCK = re.compile(r"LOAM_MANIFEST[ \t]*\n(.*?)\n[ \t]*END_LOAM_MANIFEST", re.DOTALL)
+# The body may be empty: a run with no output files is a valid, empty manifest.
+_MANIFEST_BLOCK = re.compile(r"^[ \t]*LOAM_MANIFEST[ \t]*\n(.*?)^[ \t]*END_LOAM_MANIFEST", re.DOTALL | re.MULTILINE)
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -807,6 +862,32 @@ def _local_manifest(root: Path, run_id: str) -> list[dict[str, Any]]:
         for path in sorted(outputs.rglob("*"))
         if path.is_file()
     ]
+
+
+def manifest_program(outputs_dir: str) -> str:
+    """The Python program that prints a LOAM_MANIFEST block for one run's outputs.
+
+    Given to a remote child to run as its last call (hypothesis_orchestration.
+    _layout_block), and run by .loam/reconcile/verify_workspace.py on HPC when a
+    child didn't. One program, so both produce what remote_manifest parses.
+    Hashes in 1 MB chunks so large outputs are fine.
+    """
+
+    return "\n".join((
+        "import hashlib, json, os",
+        f"root = {outputs_dir!r}",
+        "print('LOAM_MANIFEST')",
+        "for folder, _, files in sorted(os.walk(root)):",
+        "    for name in sorted(files):",
+        "        path = os.path.join(folder, name)",
+        "        digest = hashlib.sha256()",
+        "        with open(path, 'rb') as handle:",
+        "            for chunk in iter(lambda: handle.read(1 << 20), b''):",
+        "                digest.update(chunk)",
+        "        print(json.dumps({'path': os.path.relpath(path, root), 'sha256': digest.hexdigest(), "
+        "'bytes': os.path.getsize(path)}))",
+        "print('END_LOAM_MANIFEST')",
+    ))
 
 
 def remote_manifest(summary: str, run_id: str) -> tuple[list[dict[str, Any]], str]:
@@ -977,14 +1058,91 @@ def on_agent_stopped(
     remote = isinstance(execution, Mapping) and _text(execution.get("mode")) == "remote_mcp"
     role = _text(start.get("role"))
     if role == "code-generator" and _text(start.get("run")):
-        finalize_run(
-            root,
-            _text(start.get("run")),
-            _text(payload.get("child_status")) or "error",
-            _text(payload.get("child_summary")),
-            remote,
+        run_id = _text(start.get("run"))
+        run = finalize_run(
+            root, run_id, _text(payload.get("child_status")) or "error", _text(payload.get("child_summary")), remote
         )
+        if remote and run is not None and run.get("state") == "completed" and run.get("manifest_status") not in VERIFIED_MANIFESTS:
+            _launch_verifier(payload, start, root, ["fill", "--run", run_id])
         return []
     if role == "hypothesis-validator" and completion is not None:
-        return close_workspace(root, completion, remote)
+        problems = close_workspace(root, completion, remote)
+        if remote:
+            _launch_verifier(payload, start, root, ["recheck"])
+        return problems
     return []
+
+
+VERIFIER = Path(__file__).resolve().parents[1] / "reconcile" / "verify_workspace.py"
+
+
+def _launch_verifier(payload: Mapping[str, Any], start: Mapping[str, Any], root: Path, args: list[str]) -> None:
+    """Start verify_workspace.py detached, so the stop hook returns at once.
+
+    The hook has a 15 s budget and no MCP access; hashing files on HPC needs
+    both. Unconfigured (no verifier_python / verifier_mcp_url) -> a note
+    saying the run stays unverified, nothing launched.
+    """
+
+    config = settings(payload) or {}
+    python, url = _text(config.get("verifier_python")), _text(config.get("verifier_mcp_url"))
+    execution = payload.get("loam_execution")
+    execution = execution if isinstance(execution, Mapping) else {}
+    workdir_root = _text(execution.get("workdir_root"))
+    if not (python and url and workdir_root):
+        append_log(root, "note", {"what": f"verifier not configured; {' '.join(args)} not run (run stays as recorded)"})
+        return
+    remote_root = os.path.join(os.path.normpath(workdir_root), _text(start.get("plan_id")), _text(start.get("hypothesis_id")))
+    command = [
+        python, str(VERIFIER), *args,
+        "--workspace", str(root),
+        "--remote-root", remote_root,
+        "--mcp-url", url,
+        "--tool", _text(execution.get("function_name")) or "run_code",
+    ]
+    state_dir = Path(_text(payload.get("loam_state_dir")) or root.parent.parent)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / "verify-workspace.log").open("ab") as log:
+        subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True, close_fds=True
+        )
+    append_log(root, "note", {"what": f"verifier launched: {' '.join(args)}"})
+
+
+# --- verifier side (called from .loam/reconcile/verify_workspace.py) ---------------
+
+
+def record_verified_manifest(root: Path, run_id: str, entries: list[dict[str, Any]]) -> bool:
+    """Store a manifest the verifier hashed on HPC, for a completed run that lacked one."""
+
+    with _locked(root):
+        path = root / "runs" / run_id / RUN_FILE
+        run = read_json(path)
+        if run.get("state") != "completed" or run.get("manifest_status") in VERIFIED_MANIFESTS:
+            return False
+        run.update(manifest=entries, manifest_status="recorded_by_loam", verified_at=_timestamp())
+        _write_json(path, run)
+        _append_log_unlocked(
+            root,
+            "note",
+            {"run": run_id, "what": f"output manifest recorded by the Loam verifier ({len(entries)} files)",
+             "artifacts": [item["path"] for item in entries]},
+        )
+        return True
+
+
+def manifest_changes(recorded: list[dict[str, Any]], fresh: list[dict[str, Any]], run_id: str) -> list[str]:
+    """How a fresh hashing of a run's outputs differs from its recorded manifest."""
+
+    before = {item.get("path"): item.get("sha256") for item in recorded if isinstance(item, Mapping)}
+    after = {item.get("path"): item.get("sha256") for item in fresh if isinstance(item, Mapping)}
+    problems = [f"{path} was removed after run {run_id} finished" for path in sorted(set(before) - set(after))]
+    problems += [f"{path} changed after run {run_id} finished" for path in sorted(set(before) & set(after)) if before[path] != after[path]]
+    problems += [f"{path} was added after run {run_id} finished" for path in sorted(set(after) - set(before))]
+    return problems
+
+
+def log_violations(root: Path, problems: list[str], run_id: str = "") -> None:
+    with _locked(root):
+        for problem in problems:
+            _append_log_unlocked(root, "violation", {"run": run_id, "what": problem, "blocked": False})

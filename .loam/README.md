@@ -142,6 +142,60 @@ profiles:
       model: tournament-model
 ```
 
+### Hypothesis workspace (Pando-style)
+
+With `workspace.enabled: true` (and orchestration on), every hypothesis-validator
+gets its own folder, laid out like a [Pando](https://github.com/zjniu/Pando)
+experiment and kept by the hooks in `.loam/hooks/hypothesis_workspace.py`:
+
+```
+$LOAM_STATE_DIR/hypotheses/<plan_id>/<hypothesis_id>/
+├─ experiment.json   index + state (open -> closed)              hooks only
+├─ log.jsonl         append-only history: plan / result / note /  hooks only
+│                    report / violation, each line hash-chained
+├─ src/              code the children ran (run_code payloads saved as rM_NN.py)
+├─ runs/rM/run.json  per child: goal, state, code hashes, inputs, manifest   hooks only
+├─ outputs/rM/       that run's result files; frozen when the run ends
+├─ scratch/rM/       that run's temporary files; never hashed
+└─ data/             inputs supplied up front; read-only to agents
+```
+
+On HPC the same layout lives under `<execution.workdir_root>/<plan_id>/<hypothesis_id>/`.
+
+- **Start.** A validator's start creates the folder. Delegating children reserves
+  one run each (`[loam-run-id=rM]` in the child's goal, so its instructions can
+  name `outputs/rM/`); a child's start moves its run to `started` and logs a `plan`.
+- **Every tool call.** After `tool_policy` (what a role may call),
+  `workspace_policy` decides where a code-generator may write: only `src/` and its
+  own `outputs/rM/` and `scratch/rM/`. Record files, `data/`, other runs, other
+  hypotheses, stray names and anything outside are blocked, with the legal place in
+  the message. Other runs' results, this hypothesis's or another's, may be read only
+  from `outputs/rK/` of a `completed` run with a verified manifest; each such read is
+  recorded in the reading run's `inputs` with the source file's hash.
+- **Stop.** A child's stop records the run's state, hashes `outputs/rM/` (a remote
+  child prints a `LOAM_MANIFEST` block it is given the program for), logs a
+  `result` and freezes the run. A validator's stop drops unfinished runs, closes
+  `experiment.json` with values copied from its `validator_completed` row, logs a
+  `report` and audits the folder (log chain, strays, local outputs changed after
+  freeze). Problems are logged and reported as a `workspace_violation` campaign
+  row; nothing is repaired. The completion signal is unchanged.
+- **HPC verifier.** The hooks can't reach HPC files. When configured,
+  `.loam/reconcile/verify_workspace.py` is launched detached: `fill` hashes a
+  remote run whose child reported no manifest (`recorded_by_loam`), and `recheck`
+  re-hashes completed remote runs at validator stop. It can also be run by hand.
+
+```yaml
+    workspace:
+      enabled: true
+      root: ""               # default: <state_dir>/hypotheses
+      strict: true           # false: violations are logged, not blocked
+      verifier_python: /abs/path/to/venv/bin/python   # needs fastmcp
+      verifier_mcp_url: http://127.0.0.1:8000/mcp     # the HPC MCP server
+    execution:
+      workdir_root: /flare/<PROJECT>/<USER>/hpc-run/work
+      workdir_aliases:       # other spellings of the same HPC directory
+        /lus/flare/projects/<PROJECT>: /flare/<PROJECT>
+```
 
 - `pre-tool.py` may return `{"action":"block","message":"..."}` to veto a
   Hermes tool call.

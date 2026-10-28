@@ -338,19 +338,7 @@ def _layout_block(base: str, run_id: str, remote: bool = False) -> str:
         lines += [
             "OUTPUT MANIFEST (required): as your LAST tool call, run this program with run_code, then paste its "
             "complete output verbatim at the end of your report:",
-            "import hashlib, json, os",
-            f"root = {f'{base}/outputs/{run_id}'!r}",
-            "print('LOAM_MANIFEST')",
-            "for folder, _, files in sorted(os.walk(root)):",
-            "    for name in sorted(files):",
-            "        path = os.path.join(folder, name)",
-            "        digest = hashlib.sha256()",
-            "        with open(path, 'rb') as handle:",
-            "            for chunk in iter(lambda: handle.read(1 << 20), b''):",
-            "                digest.update(chunk)",
-            "        print(json.dumps({'path': os.path.relpath(path, root), 'sha256': digest.hexdigest(), "
-            "'bytes': os.path.getsize(path)}))",
-            "print('END_LOAM_MANIFEST')",
+            hypothesis_workspace.manifest_program(f"{base}/outputs/{run_id}"),
         ]
     return "\n".join(lines)
 

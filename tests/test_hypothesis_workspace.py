@@ -610,8 +610,8 @@ class WorkspacePolicyTests(_OrchestrationHelpers, unittest.TestCase):
 
 
 
-class WorkspaceStopTests(_OrchestrationHelpers, unittest.TestCase):
-    """Group 4: finalize runs, close the workspace, audit, cross-hypothesis inputs."""
+class _StopHelpers(_OrchestrationHelpers):
+    """Lifecycle helpers shared by the stop-time and verification tests."""
 
     REMOTE = "/lus/campaign/work/plan-1"
 
@@ -647,6 +647,11 @@ class WorkspaceStopTests(_OrchestrationHelpers, unittest.TestCase):
             (root / "outputs" / "r1" / name).write_text(text)
         self._stop(orchestration, payload, f"child-{hyp}")
         return root
+
+
+
+class WorkspaceStopTests(_StopHelpers, unittest.TestCase):
+    """Group 4: finalize runs, close the workspace, audit, cross-hypothesis inputs."""
 
     # finalize_run --------------------------------------------------------------------
     def test_child_stop_completes_hashes_logs_and_freezes_the_run(self) -> None:
@@ -726,6 +731,8 @@ class WorkspaceStopTests(_OrchestrationHelpers, unittest.TestCase):
                      json.dumps({"path": "a.csv", "sha256": "nothex", "bytes": 1}),
                      "not json"):
             self.assertEqual(workspace.remote_manifest(f"LOAM_MANIFEST\n{line}\nEND_LOAM_MANIFEST", "r1"), ([], "invalid"))
+        # A run with no output files prints an empty block: recorded, not missing.
+        self.assertEqual(workspace.remote_manifest("LOAM_MANIFEST\nEND_LOAM_MANIFEST\n", "r1"), ([], "recorded"))
         # The LAST block wins, so a recap earlier in the report doesn't count.
         two = f"LOAM_MANIFEST\nnot json\nEND_LOAM_MANIFEST\n...\nLOAM_MANIFEST\n{good}\nEND_LOAM_MANIFEST"
         self.assertEqual(workspace.remote_manifest(two, "r1")[1], "recorded")
@@ -867,7 +874,8 @@ class WorkspaceStopTests(_OrchestrationHelpers, unittest.TestCase):
             earlier = Path(payload["loam_workspace"]["root"]) / "plan-0" / "h-0"
             (earlier / "runs" / "r1").mkdir(parents=True)
             (earlier / "runs" / "r1" / "run.json").write_text(json.dumps(
-                {"state": "completed", "manifest": [{"path": "outputs/r1/lib.fasta", "sha256": "b" * 64, "bytes": 3}]}
+                {"state": "completed", "manifest_status": "recorded",
+                 "manifest": [{"path": "outputs/r1/lib.fasta", "sha256": "b" * 64, "bytes": 3}]}
             ))
             root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Reuse the earlier library."])
             self._start(orchestration, payload, "child-1", tasks[0]["goal"])
@@ -900,6 +908,251 @@ class WorkspaceStopTests(_OrchestrationHelpers, unittest.TestCase):
             self.assertEqual(self._run(root, "r1")["state"], "completed")
             experiment = json.loads((root / "experiment.json").read_text())
             self.assertEqual((experiment["state"], experiment["evidence_score"]), ("closed", 0.1))
+
+
+
+VERIFIER = ROOT / ".loam" / "reconcile" / "verify_workspace.py"
+
+
+class WorkspaceVerificationTests(_StopHelpers, unittest.TestCase):
+    """Group 5: HPC path aliases, same-hypothesis inputs, unverified runs, the HPC verifier."""
+
+    ALIAS = "/alias/campaign"  # another spelling of /lus/campaign
+
+    def _aliased(self, payload: dict) -> dict:
+        payload["loam_execution"]["workdir_aliases"] = {self.ALIAS: "/lus/campaign"}
+        return payload
+
+    def _policy(self, orchestration, base: dict, session: str, tool_name: str, /, **arguments):
+        # Positional-only, so tool arguments named `payload` or `tool` don't collide.
+        return orchestration.workspace_policy({**base, "session_id": session, "tool_name": tool_name, "arguments": arguments})
+
+    def _fake_hpc(self, remote_base: Path):
+        """A run_code that runs the program locally, with /lus/campaign/work mapped to ``remote_base``."""
+
+        import subprocess
+
+        calls = []
+
+        def run_code(program: str, workdir: str) -> str:
+            calls.append(workdir)
+            program = program.replace("/lus/campaign/work", str(remote_base))
+            return subprocess.run([sys.executable, "-c", program], text=True, capture_output=True, check=True).stdout
+
+        return run_code, calls
+
+    # config -----------------------------------------------------------------------
+    def test_workdir_aliases_reach_the_payload_only_when_set(self) -> None:
+        config = _load("loam_config_aliases", CONFIG)
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = {"enabled": True, "active_profile": "research", "profiles": {"research": {
+                "workflow_id": "research-v1", "state_dir": str(Path(tmp) / "state"),
+                "hypothesis_orchestration": {"enabled": True},
+                "workspace": {"enabled": True, "verifier_python": "/venv/bin/python",
+                              "verifier_mcp_url": "http://127.0.0.1:8000/mcp"},
+                "execution": {"mode": "local", "runtime": "python3.11",
+                              "workdir_aliases": {"/lus/flare/projects/X/": "/flare/X", "relative": "/x"}},
+            }}}
+            path = Path(tmp) / "loam.yaml"
+            path.write_text(json.dumps(raw))
+            with patch.dict(os.environ, {"LOAM_CONFIG_PATH": str(path)}, clear=False):
+                profile = config.load_profile()
+            values = config.payload_values(profile)
+            self.assertEqual(values["loam_execution"]["workdir_aliases"], {"/lus/flare/projects/X": "/flare/X"})
+            self.assertEqual(values["loam_workspace"]["verifier_mcp_url"], "http://127.0.0.1:8000/mcp")
+            del raw["profiles"]["research"]["execution"]["workdir_aliases"]
+            path.write_text(json.dumps(raw))
+            with patch.dict(os.environ, {"LOAM_CONFIG_PATH": str(path)}, clear=False):
+                self.assertNotIn("workdir_aliases", config.payload_values(config.load_profile())["loam_execution"])
+
+    # aliases ----------------------------------------------------------------------
+    def test_aliased_hpc_spelling_is_the_same_place(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._aliased(self._payload(Path(tmp)))
+            self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            task = orchestration.canonical_delegation_args(
+                {**payload, "session_id": "validator-h-1", "arguments": {"tasks": [{"goal": "Again."}]}})["tasks"][0]
+            self._start(orchestration, payload, "child-1", task["goal"])  # run r2
+            aliased = f"{self.ALIAS}/work/plan-1/h-1"
+            ok = self._policy(orchestration, payload, "child-1", "mcp_hpc_run_code", payload="print(1)", workdir=f"{aliased}/scratch/r2")
+            self.assertIsNone(ok)
+            sibling = self._policy(orchestration, payload, "child-1", "mcp_hpc_run_code", payload="print(1)",
+                                   workdir=f"{self.ALIAS}/work/plan-1/h-2/scratch/r1")
+            self.assertIn("another hypothesis", sibling["message"])
+            code = f"open('{self.ALIAS}/work/plan-1/h-2/scratch/r1/x')"
+            blocked = self._policy(orchestration, payload, "child-1", "mcp_hpc_run_code", payload=code, workdir=f"{aliased}/scratch/r2")
+            self.assertIn("another hypothesis", blocked["message"])
+
+    # same-hypothesis inputs ---------------------------------------------------------
+    def test_earlier_runs_of_the_same_hypothesis_follow_the_read_rule(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["First.", "Second."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])  # r1
+            self._start(orchestration, payload, "child-2", tasks[1]["goal"])  # r2
+            (root / "outputs" / "r1" / "a.csv").write_text("1\n")
+            target = str(root / "outputs" / "r1" / "a.csv")
+
+            running = self._policy(orchestration, payload, "child-2", "read_file", path=target)
+            self.assertIn("not completed", running["message"])
+            self.assertIn("this hypothesis", running["message"])
+            self._stop(orchestration, payload, "child-1")
+            call = {**payload, "session_id": "child-2", "tool_name": "read_file", "arguments": {"path": target}}
+            self.assertIsNone(orchestration.workspace_policy(call))
+            orchestration.workspace_capture(call)
+            inputs = self._run(root, "r2")["inputs"]
+            self.assertEqual((inputs[0]["hypothesis_id"], inputs[0]["run"], inputs[0]["path"]), ("h-1", "r1", "outputs/r1/a.csv"))
+            self.assertEqual(inputs[0]["sha256"], hashlib.sha256(b"1\n").hexdigest())
+            scratch = self._policy(orchestration, payload, "child-2", "read_file", path=str(root / "scratch" / "r1" / "x"))
+            self.assertIn("only outputs/rK/", scratch["message"])
+            # Own run, src/ and the record stay freely readable.
+            for own in ("outputs/r2/x", "src/a.py", "log.jsonl", "data/t.fasta"):
+                self.assertIsNone(self._policy(orchestration, payload, "child-2", "read_file", path=str(root / own)), own)
+
+    # unverified runs ----------------------------------------------------------------
+    def test_completed_remote_run_without_manifest_is_unreadable_until_verified(self) -> None:
+        orchestration = self._orchestration()
+        workspace = sys.modules["hypothesis_workspace"]
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            source, tasks = self._hypothesis(orchestration, payload, "h-2", ["Make."])
+            self._start(orchestration, payload, "child-h-2", tasks[0]["goal"])
+            self._stop(orchestration, payload, "child-h-2", summary="done, no manifest")
+            self.assertEqual(self._run(source, "r1")["manifest_status"], "missing")
+            _, tasks = self._hypothesis(orchestration, payload, "h-1", ["Reuse."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            code = "open('/lus/campaign/work/plan-1/h-2/outputs/r1/x.csv')"
+            args = {"payload": code, "workdir": "/lus/campaign/work/plan-1/h-1/scratch/r1"}
+            blocked = self._policy(orchestration, payload, "child-1", "mcp_hpc_run_code", **args)
+            self.assertIn("no verified output manifest", blocked["message"])
+            workspace.record_verified_manifest(source, "r1", [{"path": "outputs/r1/x.csv", "sha256": "c" * 64, "bytes": 1}])
+            self.assertIsNone(self._policy(orchestration, payload, "child-1", "mcp_hpc_run_code", **args))
+
+    # the verifier -------------------------------------------------------------------
+    def test_fill_hashes_outputs_on_hpc_and_records_them(self) -> None:
+        orchestration = self._orchestration()
+        verifier = _load("loam_verify_fill", VERIFIER)
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            self._stop(orchestration, payload, "child-1", summary="forgot the manifest")
+            remote = Path(tmp) / "hpc"
+            (remote / "plan-1" / "h-1" / "outputs" / "r1").mkdir(parents=True)
+            (remote / "plan-1" / "h-1" / "outputs" / "r1" / "fold.cif").write_text("data_x\n")
+            run_code, calls = self._fake_hpc(remote)
+
+            self.assertEqual(verifier.fill(root, "r1", "/lus/campaign/work/plan-1/h-1", run_code), "recorded")
+            run = self._run(root, "r1")
+            self.assertEqual(run["manifest_status"], "recorded_by_loam")
+            self.assertIn("verified_at", run)
+            self.assertEqual(run["manifest"], [{"path": "outputs/r1/fold.cif", "sha256": hashlib.sha256(b"data_x\n").hexdigest(), "bytes": 7}])
+            self.assertEqual(calls, ["/lus/campaign/work/plan-1/h-1"])
+            self.assertIn("recorded by the Loam verifier", self._log(root)[-1]["what"])
+            self.assertEqual(verifier.fill(root, "r1", "/lus/campaign/work/plan-1/h-1", run_code), "skipped")
+            self.assertEqual(sys.modules["hypothesis_workspace"].verify_log(root), [])
+
+    def test_fill_failures_are_logged_never_guessed(self) -> None:
+        orchestration = self._orchestration()
+        verifier = _load("loam_verify_fill_fail", VERIFIER)
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            self._stop(orchestration, payload, "child-1")
+
+            def down(program: str, workdir: str) -> str:
+                raise ConnectionError("server unreachable")
+
+            self.assertEqual(verifier.fill(root, "r1", "/lus/x", down), "failed")
+            self.assertIn("server unreachable", self._log(root)[-1]["what"])
+            self.assertEqual(verifier.fill(root, "r1", "/lus/x", lambda p, w: "garbage"), "failed")
+            self.assertEqual(self._run(root, "r1")["manifest_status"], "missing")
+
+    def test_recheck_reports_remote_outputs_changed_after_freeze(self) -> None:
+        orchestration = self._orchestration()
+        verifier = _load("loam_verify_recheck", VERIFIER)
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            self._stop(orchestration, payload, "child-1")
+            outputs = Path(tmp) / "hpc" / "plan-1" / "h-1" / "outputs" / "r1"
+            outputs.mkdir(parents=True)
+            (outputs / "a.csv").write_text("1")
+            run_code, _ = self._fake_hpc(Path(tmp) / "hpc")
+            verifier.fill(root, "r1", "/lus/campaign/work/plan-1/h-1", run_code)
+            self.assertEqual(verifier.recheck(root, "/lus/campaign/work/plan-1/h-1", run_code), [])
+            (outputs / "a.csv").write_text("edited")
+            (outputs / "b.csv").write_text("late")
+            problems = verifier.recheck(root, "/lus/campaign/work/plan-1/h-1", run_code)
+            self.assertEqual(problems, ["outputs/r1/a.csv changed after run r1 finished", "outputs/r1/b.csv was added after run r1 finished"])
+            self.assertEqual([e["what"] for e in self._log(root)[-2:]], problems)
+
+    def test_stop_hook_launches_the_verifier_detached(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            payload["loam_workspace"].update(verifier_python="/venv/bin/python", verifier_mcp_url="http://127.0.0.1:8000/mcp")
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            with patch("subprocess.Popen") as popen:
+                self._stop(orchestration, payload, "child-1", summary="no manifest")
+                self._stop(orchestration, payload, "validator-h-1")
+            commands = [call.args[0] for call in popen.call_args_list]
+            self.assertEqual([c[2] for c in commands], ["fill", "recheck"])
+            self.assertEqual(commands[0][:2], ["/venv/bin/python", str(VERIFIER)])
+            self.assertIn("r1", commands[0])
+            for flag, value in (("--workspace", str(root)), ("--remote-root", "/lus/campaign/work/plan-1/h-1"),
+                                ("--mcp-url", "http://127.0.0.1:8000/mcp"), ("--tool", "run_code")):
+                self.assertEqual(commands[0][commands[0].index(flag) + 1], value)
+            self.assertTrue(all(call.kwargs["start_new_session"] for call in popen.call_args_list))
+            self.assertIn("verifier launched: fill --run r1", [e.get("what") for e in self._log(root)])
+
+    def test_no_verifier_configured_leaves_a_note(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            with patch("subprocess.Popen") as popen:
+                self._stop(orchestration, payload, "child-1", summary="no manifest")
+            popen.assert_not_called()
+            self.assertTrue(any("verifier not configured" in e.get("what", "") for e in self._log(root)))
+
+    def test_child_with_manifest_does_not_launch_fill(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            payload["loam_workspace"].update(verifier_python="/venv/bin/python", verifier_mcp_url="http://x/mcp")
+            _, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            line = json.dumps({"path": "a.cif", "sha256": "a" * 64, "bytes": 1})
+            with patch("subprocess.Popen") as popen:
+                self._stop(orchestration, payload, "child-1", summary=f"LOAM_MANIFEST\n{line}\nEND_LOAM_MANIFEST")
+            popen.assert_not_called()
+
+    def test_verifier_cli_runs_fill(self) -> None:
+        import contextlib
+        import io
+
+        orchestration = self._orchestration()
+        verifier = _load("loam_verify_cli", VERIFIER)
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            self._stop(orchestration, payload, "child-1")
+            (Path(tmp) / "hpc" / "plan-1" / "h-1" / "outputs" / "r1").mkdir(parents=True)
+            run_code, _ = self._fake_hpc(Path(tmp) / "hpc")
+            out = io.StringIO()
+            with patch.object(verifier, "mcp_run_code", return_value=run_code), contextlib.redirect_stdout(out):
+                code = verifier.main(["fill", "--workspace", str(root), "--run", "r1", "--remote-root",
+                                      "/lus/campaign/work/plan-1/h-1", "--mcp-url", "http://x/mcp"])
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out.getvalue())["result"], "recorded")
 
 
 if __name__ == "__main__":
