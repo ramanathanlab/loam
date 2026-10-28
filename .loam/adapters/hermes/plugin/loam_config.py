@@ -80,6 +80,18 @@ class ExecutionConfig:
 _EXECUTION_MODES = {"remote_mcp", "local"}
 _CODE_SOURCES = {"fixed", "generated"}
 
+
+@dataclass(frozen=True)
+class WorkspaceConfig:
+    """Pando-style per-hypothesis workspace (see .loam/hooks/hypothesis_workspace.py)."""
+
+    # Parent of the <plan_id>/<hypothesis_id> folders. Empty: <state_dir>/hypotheses,
+    # resolved in payload_values so a LOAM_STATE_DIR override moves it too.
+    root: str = ""
+    # true: pre-tool blocks layout violations. false: they are only logged.
+    strict: bool = True
+
+
 @dataclass(frozen=True)
 class LoamProfile:
     name: str
@@ -90,6 +102,7 @@ class LoamProfile:
     hypothesis_orchestration: bool = False
     execution: ExecutionConfig | None = None
     hypothesis_tournament: HypothesisTournamentConfig | None = None
+    workspace: WorkspaceConfig | None = None
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any] | None:
@@ -159,6 +172,15 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
         runtime=_clean_text(raw.get("runtime")),
         **extras,
     )
+
+def _workspace_config(value: Any) -> WorkspaceConfig | None:
+    """`workspace: {enabled: true, ...}` turns the workspace on; anything else leaves it off."""
+
+    raw = _as_mapping(value)
+    if raw is None or raw.get("enabled") is not True:
+        return None
+    return WorkspaceConfig(root=_clean_text(raw.get("root")), strict=raw.get("strict") is not False)
+
 
 def _tournament_config(value: Any, state_dir: Path | None = None) -> HypothesisTournamentConfig | None:
     raw = _as_mapping(value)
@@ -304,6 +326,7 @@ def load_profile() -> LoamProfile | None:
         hypothesis_orchestration=orchestration,
         execution=execution,
         hypothesis_tournament=_tournament_config(raw.get("hypothesis_tournament"), override),
+        workspace=_workspace_config(raw.get("workspace")),
     )
 
 
@@ -357,6 +380,13 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "max_children": execution.max_children,
             "workdir_root": execution.workdir_root,
             "tool_prefix": execution.tool_prefix,
+        }
+    workspace = profile.workspace
+    if workspace is not None:
+        values["loam_workspace"] = {
+            "enabled": True,
+            "root": str(Path(workspace.root).expanduser() if workspace.root else profile.state_dir / "hypotheses"),
+            "strict": workspace.strict,
         }
     run_id = _clean_text(os.environ.get("LOAM_RUN_ID"))
     if run_id:

@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+import hypothesis_workspace
+
 AGENT_NAMES = ("reasoner", "hypothesis-validator", "code-generator")
 STATE_FILENAME = "hypothesis-orchestration.jsonl"
 CAMPAIGN_FILENAME = "hypothesis-campaign.jsonl"
@@ -222,8 +224,10 @@ def _max_children(execution: Mapping[str, Any] | None) -> int:
         return 3
 
 
-def _child_tags(plan_id: str, hypothesis_id: str) -> str:
-    return f"[loam-agent-role=code-generator] [loam-plan-id={plan_id}] [loam-hypothesis-id={hypothesis_id}]"
+def _child_tags(plan_id: str, hypothesis_id: str, run_id: str = "") -> str:
+    tags = f"[loam-agent-role=code-generator] [loam-plan-id={plan_id}] [loam-hypothesis-id={hypothesis_id}]"
+    # The workspace run reserved for this child (hypothesis_workspace.reserve_runs).
+    return f"{tags} [loam-run-id={run_id}]" if run_id else tags
 
 
 def _strip_tags(value: str) -> str:
@@ -309,9 +313,29 @@ def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def _layout_block(base: str, run_id: str) -> str:
+    """Where a child's files go in its hypothesis workspace (hypothesis_workspace.py)."""
+
+    if not run_id:
+        return ""
+    return "\n".join((
+        f"WORKSPACE LAYOUT (enforced by Loam; your run is {run_id}):",
+        f"- code and scripts you write: {base}/src/",
+        f"- result files: {base}/outputs/{run_id}/",
+        f"- temporary files: {base}/scratch/{run_id}/",
+        f"- inputs: read from {base}/data/ and never write there",
+        "Write nothing anywhere else, and never /tmp: /tmp is local to one node and the next tool call "
+        "may run on another. Other runs' outputs are frozen; do not modify them.",
+    ))
+
+
 def _generated_child_context(instruction: str, execution: Mapping[str, Any] | None, workdir: str,
-                             hypothesis: Mapping[str, Any] | None = None) -> str:
-    """Context for a code-generator that writes and runs its own code."""
+                             hypothesis: Mapping[str, Any] | None = None, layout: str = "") -> str:
+    """Context for a code-generator that writes and runs its own code.
+
+    ``layout`` is the _layout_block for the child's reserved run; empty when the
+    workspace is off, which leaves the context exactly as before.
+    """
 
     execution = execution if isinstance(execution, Mapping) else {}
     hypothesis_block = _hypothesis_block(hypothesis)
@@ -333,6 +357,7 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
             + (f" with {_text(execution.get('runtime'))}." if _text(execution.get("runtime")) else "."),
             hypothesis_block,
             setup_block,
+            layout,
             "Instruction from validator:\n" + instruction,
             report,
         ) if part)
@@ -370,8 +395,10 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
         "Instruction from validator:\n" + instruction,
         f"Remote target: endpoint={_text(execution.get('endpoint'))}; runtime={_text(execution.get('runtime'))}.",
         "Tools:\n" + "\n".join(lines),
-        f"Write scripts and inputs files {place}, never /tmp: /tmp is local to one node and the next "
-        "tool call may run on another.",
+        layout or (
+            f"Write scripts and inputs files {place}, never /tmp: /tmp is local to one node and the next "
+            "tool call may run on another."
+        ),
         report,
     ) if part)
 
@@ -453,7 +480,8 @@ def _note_scrubbed(removed: list[str]) -> None:
     print(message, file=sys.stderr)
 
 
-def _child_goal(hypothesis: Mapping[str, Any] | None, validator_goal: str, plan_id: str, hypothesis_id: str) -> str:
+def _child_goal(hypothesis: Mapping[str, Any] | None, validator_goal: str, plan_id: str, hypothesis_id: str,
+                run_id: str = "") -> str:
     """Lead the child's GOAL with the hypothesis, not the validator's framing.
 
     The hypothesis is injected in the context block, but luna skims past it and
@@ -461,7 +489,7 @@ def _child_goal(hypothesis: Mapping[str, Any] | None, validator_goal: str, plan_
     the primary task instead of "go find a hypothesis."
     """
 
-    tags = _child_tags(plan_id, hypothesis_id)
+    tags = _child_tags(plan_id, hypothesis_id, run_id)
     lead = ""
     if isinstance(hypothesis, Mapping):
         claim = _text(hypothesis.get("summary")) or _text(hypothesis.get("content"))
@@ -485,7 +513,7 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
     # copied it into the instruction; see _hypothesis_block. Unknown id -> empty
     # block, and the child's context is exactly as it was before.
     hypothesis = _full_hypotheses(payload).get(hypothesis_id)
-    out = []
+    parsed = []
     for task in items:
         if not isinstance(task, Mapping):
             return None
@@ -494,14 +522,53 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
             return None
         clean = _neutralize_fs_recovery(goal)
         instruction = "\n\n".join(part for part in (clean, _neutralize_fs_recovery(_strip_tags(_text(task.get("context"))))) if part)
+        parsed.append((goal, instruction))
+    # Reserve only once every task is known to be valid, so a rejected batch
+    # leaves no reserved runs behind.
+    run_ids, layout_base = _reserve_child_runs(payload, execution, workdir, plan_id, hypothesis_id, len(parsed))
+    out = []
+    for (goal, instruction), run_id in zip(parsed, run_ids):
         out.append(
             {
-                "goal": _child_goal(hypothesis, goal, plan_id, hypothesis_id),
-                "context": _generated_child_context(instruction, execution, workdir, hypothesis),
+                "goal": _child_goal(hypothesis, goal, plan_id, hypothesis_id, run_id),
+                "context": _generated_child_context(
+                    instruction, execution, workdir, hypothesis, _layout_block(layout_base, run_id)
+                ),
                 "role": "leaf",
             }
         )
     return {"tasks": out}
+
+
+def _reserve_child_runs(
+    payload: Mapping[str, Any],
+    execution: Any,
+    workdir: str,
+    plan_id: str,
+    hypothesis_id: str,
+    count: int,
+) -> tuple[list[str], str]:
+    """Reserve one workspace run per child, and the folder the child should write under.
+
+    Returns empty run ids when the workspace is off or reservation fails; the
+    children are then delegated exactly as before, and record_start allocates
+    a run for each when it starts. A workspace problem never blocks delegation.
+    """
+
+    if hypothesis_workspace.settings(payload) is None:
+        return [""] * count, ""
+    try:
+        root = hypothesis_workspace.workspace_root(payload, plan_id, hypothesis_id)
+        run_ids = hypothesis_workspace.reserve_runs(root, count)
+    except Exception as exc:
+        print(f"loam workspace: could not reserve runs: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return [""] * count, ""
+    if isinstance(execution, Mapping) and _text(execution.get("mode")) == "remote_mcp":
+        # The child writes on HPC: the remote workdir mirrors the local layout.
+        base = workdir or f"<HPC base directory (HPC_BASE_DIR)>/{plan_id}/{hypothesis_id}"
+    else:
+        base = str(root)
+    return run_ids, base
 
 
 def _marker(value: str, key: str) -> str:
@@ -735,6 +802,37 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     return None
 
 
+def _session_start(payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The calling session's latest agent_started row, as tool_policy finds it."""
+
+    session_id = _text(payload.get("session_id")) or _text(payload.get("parent_session_id"))
+    if not session_id:
+        return None
+    return next(
+        (
+            row
+            for row in reversed(_read_rows(_state_path(payload)))
+            if row.get("event") == "agent_started" and _text(row.get("child_session_id")) == session_id
+        ),
+        None,
+    )
+
+
+def workspace_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
+    """Pando-style workspace boundary for a campaign child (hypothesis_workspace.fs_policy)."""
+
+    if hypothesis_workspace.settings(payload) is None:
+        return None
+    return hypothesis_workspace.fs_policy(payload, _session_start(payload))
+
+
+def workspace_capture(payload: Mapping[str, Any]) -> None:
+    """Record the code an allowed campaign child runs (hypothesis_workspace.capture_code)."""
+
+    if hypothesis_workspace.settings(payload) is not None:
+        hypothesis_workspace.capture_code(payload, _session_start(payload))
+
+
 def is_campaign_child(payload: Mapping[str, Any]) -> bool:
     """Return whether this callback belongs to a tagged campaign child."""
 
@@ -901,6 +999,25 @@ def record_start(payload: Mapping[str, Any]) -> None:
         "child_subagent_id": _text(payload.get("child_subagent_id")),
         "child_session_id": _text(payload.get("child_session_id")),
     }
+    # Pando-style workspace (off unless loam_workspace is enabled): a validator
+    # gets its hypothesis folder, a code-generator its run. The fields land on
+    # this row because every later hook identifies a session by it.
+    hypothesis = (
+        _full_hypotheses(payload).get(record["hypothesis_id"])
+        if role == "hypothesis-validator" and hypothesis_workspace.settings(payload) is not None
+        else None
+    )
+    record.update(
+        hypothesis_workspace.on_agent_started(
+            payload,
+            role,
+            plan_id,
+            record["hypothesis_id"],
+            run_id=_marker(goal, "loam-run-id"),
+            goal=_strip_tags(goal),
+            statement=(_text(hypothesis.get("content")) or _text(hypothesis.get("summary"))) if hypothesis else "",
+        )
+    )
     _append(_state_path(payload), record)
     if role == "hypothesis-validator":
         _append_campaign(payload, {**record, "event": "hypothesis_validation_started"})
