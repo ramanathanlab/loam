@@ -305,6 +305,7 @@ class CampaignInjectionTests(unittest.TestCase):
             [{"hypothesis_id": "h-1", "status": "supported", "evidence_score": 0.5, "summary": "Report."}],
             registry,
             context,
+            {"h-1": 1210.0},
         )
 
         self.assertIn("EGFR", directive)

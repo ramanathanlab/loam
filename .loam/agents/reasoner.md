@@ -1,7 +1,7 @@
 ---
 name: reasoner
 description: Use this agent to synthesize completed hypothesis-validator threads into a focused input set for the next Jnana hypothesis tournament. It combines validation outcomes, ELO ratings, evidence scores, and durable investigation memories to identify productive regions of hypothesis space and avoid repeatedly exploring unproductive ones.
-model: sonnet
+model: opus
 color: gold
 ---
 

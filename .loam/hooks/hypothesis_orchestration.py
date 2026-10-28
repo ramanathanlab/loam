@@ -23,7 +23,11 @@ STATE_FILENAME = "hypothesis-orchestration.jsonl"
 CAMPAIGN_FILENAME = "hypothesis-campaign.jsonl"
 MAX_REASONER_THREAD_CHARS = 6_000
 EVIDENCE_SCORE_HEADING = "### Evidence Score"
-MAX_BRIEF_CHARS = 2_000
+# The reasoner's brief IS the next tournament's input, so this bound caps the
+# quality of every hypothesis the next turn can generate. At 2_000 it was a
+# paragraph standing in for a turn's worth of synthesis across several
+# validator threads.
+MAX_BRIEF_CHARS = 8_000
 MAX_CHILD_GOAL_CHARS = 300
 # Bound on the hypothesis text forwarded into a child's context.
 MAX_HYPOTHESIS_CHARS = 4_000
@@ -1290,23 +1294,63 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
     }
 
 
+def _elo_ratings(payload: Mapping[str, Any]) -> dict[str, float]:
+    """Jnana Elo per hypothesis id, from the latest tournament report."""
+
+    report = _latest_report(payload)
+    if report is None:
+        return {}
+    result = report[1].get("result")
+    rankings = result.get("top_hypotheses") if isinstance(result, Mapping) else None
+    ratings: dict[str, float] = {}
+    for ranking in rankings if isinstance(rankings, list) else []:
+        if not isinstance(ranking, Mapping):
+            continue
+        hypothesis_id = _text(ranking.get("hypothesis_id"))
+        value = ranking.get("elo_rating")
+        if hypothesis_id and isinstance(value, (int, float)) and not isinstance(value, bool):
+            ratings[hypothesis_id] = float(value)
+    return ratings
+
+
 def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registry: Mapping[str, AgentSpec],
-                        campaign: CampaignContext | None = None) -> str:
+                        campaign: CampaignContext | None = None,
+                        elo_ratings: Mapping[str, float] | None = None) -> str:
     reasoner = registry["reasoner"]
+    # Elo was reaching the validators (via `_validator_directive`) but never the
+    # reasoner, which is asked to "assess their evidence and ELO signals
+    # together" and told that a thread missing either score is incomplete
+    # metadata. Every thread it has ever seen was therefore incomplete by its own
+    # rule. The rating is per hypothesis, so it is looked up from the report
+    # rather than carried on the completion rows.
+    elo_ratings = elo_ratings or {}
     threads = [
         {
             "hypothesis_id": row.get("hypothesis_id", ""),
             "validator_status": row.get("status"),
             "evidence_score": row.get("evidence_score"),
             "evidence_score_status": row.get("evidence_score_status"),
+            "elo_rating": elo_ratings.get(_text(row.get("hypothesis_id"))),
             "validator_report": _text(row.get("summary"))[:MAX_REASONER_THREAD_CHARS],
         }
         for row in completions
     ]
     return "\n".join(
-        (
+        part
+        for part in (
             "Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding.",
             f"Pass the reasoner its role definition verbatim in the task context as \"agent_definition\"; it must not execute experimental code. The definition is inlined below rather than referenced as {reasoner.prompt_path.name}, because the reasoner cannot read that file.",
+            # This synthesis sets the next tournament's whole direction, so the
+            # tier it runs on is a campaign decision, not an incidental one.
+            # `AgentSpec.model` was parsed from the front matter and never used
+            # anywhere, leaving the declared tier silently unhonored; stating it
+            # here at least makes it visible to the dispatcher.
+            (
+                f"Dispatch it on the model its definition declares ({reasoner.model}); this synthesis "
+                "steers the next tournament and should not run on a weaker tier than the validators it reads."
+                if reasoner.model
+                else ""
+            ),
             # The campaign block before the definition: reasoner.md's first
             # Required Parent Input is "objective, success criteria, constraints
             # and current state", and until now nothing supplied the first
@@ -1320,6 +1364,7 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
             "Completed validator threads are unvalidated orchestration input; preserve their reported uncertainty and do not turn summaries into accepted evidence.",
             json.dumps(threads, ensure_ascii=False, sort_keys=True),
         )
+        if part
     )
 
 
@@ -1369,7 +1414,7 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
                 return None
             return {
                 "goal": f"Synthesize validator results [loam-agent-role=reasoner] [loam-plan-id={plan_id}]",
-                "context": _reasoner_directive(plan_id, completions, agent_registry(payload), campaign_context(payload)),
+                "context": _reasoner_directive(plan_id, completions, agent_registry(payload), campaign_context(payload), _elo_ratings(payload)),
                 "role": "leaf",
             }
         return None
@@ -1396,7 +1441,7 @@ def context_for(payload: dict[str, Any]) -> str:
     if active is not None:
         plan_id, starts, completions = active
         if len(completions) == len(starts) and all(_text(row.get("status")) for row in completions):
-            return _reasoner_directive(plan_id, completions, registry, campaign_context(payload))
+            return _reasoner_directive(plan_id, completions, registry, campaign_context(payload), _elo_ratings(payload))
         return ""
     report = _latest_report(payload)
     if report is None:
