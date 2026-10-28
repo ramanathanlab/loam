@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Jnana is a sibling checkout, not a package dependency. Its periodic
+  # tournament lives only on this branch of acadev/Jnana; pin the commit so an
+  # upstream push cannot change what the tournament tests exercise.
+  JNANA_REPOSITORY: acadev/Jnana
+  JNANA_REF: b38d89287c741afb035cd8699a964d36799e7a39
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uvx ruff@0.17.3 check --output-format=github .
+
+  test:
+    # Hooks, reconcilers, the adapter and the hook wire contract: stdlib plus
+    # PyYAML, which is all a Hermes interpreter is expected to provide.
+    name: test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v6
+      - run: uv pip install --system pytest pyyaml
+      - run: python -m pytest -ra
+
+  test-hpc:
+    # The hpc-deployment skill's runtime dependencies (pyproject.toml), which
+    # the core job lacks, so its batch and pool-repair tests skip there.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+      - run: uv pip install --system pytest aiohttp .
+      - run: python -m pytest -ra tests/test_hpc_batch.py tests/test_pool_repair.py tests/test_hpc_control.py
+
+  test-jnana:
+    # The tests find Jnana at ../jnana relative to the repository root.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: loam
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: loam
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.JNANA_REPOSITORY }}
+          ref: ${{ env.JNANA_REF }}
+          path: jnana
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+      - run: uv pip install --system pytest pyyaml requests openai
+      - run: python -m pytest -ra tests/test_hypothesis_tournament.py tests/test_hypothesis_orchestration.py
