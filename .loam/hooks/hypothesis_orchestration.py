@@ -41,6 +41,10 @@ MAX_RULES_CHARS = 4_000
 RULE_TIERS = ("validator", "code-generator", "reasoner")
 # Tools of the hpc-deployment MCP server a generated-mode code-generator may use.
 HPC_TOOLS = ("run_code", "run_batch", "batch_status", "list_batches", "register_tool", "list_tools", "inspect_filesystem")
+# The subset of HPC_TOOLS that only looks: no compute, no registration, no
+# submission. A hypothesis-validator may call these itself (see
+# `_observation_tools`); everything executable still goes through a child.
+VALIDATOR_OBSERVATION_TOOLS = ("batch_status", "inspect_filesystem", "list_batches")
 _LOAM_TAG = re.compile(r"\[loam-[a-z-]+=[^\]]*\]")
 
 
@@ -54,7 +58,8 @@ class AgentSpec:
     direct_execution: bool
     # The prompt body, for injection into the child's task context. It cannot be
     # delivered as a path to read: `tool_policy` allows a hypothesis-validator
-    # only `delegate_task`, so a validator told to read its own definition gets
+    # `delegate_task` plus the read-only HPC observation tools, none of which
+    # reads a local file, so a validator told to read its own definition gets
     # back "hypothesis-validator must delegate executable work to
     # code-generator" and then runs with no role instructions at all. The
     # reasoner is likewise restricted. Only a code-generator could read a path,
@@ -427,6 +432,26 @@ def hpc_tool_names(execution: Mapping[str, Any] | None) -> dict[str, str]:
     if tool_name:
         names[function_name or "run_code"] = tool_name
     return names
+
+
+def _observation_tools(execution: Mapping[str, Any] | None) -> frozenset[str]:
+    """Read-only HPC tools a hypothesis-validator may call itself.
+
+    Observation is not computation, so the invariant holds: the validator still
+    writes and runs no code, and `max_children` still bounds its experiments.
+    But allowing it nothing except `delegate_task` meant every status poll and
+    every result read cost an experiment slot out of a budget of three, which is
+    also why `_hypothesis_block` has to instruct the child to poll on the
+    validator's behalf and report only once finished.
+
+    The integrity half matters more: without these, a validator's evidence ledger
+    is entirely downstream of a child's self-reported numbers, with no way to
+    check them against the files on disk -- for an agent whose output is a
+    calibrated score.
+    """
+
+    names = hpc_tool_names(execution)
+    return frozenset(names[key] for key in VALIDATOR_OBSERVATION_TOOLS if key in names)
 
 
 def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
@@ -860,7 +885,15 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     if role != "hypothesis-validator":
         return None
     if tool_name != "delegate_task":
-        return {"action": "block", "message": "hypothesis-validator must delegate executable work to code-generator"}
+        if tool_name in _observation_tools(payload.get("loam_execution")):
+            return None
+        return {
+            "action": "block",
+            "message": (
+                "hypothesis-validator must delegate executable work to code-generator; "
+                f"it may call only the read-only tools {sorted(VALIDATOR_OBSERVATION_TOOLS)} itself"
+            ),
+        }
     arguments = payload.get("arguments")
     goals = []
     if isinstance(arguments, Mapping):
@@ -1238,8 +1271,9 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
         "goal": (
             f"Validate the supplied hypothesis by designing the smallest decisive experiment and delegating "
             f"it to at most {cap} code-generator leaf children, one at a time, iterating on their actual "
-            "results. Do not calculate directly or use any tool other than delegate_task. Then return the "
-            "required report headings, including a bare decimal Evidence Score. "
+            "results. Do not compute anything yourself; delegate_task is your only executable tool, though "
+            f"you may call {', '.join(VALIDATOR_OBSERVATION_TOOLS)} to check on and read a child's run. "
+            "Then return the required report headings, including a bare decimal Evidence Score. "
             f"[loam-agent-role=hypothesis-validator] [loam-plan-id={plan_id}] "
             f"[loam-hypothesis-id={hypothesis_id}]"
         ),
@@ -1268,7 +1302,7 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
                 },
                 "validator_instructions": (
                     "Follow agent_definition above; it is your role specification and is provided in full "
-                    "because you may call no tool other than delegate_task. "
+                    "because you cannot read its file. "
                     "Every code-generator child starts with an empty context and cannot see this payload, "
                     "the tournament state or the campaign files, so write selected_hypothesis into each "
                     "child's goal/context in full -- statement, candidate sequence and the falsifying "
@@ -1278,7 +1312,9 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
                     "and the acceptance condition, ending with child_template.goal_suffix; context = exact "
                     "inputs, parameter ranges and expected outputs. Children write their own code, can reuse "
                     "registered HPC tools, and run large sweeps as batches. At most max_children children in "
-                    "total. Never compute or run code yourself. Then return exactly these headings: "
+                    "total. Never compute or run code yourself. Do poll and read a child's run yourself with "
+                    f"{', '.join(VALIDATOR_OBSERVATION_TOOLS)} rather than spending a child on it, and verify a "
+                    "child's reported numbers against the files it actually wrote. Then return exactly these headings: "
                     "### Hypothesis; ### Outcome; ### Evidence Ledger; ### Credit Assignment; "
                     "### Evidence Score; ### Next Step. The Evidence Score must be a bare decimal "
                     "in [-1.00, 1.00], for example +0.75, immediately after its heading."
