@@ -184,6 +184,43 @@ class CampaignContext:
         return tuple(rule for rule in self.rules if tier in rule.scopes)
 
 
+def campaign_provenance(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Which campaign policy was in force, by name and content digest.
+
+    Moving the objective and the rules out of this hook and into editable files
+    makes a result harder to attribute than hardcoding did, unless the policy
+    that produced it is recorded beside it. A digest is enough: it says whether
+    two runs were governed identically, and names the file to go read.
+
+    Best effort by design. A missing or malformed policy file must fail loudly
+    where it is injected (`campaign_context`), but the manifest and ledger are
+    written on every event and must not fall over with it, so a read failure is
+    recorded rather than raised.
+    """
+
+    campaign = payload.get("loam_campaign")
+    if not isinstance(campaign, Mapping):
+        return {}
+    goal_name = _text(campaign.get("goal"))
+    raw_rules = campaign.get("rules")
+    names = [name for item in (raw_rules if isinstance(raw_rules, list) else []) if (name := _text(item))]
+    provenance: dict[str, Any] = {"goal": goal_name, "rules": names}
+    combined = hashlib.sha256()
+    try:
+        files = [(goal_name, _campaign_dir(payload) / f"{goal_name}.md")] if goal_name else []
+        files += [(name, _rules_dir(payload) / f"{name}.md") for name in names]
+        digests: dict[str, str] = {}
+        for name, path in files:
+            data = path.read_bytes()
+            digests[name] = hashlib.sha256(data).hexdigest()
+            combined.update(name.encode("utf-8") + b"\0" + data + b"\0")
+        provenance["digests"] = digests
+        provenance["policy_sha256"] = combined.hexdigest() if digests else ""
+    except OSError as exc:
+        provenance["error"] = f"{type(exc).__name__}: {exc}"
+    return provenance
+
+
 def _rules_text(campaign: CampaignContext | None, tier: str) -> str:
     """The rules block for one tier, as authoritative prose. Empty when none."""
 
