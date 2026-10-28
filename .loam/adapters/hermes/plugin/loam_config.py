@@ -7,6 +7,7 @@ variables remain explicit emergency overrides, not the normal operational API.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -51,6 +52,26 @@ class HypothesisTournamentConfig:
 
 
 @dataclass(frozen=True)
+class CampaignConfig:
+    """Invariant campaign context: what the campaign is for, and its rules.
+
+    This is campaign policy rather than compute configuration, so it sits beside
+    `execution` instead of inside it. Both fields name files that the hooks
+    resolve against `repo_root` (`.loam/campaigns/<goal>.md`,
+    `.loam/rules/<name>.md`), the way agent prompts are already loaded: the hook
+    holds `repo_root` and this module does not, so a name is validated here and
+    read there.
+
+    Only the invariant half of a campaign's context lives here. The evolving
+    half -- current state -- already exists as the reasoner brief and the
+    reconciled findings that the pre-LLM recall hooks inject.
+    """
+
+    goal: str
+    rules: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ExecutionConfig:
     """Execution contract supplied to hypothesis-validation children."""
 
@@ -88,6 +109,7 @@ class LoamProfile:
     pre_llm_every: int
     duplicate_policy: str
     hypothesis_orchestration: bool = False
+    campaign: CampaignConfig | None = None
     execution: ExecutionConfig | None = None
     hypothesis_tournament: HypothesisTournamentConfig | None = None
 
@@ -113,6 +135,47 @@ def _positive_int(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
 
+
+
+# A campaign or rules name becomes a file name under `.loam/`, so it may not
+# carry a path at all: `../../../etc/passwd`, or an absolute path, would
+# otherwise let a profile pull arbitrary text into every child's context.
+# Requiring a leading alphanumeric also rejects `.` and `..` outright.
+_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _campaign_name(value: Any, field_name: str) -> str:
+    name = _clean_text(value)
+    if not _NAME_RE.fullmatch(name):
+        raise ValueError(f"campaign.{field_name} must be a bare file name: {value!r}")
+    return name
+
+
+def _campaign_config(value: Any) -> CampaignConfig | None:
+    """Parse the optional `campaign:` block.
+
+    `None` means a profile with no campaign context, which is the pre-existing
+    behavior: nothing is injected. A malformed block raises instead, for the same
+    reason `_execution_config` rejects a bad mode -- a typo that silently dropped
+    the objective would leave every validator aiming at nothing while the run
+    still looked governed.
+
+    `goal` is required whenever the block exists. Rules alone would be the older
+    "rules context" framing, in which policy says what not to do and nothing says
+    what the campaign is for.
+    """
+
+    raw = _as_mapping(value)
+    if raw is None:
+        return None
+    goal = _campaign_name(raw.get("goal"), "goal")
+    rules = raw.get("rules", [])
+    if not isinstance(rules, list):
+        raise ValueError(f"campaign.rules must be a list of names: {rules!r}")
+    names = tuple(_campaign_name(item, "rules") for item in rules)
+    if len(set(names)) != len(names):
+        raise ValueError(f"campaign.rules must not repeat a name: {list(names)!r}")
+    return CampaignConfig(goal=goal, rules=names)
 
 
 def _execution_config(value: Any) -> ExecutionConfig | None:
@@ -291,6 +354,10 @@ def load_profile() -> LoamProfile | None:
     if policy not in _ALLOWED_POLICIES:
         return None
     orchestration = _as_mapping(raw.get("hypothesis_orchestration")) is not None and raw["hypothesis_orchestration"].get("enabled") is True
+    # Deliberately not required by orchestration: an existing profile has no
+    # `campaign:` block, and rejecting it here would take every hook inert
+    # rather than merely leaving the campaign context uninjected.
+    campaign = _campaign_config(raw.get("campaign"))
     execution = _execution_config(raw.get("execution"))
     if orchestration and execution is None:
         return None
@@ -302,6 +369,7 @@ def load_profile() -> LoamProfile | None:
         pre_llm_every=_interval(raw.get("pre_llm_every", DEFAULT_INTERVAL)),
         duplicate_policy=policy,
         hypothesis_orchestration=orchestration,
+        campaign=campaign,
         execution=execution,
         hypothesis_tournament=_tournament_config(raw.get("hypothesis_tournament"), override),
     )
@@ -343,6 +411,11 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
         "loam_duplicate_policy": profile.duplicate_policy,
         "loam_hypothesis_orchestration": profile.hypothesis_orchestration,
     }
+    campaign = profile.campaign
+    if campaign is not None:
+        # Names only. The hooks resolve them against `repo_root`, which this
+        # module never sees, so no file is read here.
+        values["loam_campaign"] = {"goal": campaign.goal, "rules": list(campaign.rules)}
     execution = profile.execution
     if execution is not None:
         values["loam_execution"] = {
