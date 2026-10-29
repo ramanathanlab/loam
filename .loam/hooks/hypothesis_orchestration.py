@@ -23,8 +23,10 @@ from falda_campaign import (
     falda_tool_policy,
     generation_memory,
     reasoner_memory_block,
+    tools_available,
     write_validator_outcome,
 )
+from falda_memory import config as falda_config
 
 AGENT_NAMES = ("reasoner", "hypothesis-validator", "code-generator")
 STATE_FILENAME = "hypothesis-orchestration.jsonl"
@@ -695,6 +697,10 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     role = _text(starts[-1].get("role"))
     tool_name = _text(payload.get("tool_name"))
     if role == "reasoner":
+        # Hermes may defer MCP tools behind tool_search; with FALDA tools on, the reasoner needs it to
+        # load mcp__falda__* (whose calls the FALDA guard above still checks).
+        if tool_name == "tool_search" and tools_available(falda_config(payload)):
+            return None
         return {"action": "block", "message": "reasoner has no tool capability; return the synthesis to the harness"}
     if role == "code-generator":
         if tool_name == "delegate_task":

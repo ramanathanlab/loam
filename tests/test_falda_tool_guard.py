@@ -146,6 +146,14 @@ class FaldaToolGuardTests(unittest.TestCase):
             result = self._call("rs-1", REMEMBER, GOOD)
         self.assertIn("not enabled", result["message"])
 
+    def test_reasoner_may_load_deferred_falda_tools_only_when_they_are_on(self) -> None:
+        # Hermes may defer MCP tools behind tool_search; the reasoner needs it to reach mcp__falda__*.
+        self.assertIsNone(self._call("rs-1", "tool_search", {"query": "falda"}))
+        blocked = self._call("rs-1", "tool_search", {"query": "falda"}, loam_falda=falda_block(reasoner_tools=False))
+        self.assertEqual(blocked["message"], "reasoner has no tool capability; return the synthesis to the harness")
+        with patch.dict(os.environ, {"LOAM_FALDA_MCP": "0"}):
+            self.assertIsNotNone(self._call("rs-1", "tool_search", {"query": "falda"}))
+
     def test_reasoner_keeps_no_other_tool(self) -> None:
         result = self._call("rs-1", "terminal", {"command": "ls"})
         self.assertEqual(result["message"], "reasoner has no tool capability; return the synthesis to the harness")
