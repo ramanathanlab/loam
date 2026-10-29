@@ -2229,5 +2229,122 @@ class WorkspaceDecisionTests(WorkspacePolicyTests):
             self.assertEqual([p for p in problems if "validator" in p], [])
 
 
+class WorkspaceTraceTests(WorkspacePolicyTests):
+    """G2: per-agent trace captured from state.db into the Pando record at stop."""
+
+    def _state_db(self, home: Path, session_id: str, rows: list[dict]) -> Path:
+        """A minimal Hermes state.db with a messages table, for one session."""
+
+        import sqlite3
+
+        home.mkdir(parents=True, exist_ok=True)
+        db = home / "state.db"
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, "
+            "content TEXT, tool_call_id TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL, "
+            "token_count INTEGER, finish_reason TEXT, reasoning TEXT, reasoning_content TEXT)"
+        )
+        for i, r in enumerate(rows):
+            conn.execute(
+                "INSERT INTO messages (session_id, role, content, tool_calls, tool_name, timestamp, reasoning) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (session_id, r.get("role"), r.get("content"), r.get("tool_calls"), r.get("tool_name"),
+                 1000.0 + i, r.get("reasoning")),
+            )
+        conn.commit()
+        conn.close()
+        return db
+
+    def _turns(self):
+        return [
+            {"role": "user", "content": "Test this hypothesis."},
+            {"role": "assistant", "content": "", "tool_calls": '[{"function":{"name":"skill_view"}}]'},
+            {"role": "tool", "tool_name": "skill_view", "content": "X" * 4000},  # a big skill body
+            {"role": "assistant", "content": "I will fold with Chai-1."},
+            {"role": "tool", "tool_name": "mcp__hpc__run_code", "content": "ipTM 0.16"},
+        ]
+
+    def test_code_generator_trace_lands_in_run_json_and_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            home = Path(tmp) / "home"
+            self._state_db(home, "child-1", self._turns())
+            payload["hermes_home"] = str(home)
+            start = {"role": "code-generator", "child_session_id": "child-1", "workspace": str(root),
+                     "run": "r1", "plan_id": "plan-1", "hypothesis_id": "h-1"}
+            workspace = _load("loam_ws_trace_cg")
+            self.assertTrue(workspace.capture_trace(payload, start))
+
+            trace = (root / "runs" / "r1" / "trace.jsonl").read_text().splitlines()
+            self.assertEqual(len(trace), 5)
+            run = json.loads((root / "runs" / "r1" / "run.json").read_text())
+            self.assertEqual(run["trace"]["path"], "runs/r1/trace.jsonl")
+            self.assertEqual(run["trace"]["rows"], 5)
+            self.assertEqual(len(run["trace"]["sha256"]), 64)
+            # Default strips the skill body (already hashed under skills); spine kept.
+            skill_row = json.loads(trace[2])
+            self.assertIn("body omitted", skill_row["content"])
+            self.assertEqual(json.loads(trace[4])["content"], "ipTM 0.16")
+            last = json.loads((root / "log.jsonl").read_text().splitlines()[-1])
+            self.assertEqual((last["kind"], last["run"]), ("trace", "r1"))
+
+    def test_full_mode_keeps_the_skill_body(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            home = Path(tmp) / "home"
+            self._state_db(home, "child-1", self._turns())
+            payload["hermes_home"] = str(home)
+            payload["loam_workspace"]["trace_full"] = True
+            start = {"role": "code-generator", "child_session_id": "child-1", "workspace": str(root), "run": "r1"}
+            workspace = _load("loam_ws_trace_full")
+            self.assertTrue(workspace.capture_trace(payload, start))
+            trace = (root / "runs" / "r1" / "trace.jsonl").read_text().splitlines()
+            self.assertEqual(len(json.loads(trace[2])["content"]), 4000)
+
+    def test_validator_trace_lands_in_experiment_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            home = Path(tmp) / "home"
+            self._state_db(home, "validator-1", self._turns())
+            payload["hermes_home"] = str(home)
+            start = {"role": "hypothesis-validator", "child_session_id": "validator-1", "workspace": str(root)}
+            workspace = _load("loam_ws_trace_val")
+            self.assertTrue(workspace.capture_trace(payload, start))
+            self.assertTrue((root / "validator" / "trace.jsonl").is_file())
+            experiment = json.loads((root / "experiment.json").read_text())
+            self.assertEqual(experiment["trace"]["path"], "validator/trace.jsonl")
+
+    def test_missing_db_is_a_no_op_not_a_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            payload["hermes_home"] = str(Path(tmp) / "nonexistent")
+            start = {"role": "code-generator", "child_session_id": "child-1", "workspace": str(root), "run": "r1"}
+            workspace = _load("loam_ws_trace_nodb")
+            self.assertFalse(workspace.capture_trace(payload, start))
+            self.assertFalse((root / "runs" / "r1" / "trace.jsonl").exists())
+
+    def test_empty_session_writes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            home = Path(tmp) / "home"
+            self._state_db(home, "someone-else", self._turns())  # no rows for child-1
+            payload["hermes_home"] = str(home)
+            start = {"role": "code-generator", "child_session_id": "child-1", "workspace": str(root), "run": "r1"}
+            workspace = _load("loam_ws_trace_empty")
+            self.assertFalse(workspace.capture_trace(payload, start))
+
+    def test_trace_capture_keeps_the_log_chain_intact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            home = Path(tmp) / "home"
+            self._state_db(home, "child-1", self._turns())
+            payload["hermes_home"] = str(home)
+            start = {"role": "code-generator", "child_session_id": "child-1", "workspace": str(root), "run": "r1"}
+            workspace = _load("loam_ws_trace_chain")
+            workspace.capture_trace(payload, start)
+            self.assertEqual(workspace.verify_log(root), [])
+
+
 if __name__ == "__main__":
     unittest.main()

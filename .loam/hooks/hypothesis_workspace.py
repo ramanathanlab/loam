@@ -1780,6 +1780,152 @@ def _audit_unlocked(root: Path, experiment: Mapping[str, Any], remote: bool) -> 
     return problems
 
 
+# --- per-agent trace capture (state.db -> trace.jsonl) ------------------------------
+
+TRACE_FILE = "trace.jsonl"
+# Columns the trace keeps from Hermes's messages table, in a stable order. The
+# reasoning_* columns are read even though this deployment's provider leaves them
+# empty: a provider that returns reasoning fills them with no change here.
+_TRACE_COLUMNS = (
+    "role", "content", "tool_name", "tool_calls", "tool_call_id",
+    "reasoning", "reasoning_content", "finish_reason", "token_count", "timestamp",
+)
+
+
+def trace_db_path(payload: Mapping[str, Any]) -> Path | None:
+    """Hermes's state.db for this campaign, or None when it cannot be located.
+
+    HERMES_HOME is set per campaign by run-campaign and inherited by the hook
+    subprocess; state.db lives at its root (hermes_state.DEFAULT_DB_PATH). A
+    payload override wins, for tests and for a non-standard home.
+    """
+
+    override = _text((settings(payload) or {}).get("trace_db"))
+    home = override or _text(payload.get("hermes_home")) or _text(os.environ.get("HERMES_HOME"))
+    if not home:
+        return None
+    candidate = Path(home).expanduser()
+    db = candidate if candidate.name == "state.db" else candidate / "state.db"
+    return db if db.is_file() else None
+
+
+def read_trace(db_path: Path, session_id: str, full: bool) -> list[dict[str, Any]]:
+    """One session's turns from state.db, oldest first, normalized. Best effort -> [] on any error.
+
+    A skill read's body is replaced with a short marker unless ``full``: it is
+    already hashed under the run's ``skills`` (run.json), so the default trace is
+    the reasoning/tool spine, not a second copy of the skill library.
+    """
+
+    import sqlite3
+
+    if not session_id:
+        return []
+    try:
+        # Read-only: the live campaign may still hold the write lock (WAL).
+        connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
+    except sqlite3.Error:
+        return []
+    rows: list[dict[str, Any]] = []
+    try:
+        connection.row_factory = sqlite3.Row
+        cursor = connection.execute(
+            f"SELECT {', '.join(_TRACE_COLUMNS)} FROM messages "
+            "WHERE session_id = ? ORDER BY timestamp, id",
+            (session_id,),
+        )
+        for index, record in enumerate(cursor, start=1):
+            rows.append(_trace_row(index, record, full))
+    except sqlite3.Error:
+        return []
+    finally:
+        connection.close()
+    return rows
+
+
+def _trace_row(seq: int, record: Mapping[str, Any], full: bool) -> dict[str, Any]:
+    role = _text(record["role"])
+    tool = _text(record["tool_name"])
+    entry: dict[str, Any] = {"seq": seq, "role": role}
+    timestamp = record["timestamp"]
+    if isinstance(timestamp, (int, float)):
+        entry["ts"] = datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
+    content = _text(record["content"])
+    if content:
+        if not full and role == "tool" and tool in SKILL_READ_TOOLS:
+            # The body is already pinned by its sha256 under run.json `skills`.
+            entry["content"] = f"<{tool} body omitted; {len(content)} chars, hashed under skills>"
+        else:
+            entry["content"] = content
+    for key in ("tool_name", "tool_call_id", "tool_calls", "reasoning", "reasoning_content", "finish_reason"):
+        value = _text(record[key])
+        if value:
+            entry[key] = value
+    return entry
+
+
+def write_trace(dest_dir: Path, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Write trace.jsonl into ``dest_dir`` and return its {path, sha256, bytes, rows} pointer.
+
+    ``path`` is relative to the workspace root (dest_dir's parent chain), so the
+    pointer reads like a manifest entry. None when there is nothing to write.
+    """
+
+    if not rows:
+        return None
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    target = dest_dir / TRACE_FILE
+    body = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows)
+    data = body.encode("utf-8")
+    tmp = target.with_name(f".{target.name}.tmp")
+    with tmp.open("wb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, target)
+    return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data), "rows": len(rows)}
+
+
+def capture_trace(payload: Mapping[str, Any], start: Mapping[str, Any]) -> bool:
+    """Copy a stopped agent's conversation out of state.db into its workspace dir.
+
+    Linked into the record like everything else: the trace file is referenced by
+    a {path, sha256, bytes, rows} pointer on the hub (run.json for a
+    code-generator, experiment.json for a validator) and announced in the chain.
+    The reasoner is plan-level and handled with its own record in a later group.
+    Best effort: a provenance copy must never raise into the stop path.
+    """
+
+    db_path = trace_db_path(payload)
+    session_id = _text(start.get("child_session_id"))
+    if db_path is None or not session_id:
+        return False
+    root = Path(_text(start.get("workspace")))
+    role = _text(start.get("role"))
+    full = (settings(payload) or {}).get("trace_full") is True
+    if role == "code-generator":
+        run_id = _text(start.get("run"))
+        if not _RUN_ID.fullmatch(run_id or ""):
+            return False
+        dest, where, log_extra = root / "runs" / run_id, root / "runs" / run_id / RUN_FILE, {"run": run_id}
+    elif role == "hypothesis-validator":
+        dest, where, log_extra = root / "validator", root / EXPERIMENT_FILE, {}
+    else:
+        return False
+    pointer = write_trace(dest, read_trace(db_path, session_id, full))
+    if pointer is None:
+        return False
+    pointer["path"] = (dest / TRACE_FILE).relative_to(root).as_posix()
+    with _locked(root):
+        record = read_json(where)
+        if not record:
+            return False
+        record["trace"] = pointer
+        _write_json(where, record)
+        _append_log_unlocked(root, "trace", {**log_extra, "trace": pointer})
+    return True
+
+
 def on_agent_stopped(
     payload: Mapping[str, Any], start: Mapping[str, Any], completion: Mapping[str, Any] | None
 ) -> list[str]:
@@ -1801,6 +1947,8 @@ def on_agent_stopped(
         run = finalize_run(
             root, run_id, _text(payload.get("child_status")) or "error", _text(payload.get("child_summary")), remote
         )
+        # After finalize_run, so the trace pointer lands on the frozen run record.
+        _capture_trace_safe(payload, start)
         if remote and run is not None and run.get("state") == "completed" and run.get("manifest_status") not in VERIFIED_MANIFESTS:
             _launch_verifier(payload, start, root, ["fill", "--run", run_id])
         if remote and run is not None and run.get("batches"):
@@ -1808,10 +1956,20 @@ def on_agent_stopped(
         return []
     if role == "hypothesis-validator" and completion is not None:
         problems = close_workspace(root, completion, remote)
+        _capture_trace_safe(payload, start)
         if remote:
             _launch_verifier(payload, start, root, ["recheck"])
         return problems
     return []
+
+
+def _capture_trace_safe(payload: Mapping[str, Any], start: Mapping[str, Any]) -> None:
+    """capture_trace, isolated: a trace copy must never fail the stop path."""
+
+    try:
+        capture_trace(payload, start)
+    except Exception as exc:
+        print(f"loam workspace: trace capture failed: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
 VERIFIER = Path(__file__).resolve().parents[1] / "reconcile" / "verify_workspace.py"
