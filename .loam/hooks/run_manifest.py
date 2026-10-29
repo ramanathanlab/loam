@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+import falda_memory
+
 FILENAME = "run-manifest.json"
 SCHEMA_VERSION = "loam_run_manifest_v1"
 
@@ -47,7 +49,7 @@ def _falda_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
     falda = payload.get("loam_falda")
     if isinstance(falda, Mapping):
         summary["pool"] = _text(falda.get("pool"))
-        summary["workflow_tag"] = f"workflow:{_text(payload.get('workflow_id'))}"
+        summary["workflow_tag"] = falda_memory.workflow_tag(payload)
         summary.update({name: falda.get(name) is True for name in _FALDA_SWITCHES})
     return summary
 

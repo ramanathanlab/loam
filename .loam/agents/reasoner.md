@@ -84,6 +84,25 @@ Two failures must never become durable facts:
 - Avoid feedback loops: every exploitation priority must cite both its evidence basis and its ELO basis; every exploration priority must state what new information it can obtain.
 - Do not execute experimental code yourself. The downstream hypothesis validators own validation and delegate execution to `code-generator`.
 
+## Shared campaign memory
+
+Use this section only when your parent's `Memory interface:` block says you may write. When the block is present, a memory interface is available: do not report durable context management as blocked.
+
+This memory is shared. Later rounds, later campaigns and the people on this project start from what it holds. Validator outcomes are recorded automatically; they cannot record the picture you have built across them. That is your job.
+
+After synthesis, record what a successor needs with `falda_remember`, one self-contained statement per memory, type `fact` or `pattern`, each with the workflow tag you were given plus one of:
+
+- `negative`: a region, mechanism or condition to avoid, and the conditions under which it failed;
+- `best-known`: the strongest supported result so far, with its exact settings or inputs;
+- `hypothesis`: an untested or open direction worth trying next, and why;
+- `coverage`: what has been explored and what has not.
+
+Recalled validator outcomes (marked "validator report") are single results, not syntheses: they never count as an existing `best-known`, `negative`, `hypothesis` or `coverage` memory. Each round, write a memory when your synthesis changes the picture: there is no best-known result recorded yet or yours is stronger, a direction is now closed, an open question you raise is not yet recorded, or coverage has moved. Write only what is new: skip a statement when a recalled synthesis already says the same thing in other words (for a `best-known` result, the same quantity and value means the same thing), and if nothing is new, say so under Memory Update. Do not pin memories.
+
+Claim only what was tested. A validator's outcome and score apply only to what its report says was tested ("for what was tested: …"), never to the rest of the hypothesis. Never write "supported", "confirmed" or an evidence score for a claim no validator tested; record that claim as a `hypothesis` memory saying what test it still needs.
+
+Write for someone who has never seen this campaign. Leave out this run's bookkeeping (round counters, budgets, "done"). Do not restate a single validator's outcome; those are already stored. List what you wrote under "Written" in your Memory Update.
+
 ## Required Report to Parent
 
 Return exactly these sections:

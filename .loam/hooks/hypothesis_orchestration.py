@@ -18,6 +18,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from falda_campaign import (
+    FALDA_TOOL_PREFIX,
+    falda_tool_policy,
+    generation_memory,
+    reasoner_memory_block,
+    write_validator_outcome,
+)
+
 AGENT_NAMES = ("reasoner", "hypothesis-validator", "code-generator")
 STATE_FILENAME = "hypothesis-orchestration.jsonl"
 CAMPAIGN_FILENAME = "hypothesis-campaign.jsonl"
@@ -564,9 +572,29 @@ def _evidence_score(summary: str) -> float | None:
         return None
     return score if -1.0 <= score <= 1.0 else None
 
+def _falda_policy(payload: Mapping[str, Any], tool_name: str) -> dict[str, str] | None:
+    """Guard FALDA tools. Fails closed: if the guard cannot decide, the call is blocked."""
+
+    try:
+        session_id = _text(payload.get("session_id")) or _text(payload.get("parent_session_id"))
+        starts = [
+            row
+            for row in _read_rows(_state_path(payload))
+            if session_id and row.get("event") == "agent_started" and _text(row.get("child_session_id")) == session_id
+        ]
+        return falda_tool_policy(payload, tool_name, payload.get("arguments"), starts[-1] if starts else None)
+    except Exception as exc:
+        return {
+            "action": "block",
+            "message": f"Loam could not verify this FALDA call ({type(exc).__name__}); continue without FALDA tools.",
+        }
+
+
 def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     """Block tool use that violates a tagged orchestration role's boundary."""
 
+    if _text(payload.get("tool_name")).startswith(FALDA_TOOL_PREFIX):
+        return _falda_policy(payload, _text(payload.get("tool_name")))
     if payload.get("loam_hypothesis_orchestration") is not True:
         return None
     tool_name = _text(payload.get("tool_name"))
@@ -804,20 +832,28 @@ def _plan_id(report_path: Path, payload: Mapping[str, Any]) -> str:
 
 
 def prepare_payload(payload: dict[str, Any]) -> None:
-    """Feed the latest reasoner brief into the next Jnana generation goal."""
+    """Feed the latest reasoner brief and recalled campaign memory into the next Jnana generation goal."""
 
     rows = _read_rows(_state_path(payload))
     brief = _latest_brief(rows, _text(payload.get("workflow_id")))
-    if not brief:
-        return
-    payload["loam_reasoner_brief"] = brief
+    if brief:
+        payload["loam_reasoner_brief"] = brief
     user_message = _text(payload.get("user_message"))
-    if user_message:
-        payload["user_message"] = (
+    if not user_message:
+        return
+    query = f"{user_message}\n\n{brief}" if brief else user_message
+    memory = generation_memory(payload, query, lambda: len(_full_hypotheses(payload)))
+    if not brief and not memory:
+        return
+    if brief:
+        user_message = (
             f"{user_message}\n\n"
             "Prior reasoner brief (advisory and unvalidated unless independently reconciled):\n"
             f"{brief}"
         )
+    if memory:
+        user_message = f"{user_message}\n\n{memory}"
+    payload["user_message"] = user_message
 
 
 def _active_plan(
@@ -971,6 +1007,7 @@ def record_stop(payload: Mapping[str, Any]) -> None:
     _append(_state_path(payload), record)
     if role == "hypothesis-validator":
         _append_campaign(payload, {**record, "event": "hypothesis_validation_completed"})
+        write_validator_outcome(payload, record)
     elif role == "reasoner":
         plan_id = _text(start.get("plan_id"))
         validations = [
@@ -1112,7 +1149,12 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
     }
 
 
-def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registry: Mapping[str, AgentSpec]) -> str:
+def _reasoner_directive(
+    plan_id: str,
+    completions: list[dict[str, Any]],
+    registry: Mapping[str, AgentSpec],
+    payload: Mapping[str, Any],
+) -> str:
     reasoner = registry["reasoner"]
     threads = [
         {
@@ -1124,15 +1166,19 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
         }
         for row in completions
     ]
+    memory = reasoner_memory_block(payload, plan_id, completions)
     return "\n".join(
-        (
+        part
+        for part in (
             "Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding.",
             f"Pass the reasoner its role definition verbatim in the task context as \"agent_definition\"; it must not execute experimental code. The definition is inlined below rather than referenced as {reasoner.prompt_path.name}, because the reasoner cannot read that file.",
             json.dumps({"agent_definition": reasoner.prompt_body}, ensure_ascii=False),
             f"Tag its goal with [loam-agent-role=reasoner] [loam-plan-id={plan_id}] so its brief is persisted for the next tournament turn.",
             "Completed validator threads are unvalidated orchestration input; preserve their reported uncertainty and do not turn summaries into accepted evidence.",
+            memory,
             json.dumps(threads, ensure_ascii=False, sort_keys=True),
         )
+        if part
     )
 
 
@@ -1182,7 +1228,7 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
                 return None
             return {
                 "goal": f"Synthesize validator results [loam-agent-role=reasoner] [loam-plan-id={plan_id}]",
-                "context": _reasoner_directive(plan_id, completions, agent_registry(payload)),
+                "context": _reasoner_directive(plan_id, completions, agent_registry(payload), payload),
                 "role": "leaf",
             }
         return None
@@ -1209,7 +1255,7 @@ def context_for(payload: dict[str, Any]) -> str:
     if active is not None:
         plan_id, starts, completions = active
         if len(completions) == len(starts) and all(_text(row.get("status")) for row in completions):
-            return _reasoner_directive(plan_id, completions, registry)
+            return _reasoner_directive(plan_id, completions, registry, payload)
         return ""
     report = _latest_report(payload)
     if report is None:

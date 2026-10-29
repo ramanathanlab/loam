@@ -160,9 +160,9 @@ def test_status_file_has_no_key(payload, state, cfg):
 def test_spawn_flush_detaches_and_respects_auto_flush(payload, monkeypatch):
     launched = []
     monkeypatch.setattr(falda_flush.subprocess, "Popen", lambda argv, **kw: launched.append((argv, kw)))
-    falda_flush.spawn_flush({**payload, "loam_falda": {**payload["loam_falda"], "auto_flush": False}})
+    falda_flush.real_spawn_flush({**payload, "loam_falda": {**payload["loam_falda"], "auto_flush": False}})
     assert launched == []
-    falda_flush.spawn_flush(payload)
+    falda_flush.real_spawn_flush(payload)
     [(argv, kw)] = launched
     assert argv[1].endswith("falda_flush.py") and "--state-dir" in argv and "--config-json" in argv
     assert kw["start_new_session"] is True
@@ -173,7 +173,7 @@ def test_spawn_flush_never_raises(payload, monkeypatch):
         raise OSError("no fork")
 
     monkeypatch.setattr(falda_flush.subprocess, "Popen", _boom)
-    falda_flush.spawn_flush(payload)
+    falda_flush.real_spawn_flush(payload)
 
 
 def test_cli_report_counts(payload, state, cfg, capsys):

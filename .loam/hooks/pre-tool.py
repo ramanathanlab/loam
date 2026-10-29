@@ -12,6 +12,7 @@ import json
 import sys
 from typing import Any
 
+from falda_campaign import FALDA_TOOL_PREFIX
 from hypothesis_orchestration import tool_policy
 from memory_recall import audit_duplicates
 from provenance import record as record_provenance
@@ -48,7 +49,10 @@ def main() -> int:
             result = audit_duplicates(payload)
     except Exception as exc:
         print(f"loam pre-tool: tool_policy failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-        if payload.get("loam_hypothesis_orchestration") is True:
+        if str(payload.get("tool_name") or "").startswith(FALDA_TOOL_PREFIX):
+            # FALDA tools are allowed only when the guard can positively verify the call.
+            result = {"action": "block", "message": "Loam could not verify this FALDA call; continue without FALDA tools."}
+        elif payload.get("loam_hypothesis_orchestration") is True:
             result = {
                 "action": "block",
                 "message": (

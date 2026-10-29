@@ -61,3 +61,33 @@ def no_cairn_network(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(cairn_client, "_urlopen", blocked)
     yield
     assert not attempts, f"test reached the Cairn network: {attempts}"
+
+
+@pytest.fixture(autouse=True)
+def no_falda_network(monkeypatch: pytest.MonkeyPatch):
+    """FALDA is on by default too: no test may reach its network or spawn a detached flusher.
+
+    Tests that exercise the client install a fake with ``falda_memory.set_transport`` (or replace
+    ``falda_keys._transport``); ``spawn_flush`` calls are recorded in ``falda_flush.spawned`` instead.
+    """
+
+    import falda_flush
+    import falda_keys
+    import falda_memory
+
+    monkeypatch.setenv("LOAM_FALDA", "off")
+    attempts: list[str] = []
+
+    def blocked(url, headers, body, timeout):
+        attempts.append(url)
+        raise OSError("network access is blocked in tests")
+
+    monkeypatch.setattr(falda_memory, "_urllib_transport", blocked)
+    monkeypatch.setattr(falda_memory, "_transport", blocked)
+    monkeypatch.setattr(falda_keys, "_transport", blocked)
+    spawned: list[dict] = []
+    monkeypatch.setattr(falda_flush, "spawned", spawned, raising=False)
+    monkeypatch.setattr(falda_flush, "real_spawn_flush", falda_flush.spawn_flush, raising=False)
+    monkeypatch.setattr(falda_flush, "spawn_flush", lambda payload: spawned.append(dict(payload)))
+    yield
+    assert not attempts, f"test reached the FALDA network: {attempts}"
