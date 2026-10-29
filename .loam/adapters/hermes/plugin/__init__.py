@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -74,9 +75,15 @@ def _invoke(
         logger.warning("Loam hook missing: %s", script)
         return None
 
+    # Hermes may run from a managed runtime that lacks hook dependencies (Jnana needs openai, PyYAML,
+    # ...). LOAM_HOOK_PYTHON names an interpreter that has them. Hermes exports a PYTHONPATH for its own
+    # interpreter; a different interpreter must not inherit it, or it imports incompatible packages.
+    override = os.environ.get("LOAM_HOOK_PYTHON", "").strip()
+    env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}} if override else None
     try:
         completed = subprocess.run(
-            [sys.executable, str(script)],
+            [override or sys.executable, str(script)],
+            env=env,
             input=json.dumps(payload),
             text=True,
             capture_output=True,
@@ -167,6 +174,12 @@ def canonicalize_campaign_delegation(tool_name: str, args: dict[str, Any], **kwa
 
 def pre_llm_call(session_id: str = "", **kwargs: Any) -> dict[str, Any] | None:
     """Run Loam's pre-LLM hook every N turns, independently per session."""
+    # Newer Hermes passes its own `parent_session_id` (a subagent's parent, empty for top-level
+    # sessions). Loam's contract uses the name for the coordinator session itself, so keep Loam's
+    # meaning and carry Hermes's value separately.
+    hermes_parent = kwargs.pop("parent_session_id", None)
+    if hermes_parent:
+        kwargs["hermes_parent_session_id"] = hermes_parent
     profile = _profile()
     if profile is None:
         return None

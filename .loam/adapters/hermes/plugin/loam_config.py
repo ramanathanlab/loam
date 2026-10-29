@@ -6,6 +6,8 @@ variables remain explicit emergency overrides, not the normal operational API.
 
 from __future__ import annotations
 
+import json
+
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +20,9 @@ try:
     import yaml
 except ImportError:  # pragma: no cover - Hermes normally supplies PyYAML
     yaml = None
+
+# JSON errors are ValueErrors; YAMLError is added only when PyYAML is present.
+_CONFIG_PARSE_ERRORS: tuple[type[Exception], ...] = (OSError, ValueError) + ((yaml.YAMLError,) if yaml is not None else ())
 
 DEFAULT_CONFIG_PATH = Path.home() / ".hermes" / "loam.yaml"
 DEFAULT_INTERVAL = 5
@@ -273,11 +278,14 @@ def load_profile() -> LoamProfile | None:
     """Load the selected profile, returning None when Loam is intentionally inert."""
 
     path = config_path()
-    if yaml is None or not path.is_file():
+    if not path.is_file():
         return None
     try:
-        root = _as_mapping(yaml.safe_load(path.read_text(encoding="utf-8")))
-    except (OSError, yaml.YAMLError):
+        text = path.read_text(encoding="utf-8")
+        # Without PyYAML (some Hermes runtimes omit it), accept JSON, which is also valid YAML, rather
+        # than silently going inert.
+        root = _as_mapping(yaml.safe_load(text) if yaml is not None else json.loads(text))
+    except _CONFIG_PARSE_ERRORS:
         return None
     if not root or root.get("enabled") is not True:
         return None
