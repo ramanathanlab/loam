@@ -15,6 +15,7 @@ import fcntl
 import json
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,9 @@ SPOOL = "falda-spool.jsonl"
 SENT = "falda-sent.jsonl"
 STATUS = "falda-status.json"
 LOCK = "falda-flush.lock"
+BACKOFF = "falda-backoff.json"
+# An overloaded FALDA answers 503/429 with retry_after_ms; honour it (capped) across flushers.
+MAX_BACKOFF_SECONDS = 300
 # FALDA takes ~1 s per atom per upsert (measured 2026-10-30): a batch must finish inside the write
 # timeout, or FALDA stores it, the flusher times out, and the resend duplicates it.
 BATCH_SIZE = 10
@@ -141,6 +145,21 @@ def _with_id(row: Mapping[str, Any]) -> dict[str, Any]:
     return atom
 
 
+def _back_off(state: Path, seconds: float) -> None:
+    try:
+        (state / BACKOFF).write_text(json.dumps({"until": time.time() + seconds}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _backing_off(state: Path) -> bool:
+    try:
+        until = float(json.loads((state / BACKOFF).read_text(encoding="utf-8")).get("until", 0))
+    except Exception:  # noqa: BLE001 - no (or unreadable) back-off file means none
+        return False
+    return time.time() < min(until, time.time() + MAX_BACKOFF_SECONDS)
+
+
 def _send(state: Path, cfg: Mapping[str, Any], summary: dict[str, Any]) -> None:
     # Re-read the spool before each batch: rows queued while this flusher holds the lock (whose own
     # flushers exited on the busy lock) are sent now, not left for a flush that may never come.
@@ -165,6 +184,8 @@ def _send(state: Path, cfg: Mapping[str, Any], summary: dict[str, Any]) -> None:
         if not result.ok:
             summary["last_error"] = result.error
             if _retryable(result.status):
+                if result.retry_after > 0:
+                    _back_off(state, min(result.retry_after, MAX_BACKOFF_SECONDS))
                 return
             for row in batch:
                 _append(state / SENT, {"id": row["id"], "rejected": result.error, "rejected_at": _now()})
@@ -197,7 +218,9 @@ def flush(state_dir: Path, cfg: Mapping[str, Any]) -> dict[str, Any]:
                     _append(state / SENT, {"id": row["id"], "dropped": True, "dropped_at": _now()})
                 summary["dropped"] = len(overflow)
                 pending = pending[len(overflow) :]
-            if pending:
+            if pending and _backing_off(state):
+                summary["last_error"] = "backing_off"
+            elif pending:
                 timeout = min(float(cfg.get("timeout_seconds") or 60), MINT_TIMEOUT_CAP)
                 key, summary["key"] = falda_keys.ensure_key(cfg, timeout)
                 if key:

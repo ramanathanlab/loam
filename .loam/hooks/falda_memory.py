@@ -52,6 +52,7 @@ class UpsertResult:
     error: str = ""
     atom_ids: tuple[str, ...] = ()
     status: int = 0  # HTTP status; 0 when no response (network, missing key, client error)
+    retry_after: float = 0.0  # seconds FALDA asked us to wait (retry_after_ms), 0 when it did not say
 
 
 def _text(value: Any) -> str:
@@ -233,7 +234,13 @@ def upsert(
         return UpsertResult(ok=False, error="disabled")
     try:
         ok, error, body, status = _post(cfg, "/atoms/upsert", {"atoms": atoms})
-        result = UpsertResult(ok=ok, error=error, atom_ids=_ids(body.get("items")) if ok else (), status=status)
+        try:
+            retry_after = max(0.0, float(body.get("retry_after_ms") or 0) / 1000)
+        except (TypeError, ValueError):
+            retry_after = 0.0
+        result = UpsertResult(
+            ok=ok, error=error, atom_ids=_ids(body.get("items")) if ok else (), status=status, retry_after=retry_after
+        )
     except Exception as exc:  # defensive: the client never raises
         result = UpsertResult(ok=False, error=f"client:{type(exc).__name__}")
     log_event(

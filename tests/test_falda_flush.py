@@ -255,3 +255,28 @@ def test_rows_spooled_during_a_flush_are_sent_by_it(payload, state, cfg):
     summary = falda_flush.flush(state, cfg)
     assert summary["sent"] == 2 and summary["pending"] == 0
     assert [a["content"] for b in fake.bodies("/atoms/upsert") for a in b["atoms"]] == ["atom 1", "atom 2"]
+
+
+def test_retry_after_is_honoured_across_flushes(payload, state, cfg, monkeypatch):
+    # An overloaded FALDA answers 503 {"retry_after_ms": ...}; later flushers (one per validator stop)
+    # must not hit it again before then.
+    falda_flush.enqueue(payload, _atom(1), plan_id="p", hypothesis_id="h")
+    falda_memory.set_transport(FakeTransport(upsert=[(503, {"error": "inference_unavailable", "retry_after_ms": 30000})]))
+    assert falda_flush.flush(state, cfg)["pending"] == 1
+    fake = FakeTransport()
+    falda_memory.set_transport(fake)
+    summary = falda_flush.flush(state, cfg)
+    assert summary["pending"] == 1 and summary["last_error"] == "backing_off" and fake.requests == []
+    real_time = falda_flush.time.time
+    monkeypatch.setattr(falda_flush.time, "time", lambda: real_time() + 31)
+    assert falda_flush.flush(state, cfg)["sent"] == 1
+
+
+def test_retry_after_is_capped(payload, state, cfg, monkeypatch):
+    falda_flush.enqueue(payload, _atom(1), plan_id="p", hypothesis_id="h")
+    falda_memory.set_transport(FakeTransport(upsert=[(429, {"error": "rate_limited", "retry_after_ms": 10**9})]))
+    falda_flush.flush(state, cfg)
+    real_time = falda_flush.time.time
+    monkeypatch.setattr(falda_flush.time, "time", lambda: real_time() + falda_flush.MAX_BACKOFF_SECONDS + 1)
+    falda_memory.set_transport(FakeTransport())
+    assert falda_flush.flush(state, cfg)["sent"] == 1
