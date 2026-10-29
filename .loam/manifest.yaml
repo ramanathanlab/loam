@@ -27,3 +27,42 @@ hooks:
   subagent_stop:
     script: hooks/subagent-stop.py
     behavior: observe
+
+# In-process seams. Unlike the hooks above these are not spawned scripts: the
+# adapter registers a callback that runs inside the harness process. They are
+# declared here because this file is where someone looks to learn what Loam can
+# do to a running campaign, and a rewrite is the most consequential thing it
+# does. Leaving it undeclared made the four `observe`/`may_block` entries above
+# read as the whole contract, which understated Loam considerably.
+middleware:
+  tool_request:
+    adapter_callback: canonicalize_campaign_delegation
+    behavior: may_rewrite_arguments
+    applies_to: delegate_task
+    returns: |
+      Optional JSON object. `{"args": {...}, "source": "...", "reason": "..."}`
+      REPLACES the arguments the model supplied for that call. Empty or absent
+      means the model's arguments stand.
+    why: |
+      The hook computes each round's delegation from persisted state, so the
+      authoritative arguments already exist before the model writes anything.
+      Asking an LLM to transcribe them was the original design and it failed in
+      ways the scars in hypothesis_orchestration.py record (the 2026-10-21
+      char-9000 incident, `_SCRUBBERS`, `_hypothesis_block`). This seam replaces
+      the transcription with the canonical arguments instead of trusting it.
+    ordering: |
+      Runs AFTER pre_tool_call, in the same sequential path. A pre_tool_call
+      veto therefore PREEMPTS the rewrite -- a blocked call never reaches this
+      seam, so a `tool_policy` branch that rejects a malformed delegation
+      prevents the repair that would have fixed it silently.
+    coverage: |
+      `canonical_delegation_args` does not repair every state, which is why the
+      `tool_policy` branches still exist. Pinned by
+      tests/test_delegation_repair.py:
+        - coordinator, fresh round (no validator launched yet) -- REPAIRS
+        - a known hypothesis-validator delegating its child    -- REPAIRS
+        - coordinator, all validators complete (reasoner due)   -- REPAIRS
+        - coordinator, mid-round (validators launched, pending) -- NO REPAIR
+      The last row is load-bearing: with no repair available, the veto is the
+      only thing standing between a coordinator's substitute batch and
+      execution.

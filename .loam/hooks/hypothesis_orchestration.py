@@ -904,7 +904,25 @@ def _evidence_score(summary: str) -> float | None:
     return score if -1.0 <= score <= 1.0 else None
 
 def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
-    """Block tool use that violates a tagged orchestration role's boundary."""
+    """Block tool use that violates a tagged orchestration role's boundary.
+
+    Two kinds of branch live here, and they have different futures.
+
+    The coordinator branches below (`not starts`) inspect what the model wrote
+    into a `delegate_task` call. Most of what they check -- a substitute batch,
+    a missing per-task `role`, a dropped `loam_validator_contract` -- is
+    repaired anyway by the `tool_request` middleware, except mid-round, where
+    `canonical_delegation_args` returns None (see its docstring). Because the
+    veto runs FIRST, blocking here preempts a repair that would have been
+    silent. These branches become removable once the hook dispatches delegation
+    itself rather than asking the model to transcribe it.
+
+    The role branches further down are different: they read the role from the
+    ledger, not from model output, and confine what each tier may call at all.
+    They are the only enforcement behind the three-tier split and the
+    per-hypothesis child budget, and no change to how delegation is dispatched
+    affects them.
+    """
 
     if payload.get("loam_hypothesis_orchestration") is not True:
         return None
@@ -1544,7 +1562,28 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
 
 
 def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Reconstruct pending campaign delegation arguments from persisted state."""
+    """Reconstruct pending campaign delegation arguments from persisted state.
+
+    This is the primary path, not a fallback: the adapter registers it as
+    `tool_request` middleware, so a model-written `delegate_task` is replaced by
+    what this returns before it executes. `.loam/manifest.yaml` declares that
+    seam, including its ordering -- it runs AFTER `pre_tool_call`, so a
+    `tool_policy` veto preempts the repair.
+
+    `None` means no repair is available for this state, and the four states are
+    pinned in tests/test_delegation_repair.py:
+
+      * a known hypothesis-validator delegating its child      -> repaired
+      * coordinator on a fresh round                           -> repaired
+      * coordinator with every validator complete              -> repaired
+      * coordinator mid-round, validators launched and pending  -> NOT repaired
+
+    That last state is why `tool_policy` still inspects a coordinator's
+    delegation: with no repair available, the veto is the only thing between a
+    substitute batch and execution. It also fails closed -- once a plan is
+    dispatched, `context_for` stops offering the task array, so no repair can
+    duplicate a live fan-out.
+    """
 
     rows = _read_rows(_state_path(payload))
     session_id = _text(payload.get("session_id")) or _text(payload.get("parent_session_id"))
