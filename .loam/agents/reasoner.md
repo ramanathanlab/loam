@@ -49,6 +49,8 @@ Every `<ALL_CAPS>` token above is a placeholder: fill each with the real value e
 
 This file is a findings cache that prevents re-delegating work to rediscover something already established — it is not a journal. Put narrative reasoning in your report, not here.
 
+That prevention is mechanical, so how you name things decides whether it works. The pre-tool hook compares a new `delegate_task` against these findings and flags a duplicate only when the task text names all three of the accession, the source kind, and the field. So: write `field` as a lowercase `snake_case` name for the quantity itself (`sequence_length`, `melting_temperature`, `catalytic_efficiency`), because the hook matches that name word-for-word against the task, allowing spaces or hyphens between the words. Always record `source_kind` — a finding without one can never match, by design, so that quoting an accession in an unrelated task is not mistaken for rediscovery. A vague or abbreviated field name silently costs you the check.
+
 Two failures must never become durable facts:
 
 - **A path or activation failure is not an unavailable tool.** `exit 127` / `No such file or directory` from a relative path means the path was wrong for the working directory, not that the tool is missing. Re-check with an absolute path before recording anything.

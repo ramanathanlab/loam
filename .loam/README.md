@@ -71,8 +71,8 @@ policy as it is designed.
   `subagent-stop.py` also extracts opt-in structured candidates into
   `candidate-results.jsonl`; candidates remain unvalidated and receive no
   findings, evidence, memory, or control credit until explicit reconciliation.
-  The available contracts include the narrow protein-metadata pilot and
-  `hypothesis_provenance_v1`, documented in `reconcile/HYPOTHESIS_PROVENANCE.md`.
+  The contract is `hypothesis_provenance_v1`, documented in
+  `reconcile/HYPOTHESIS_PROVENANCE.md`.
   Set a unique directory per deployment to isolate all hook, orchestration, and
   tournament artifacts for that run:
 

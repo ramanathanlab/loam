@@ -25,11 +25,6 @@ from hypothesis_provenance import (
     CONTRACT_VERSION as HYPOTHESIS_CONTRACT_VERSION,
     extract_contract_object as extract_hypothesis_contract,
     normalize_candidate as normalize_hypothesis_candidate,
-)
-from protein_structure_metadata import (
-    CONTRACT_VERSION,
-    extract_contract_object,
-    normalize_candidate,
     stable_id,
 )
 
@@ -176,8 +171,13 @@ def build_candidate_records(stop_record: Mapping[str, Any]) -> list[dict[str, An
         return []
     raw_summary = _text(stop_record.get("child_summary"))
     candidates = []
+    # One contract, kept as a loop because the shape is the extension point: a
+    # campaign that needs a second claim type adds an (version, extractor,
+    # normalizer) triple rather than restructuring this function. The protein
+    # metadata pilot was the first entry and was removed once it was clear its
+    # claim vocabulary (a record's name, gene, sequence length) could not express
+    # what a campaign measures.
     for version, extractor, normalizer in (
-        (CONTRACT_VERSION, extract_contract_object, normalize_candidate),
         (HYPOTHESIS_CONTRACT_VERSION, extract_hypothesis_contract, normalize_hypothesis_candidate),
     ):
         value, presence = extractor(raw_summary)
@@ -207,15 +207,6 @@ def build_candidate_records(stop_record: Mapping[str, Any]) -> list[dict[str, An
             }
         )
     return candidates
-
-
-def build_candidate_record(stop_record: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Backward-compatible protein candidate accessor for the first pilot."""
-
-    for candidate in build_candidate_records(stop_record):
-        if candidate.get("record_version") == CONTRACT_VERSION:
-            return candidate
-    return None
 
 
 def write_stop_and_candidate(payload: Mapping[str, Any]) -> Path:

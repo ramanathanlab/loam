@@ -100,3 +100,30 @@ List zero-credit neutral, duplicate, failed, and unavailable actions separately.
 
 ### Next Step
 State `none` when the inquiry is complete. Otherwise state the one concrete external prerequisite or discriminating action required to proceed.
+
+## Provenance Contract (when evidence is source-located)
+
+When any evidence in your ledger came from a locatable external source — a
+database record, a publication, a dataset — append exactly one fenced JSON
+object after the report. Loam extracts it into the candidate ledger as
+`pending`; it is never accepted on your word, only through explicit review, so
+emitting it makes a claim auditable rather than asserting it is true.
+
+```json
+{
+  "contract_version": "hypothesis_provenance_v1",
+  "hypotheses": [
+    {"hypothesis_key": "h1", "statement": "<the claim you validated>", "parent_hypothesis_keys": []}
+  ],
+  "evidence_candidates": [
+    {"hypothesis_key": "h1", "claim": "<what the source states>",
+     "source_url": "https://<resolvable URL for that exact record>", "stance": "supports"}
+  ]
+}
+```
+
+`stance` is `supports`, `contradicts`, or `context`. `source_url` must resolve
+to the specific record, not a search page — this is the machine-checkable half
+of the fetch-don't-recall rule, so a claim you cannot give a URL for does not
+belong here. Omit the block entirely when your evidence is wholly a measurement
+your own children produced; measurements travel in the Evidence Ledger above.

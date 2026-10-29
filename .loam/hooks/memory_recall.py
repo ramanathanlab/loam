@@ -17,15 +17,7 @@ from ledger import append_record, ledger_path
 
 DEFAULT_MEMORY_FILENAME = "parent-memory.jsonl"
 DUPLICATE_AUDIT_FILENAME = "duplicate-candidates.jsonl"
-_FIELD_PATTERNS = {
-    "gene_name": r"\bgene\s+name\b",
-    "sequence_length": r"\b(sequence\s+length|length\s+of\s+(the\s+)?canonical\s+sequence)\b",
-    "recommended_name": r"\b(recommended\s+protein\s+name|recommended\s+name)\b",
-    "experimental_method": r"\b(experimental\s+method|method)\b",
-    "resolution_angstrom": r"\b(resolution|resolution_angstrom)\b",
-    "chain_ids": r"\b(chain\s+ids?|chains?)\b",
-    "ligand_component_ids": r"\b(ligand\s+(component\s+)?ids?|component\s+ids?)\b",
-}
+_IDENTIFIER = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 
 def memory_path(payload: Mapping[str, Any]) -> Path:
@@ -109,15 +101,54 @@ def _task_strings(arguments: Mapping[str, Any]) -> list[str]:
     return values
 
 
-def _explicit_source_kind(text: str, source_kind: str) -> bool:
-    lowered = text.casefold()
-    return (source_kind == "uniprot" and "uniprot" in lowered) or (
-        source_kind == "rcsb_pdb" and ("rcsb" in lowered or "pdb" in lowered)
-    )
+def _field_pattern(field: str) -> "re.Pattern[str] | None":
+    """A word-boundary pattern for a finding's field name, built from the name.
+
+    This was a table of seven field names -- `gene_name`, `resolution_angstrom`,
+    `ligand_component_ids` and so on -- from the retired protein-metadata pilot.
+    A finding whose field was not one of those seven could never match, so the
+    audit was silently inert for every other kind of claim, and "support a new
+    campaign" read as "add more field names to a list in a hook".
+
+    Deriving the pattern from the name instead makes any field a reasoner
+    records matchable, with no vocabulary to maintain. Separators are optional
+    so `sequence_length` matches "sequence length", "sequence-length" and
+    "sequencelength". The cost is the pilot's hand-written synonyms: "length of
+    the canonical sequence" no longer matches `sequence_length`, and a bare
+    "method" no longer matches `experimental_method`. That trade buys generality
+    and loses recall on seven names that no longer have a producer.
+    """
+
+    name = field.casefold()
+    if not _IDENTIFIER.fullmatch(name):
+        return None
+    words = [re.escape(word) for word in name.split("_") if word]
+    if not words or len("".join(words)) < 4:
+        return None
+    return re.compile(r"\b" + r"[\s_-]*".join(words) + r"\b")
+
+
+def _mentions_source_kind(text: str, source_kind: str) -> bool:
+    """Whether the task names the source itself, not merely the accession.
+
+    Any word of the source kind counts, which is how the pilot's hand-written
+    check behaved: `rcsb_pdb` was satisfied by either "rcsb" or "pdb". A finding
+    recorded without a source kind never matches -- requiring the task to name
+    the source explicitly is what keeps this from blocking an unrelated call
+    that happens to quote an accession.
+    """
+
+    words = [word for word in source_kind.casefold().split("_") if len(word) >= 3]
+    return any(re.search(rf"\b{re.escape(word)}\b", text) for word in words)
 
 
 def exact_duplicates(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Match only explicit source accession plus one explicit supported field."""
+    """Match a task that names an accepted finding's accession, source and field.
+
+    All three must be explicit in the task text. "Supported field" no longer
+    means a name from a fixed list: any field recorded in parent memory is
+    matchable (see `_field_pattern`).
+    """
 
     snapshot = latest_snapshot(payload)
     arguments = payload.get("arguments")
@@ -135,13 +166,13 @@ def exact_duplicates(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
             source_kind = str(finding.get("source_kind") or "")
             accession = str(finding.get("source_accession") or "")
             field = str(finding.get("field") or "")
-            pattern = _FIELD_PATTERNS.get(field)
+            pattern = _field_pattern(field)
             if not accession or pattern is None:
                 continue
             if (
                 accession.casefold() in lowered
-                and _explicit_source_kind(task, source_kind)
-                and re.search(pattern, lowered)
+                and _mentions_source_kind(lowered, source_kind)
+                and pattern.search(lowered)
             ):
                 duplicates.append(
                     {
