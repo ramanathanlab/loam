@@ -47,6 +47,10 @@ LOG_KINDS = ("plan", "result", "note", "report", "violation")
 VERIFIED_MANIFESTS = ("recorded", "recorded_by_loam")
 # The hash a first log line chains to.
 GENESIS_SHA256 = "0" * 64
+# The read-only skill tools a code-generator may call (hypothesis_orchestration
+# .SKILL_TOOLS). Named here rather than imported because this module is loaded
+# on its own by the verifier, which has no orchestration import.
+SKILL_READ_TOOLS = ("skill_view", "skills_list")
 # Default ceiling on one hypothesis's seeded data/ (workspace.max_input_bytes
 # overrides). The seed is copied per hypothesis, so a careless inputs_dir would
 # otherwise multiply a dataset by the number of hypotheses in the campaign.
@@ -369,6 +373,10 @@ def ensure_workspace(
                     "created_at": _timestamp(),
                     "closed_at": None,
                     "runs": [],
+                    # What the campaign TOLD its children to read, as distinct
+                    # from what a run actually read (run.json "skills"). The
+                    # pair is what shows a declared recipe being ignored.
+                    "declared_skills": _declared_skills(payload),
                 },
             )
             _append_log_unlocked(
@@ -1119,6 +1127,19 @@ def capture_code(payload: Mapping[str, Any], start: Mapping[str, Any] | None) ->
             run["calls"] = [*run.get("calls", []), entry]
             if _hpc_function(entry["tool"]) == "run_batch" and entry.get("batch_id"):
                 run["batches"] = sorted({*run.get("batches", []), entry["batch_id"]})
+            if entry.get("skill") and entry["skill"] not in run.get("skills", []):
+                run["skills"] = sorted({*run.get("skills", []), entry["skill"]})
+                _append_log_unlocked(
+                    root,
+                    "note",
+                    {
+                        "run": run_id,
+                        "what": f"reads campaign skill {entry['skill']}"
+                        + ("" if entry.get("hashed") else " (version not pinned: skill not found locally)"),
+                        "skill": {k: v for k, v in entry.items() if k in ("skill", "sha256", "bytes", "hashed", "skill_file")},
+                        "actor": {"role": "code-generator", "session_id": _text(start.get("child_session_id"))},
+                    },
+                )
         inputs = list(run.get("inputs", []))
         known = {(i.get("plan_id"), i.get("hypothesis_id"), i.get("run"), i.get("path")) for i in inputs}
         for read in scope.reads:
@@ -1175,6 +1196,16 @@ def _call_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
             entry["workdir"] = _text(args.get("workdir"))
     elif tool == "write_file":
         entry.update(path=_text(args.get("path")), sha256=hashlib.sha256(_text(args.get("content")).encode("utf-8")).hexdigest())
+    elif tool in SKILL_READ_TOOLS:
+        # Which reviewed recipe a run followed is part of how its result was
+        # produced, so it belongs in the run's own record and not only in the
+        # campaign-wide tool-call ledger. The skill's hash pins the version:
+        # editing a skill afterwards cannot silently rewrite what a finished
+        # run was told to do.
+        name = _text(args.get("name"))
+        if not name:
+            return None  # skills_list with no category: a browse, not a read
+        entry.update(skill=name, **_skill_digest(name, _text(args.get("file_path"))))
     elif function in {"run_batch", "register_tool"}:
         # The call's own `tool` argument names a registered HPC tool; keep it
         # apart from entry["tool"], the Hermes tool that was called.
@@ -1184,6 +1215,53 @@ def _call_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
     else:
         return None
     return entry
+
+
+def _declared_skills(payload: Mapping[str, Any]) -> list[str]:
+    """The skills this campaign names for its children (loam_campaign.skills)."""
+
+    campaign = payload.get("loam_campaign")
+    campaign = campaign if isinstance(campaign, Mapping) else {}
+    raw = campaign.get("skills")
+    return [name for item in (raw if isinstance(raw, (list, tuple)) else []) if (name := _text(item))]
+
+
+def _skill_digest(name: str, file_path: str = "") -> dict[str, Any]:
+    """Hash the SKILL.md a child read, so the record pins the recipe's version.
+
+    The skill library is local to the harness, so the hook can read it:
+    ``$HERMES_HOME/skills/<category>/<name>/SKILL.md``, or the linked file a
+    ``skill_view(file_path=...)`` asked for. Best effort -- an unresolvable name
+    is recorded unhashed rather than dropped, because knowing a run followed
+    some version of a recipe is still worth more than knowing nothing.
+    """
+
+    home = _text(os.environ.get("HERMES_HOME"))
+    if not home or not _SEGMENT.fullmatch(name):
+        return {"hashed": False}
+    library = Path(home).expanduser() / "skills"
+    try:
+        matches = sorted(library.glob(f"*/{name}/SKILL.md")) or sorted(library.glob(f"{name}/SKILL.md"))
+    except OSError:
+        return {"hashed": False}
+    if not matches:
+        return {"hashed": False}
+    target = matches[0]
+    if file_path:
+        candidate = target.parent / file_path
+        # Keep the read inside the skill's own folder; a traversing file_path is
+        # recorded by name only rather than followed.
+        if _within(os.path.realpath(candidate), os.path.realpath(target.parent)) is None:
+            return {"skill_file": file_path, "hashed": False}
+        target = candidate
+    try:
+        sha256, size = _file_digest(target)
+    except OSError:
+        return {"hashed": False}
+    digest: dict[str, Any] = {"sha256": sha256, "bytes": size, "hashed": True}
+    if file_path:
+        digest["skill_file"] = file_path
+    return digest
 
 
 def _local_input_hash(path: str) -> dict[str, Any]:

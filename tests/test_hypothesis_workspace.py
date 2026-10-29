@@ -1758,5 +1758,146 @@ class WorkspaceInputTests(_StopHelpers, unittest.TestCase):
             self.assertNotIn("sha256", inputs[0])
 
 
+class WorkspaceSkillProvenanceTests(_StopHelpers, unittest.TestCase):
+    """Group 8: which reviewed recipe a run followed, recorded and version-pinned."""
+
+    def _library(self, tmp: Path, name: str, body: str = "# recipe\n", extra: dict | None = None) -> Path:
+        """A Hermes-shaped skill library: <home>/skills/<category>/<name>/SKILL.md."""
+
+        home = tmp / "hermes-home"
+        folder = home / "skills" / "protein-design" / name
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "SKILL.md").write_text(body)
+        for rel, text in (extra or {}).items():
+            path = folder / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        return home
+
+    def _capture(self, orchestration, payload: dict, session: str, **arguments) -> None:
+        orchestration.workspace_capture({**payload, "session_id": session, "tool_name": "skill_view",
+                                         "arguments": arguments})
+
+    def test_skill_read_is_recorded_on_the_run_and_hashed(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            body = "# how to fold on Aurora\n"
+            home = self._library(Path(tmp), "aurora-chai-fold", body)
+            payload = self._payload(Path(tmp))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold it."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+
+            with patch.dict(os.environ, {"HERMES_HOME": str(home)}, clear=False):
+                self._capture(orchestration, payload, "child-1", name="aurora-chai-fold", file_path="")
+
+            run = self._run(root, "r1")
+            self.assertEqual(run["skills"], ["aurora-chai-fold"])
+            entry = [c for c in run["calls"] if c.get("skill")][0]
+            self.assertEqual(entry["tool"], "skill_view")
+            self.assertEqual(entry["sha256"], hashlib.sha256(body.encode()).hexdigest())
+            self.assertEqual((entry["bytes"], entry["hashed"]), (len(body), True))
+            note = [e for e in self._log(root) if "campaign skill" in str(e.get("what"))][0]
+            self.assertIn("reads campaign skill aurora-chai-fold", note["what"])
+            self.assertEqual(note["skill"]["sha256"], entry["sha256"])
+            self.assertEqual(note["actor"]["session_id"], "child-1")
+
+    def test_same_skill_twice_is_recorded_once(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._library(Path(tmp), "aurora-foundry")
+            payload = self._payload(Path(tmp))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Design."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            with patch.dict(os.environ, {"HERMES_HOME": str(home)}, clear=False):
+                self._capture(orchestration, payload, "child-1", name="aurora-foundry")
+                self._capture(orchestration, payload, "child-1", name="aurora-foundry")
+            run = self._run(root, "r1")
+            self.assertEqual(run["skills"], ["aurora-foundry"])
+            self.assertEqual(len([c for c in run["calls"] if c.get("skill")]), 2)   # both calls kept
+            notes = [e for e in self._log(root) if "campaign skill" in str(e.get("what"))]
+            self.assertEqual(len(notes), 1)                                          # one note
+
+    def test_unknown_skill_is_recorded_unpinned(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._library(Path(tmp), "aurora-chai-fold")
+            payload = self._payload(Path(tmp))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold it."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            with patch.dict(os.environ, {"HERMES_HOME": str(home)}, clear=False):
+                self._capture(orchestration, payload, "child-1", name="not-installed")
+            entry = [c for c in self._run(root, "r1")["calls"] if c.get("skill")][0]
+            self.assertEqual(entry["skill"], "not-installed")
+            self.assertFalse(entry["hashed"])
+            self.assertNotIn("sha256", entry)
+            note = [e for e in self._log(root) if "campaign skill" in str(e.get("what"))][0]
+            self.assertIn("version not pinned", note["what"])
+
+    def test_skill_linked_file_is_hashed_and_traversal_is_not_followed(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            script = "print('fold')\n"
+            home = self._library(Path(tmp), "aurora-chai-fold", extra={"scripts/run.py": script})
+            (Path(tmp) / "hermes-home" / "secret.txt").write_text("not yours")
+            payload = self._payload(Path(tmp))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold it."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+
+            with patch.dict(os.environ, {"HERMES_HOME": str(home)}, clear=False):
+                self._capture(orchestration, payload, "child-1", name="aurora-chai-fold", file_path="scripts/run.py")
+                self._capture(orchestration, payload, "child-1", name="aurora-chai-fold",
+                              file_path="../../../secret.txt")
+
+            entries = [c for c in self._run(root, "r1")["calls"] if c.get("skill")]
+            self.assertEqual(entries[0]["sha256"], hashlib.sha256(script.encode()).hexdigest())
+            self.assertEqual(entries[0]["skill_file"], "scripts/run.py")
+            # A traversing file_path is named but never read.
+            self.assertFalse(entries[1]["hashed"])
+            self.assertNotIn("sha256", entries[1])
+
+    def test_no_hermes_home_records_the_name_only(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold it."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            env = {k: v for k, v in os.environ.items() if k != "HERMES_HOME"}
+            with patch.dict(os.environ, env, clear=True):
+                self._capture(orchestration, payload, "child-1", name="aurora-chai-fold")
+            entry = [c for c in self._run(root, "r1")["calls"] if c.get("skill")][0]
+            self.assertEqual((entry["skill"], entry["hashed"]), ("aurora-chai-fold", False))
+
+    def test_skills_list_browse_is_not_recorded(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold it."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            orchestration.workspace_capture({**payload, "session_id": "child-1",
+                                             "tool_name": "skills_list", "arguments": {"category": ""}})
+            run = self._run(root, "r1")
+            self.assertEqual(run.get("skills", []), [])
+            self.assertEqual([c for c in run.get("calls", []) if c.get("skill")], [])
+
+    def test_experiment_records_the_campaign_declared_skills(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            # skills only: a goal would make campaign_context resolve a goal file,
+            # which is not what declared_skills reads.
+            payload["loam_campaign"] = {"skills": ["aurora-chai-fold", "aurora-foundry"]}
+            root, _ = self._hypothesis(orchestration, payload, "h-1", ["Fold it."])
+            experiment = json.loads((root / "experiment.json").read_text())
+            self.assertEqual(experiment["declared_skills"], ["aurora-chai-fold", "aurora-foundry"])
+
+    def test_declared_skills_is_empty_without_a_campaign_block(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            root, _ = self._hypothesis(orchestration, payload, "h-1", ["Fold it."])
+            experiment = json.loads((root / "experiment.json").read_text())
+            self.assertEqual(experiment["declared_skills"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
