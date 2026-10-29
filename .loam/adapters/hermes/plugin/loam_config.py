@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from cairn_config import cairn_config
+
 try:
     import yaml
 except ImportError:  # pragma: no cover - Hermes normally supplies PyYAML
@@ -90,6 +92,7 @@ class LoamProfile:
     hypothesis_orchestration: bool = False
     execution: ExecutionConfig | None = None
     hypothesis_tournament: HypothesisTournamentConfig | None = None
+    cairn: dict[str, Any] | None = None
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any] | None:
@@ -304,6 +307,7 @@ def load_profile() -> LoamProfile | None:
         hypothesis_orchestration=orchestration,
         execution=execution,
         hypothesis_tournament=_tournament_config(raw.get("hypothesis_tournament"), override),
+        cairn=cairn_config(raw.get("cairn")),
     )
 
 
@@ -386,4 +390,6 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             values["loam_hypothesis_tournament"]["knowledge"] = dict(tournament.knowledge)
         for role, override in tournament.roles.items():
             values["loam_hypothesis_tournament"][role] = dict(override)
+    if profile.cairn is not None:
+        values["loam_cairn"] = dict(profile.cairn)
     return values

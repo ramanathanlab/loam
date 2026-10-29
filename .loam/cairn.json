@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "base_url": "https://api.cairnscore.ai",
+  "key_file": "~/.cairn/keys/agent-loam.key",
+  "auto_mint": true,
+  "identity_prefix": "agent://anl-loam/loam-",
+  "entities": {
+    "mcp://hpc#run_code": {"patterns": [], "task_tags": ["code_exec"]},
+    "tool://chai-1": {"patterns": ["chai"], "task_tags": ["co_folding"]},
+    "tool://proteinmpnn": {"patterns": ["proteinmpnn", "mpnn"], "task_tags": ["inverse_folding"]},
+    "tool://openmm": {"patterns": ["openmm"], "task_tags": ["md_simulation"]},
+    "tool://chroma": {"patterns": ["chroma"], "task_tags": ["backbone_diffusion"]},
+    "tool://lammps": {"patterns": ["lammps", "lmp"], "task_tags": ["md_simulation"]}
+  }
+}

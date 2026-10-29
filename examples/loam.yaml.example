@@ -78,3 +78,24 @@ profiles:
         <Add your tool activation recipes here, e.g. the Chai-1 fold command and
         its venv, the ProteinMPNN activation, etc. Verify each returns rc=0 on a
         smoke input before trusting a campaign result.>
+
+    # Optional Cairn tool-reputation integration (see docs/cairn.md). Cairn is
+    # already on by default from .loam/cairn.json; a block here is optional and
+    # replaces that default (use `enabled: false` to opt out). Carries paths and switches only, never secrets. read_side
+    # changes agent behaviour; the write-side switches only observe.
+    # cairn:
+    #   enabled: true
+    #   base_url: https://api.cairnscore.ai
+    #   key_file: ~/.cairn/keys/agent-loam.key
+    #   auto_mint: true
+    #   identity_prefix: agent://anl-loam/loam-
+    #   read_side: true
+    #   rate_agent_reports: true
+    #   rate_hook_fallback: true
+    #   auto_flush: true
+    #   rate_roles: [code-generator, hypothesis-validator]
+    #   timeout_seconds: 5
+    #   entities:
+    #     mcp://hpc#run_code: {task_tags: [code_exec]}
+    #     tool://lammps: {patterns: [lmp, lammps], task_tags: [md_simulation]}
+    #     tool://chai-1: {patterns: [chai], task_tags: [co_folding]}
