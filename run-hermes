@@ -45,4 +45,33 @@ if [[ "${ALCF_PROXY:-1}" != 0 ]] && ! nc -z 127.0.0.1 "$ALCF_PROXY_PORT" 2>/dev/
   echo "run-hermes: started ALCF Minerva proxy on 127.0.0.1:$ALCF_PROXY_PORT (log $ALCF_PROXY_LOG)" >&2
 fi
 
+# FALDA and Cairn are best effort: nothing below may stop the launch.
+# Hermes's FALDA MCP server (reasoner tools) reads the key and pool from FALDA_TOKEN / FALDA_POOL.
+# The key is the one Loam minted and cached under ~/.falda/keys (never minted here: no network).
+LOAM_PY="${LOAM_HOOK_PYTHON:-python3}"
+FALDA_LINES="$("$LOAM_PY" - "$ROOT" "$(hostname 2>/dev/null || true)" 2>/dev/null <<'PY' || true
+import sys
+root, host = sys.argv[1], sys.argv[2]
+sys.path[:0] = [root + "/.loam/hooks", root + "/.loam/adapters/hermes/plugin"]
+import loam_http
+print("1" if loam_http.is_aurora_compute(host) else "0")
+from falda_config import falda_config
+import falda_keys
+cfg = falda_config(None)[0] or {}
+print(cfg.get("pool", ""))
+print(falda_keys.resolve_key(cfg) if cfg else "")
+PY
+)"
+LOAM_ON_COMPUTE="$(sed -n 1p <<<"$FALDA_LINES")"
+[[ -n "${FALDA_POOL:-}" ]] || export FALDA_POOL="$(sed -n 2p <<<"$FALDA_LINES")"
+[[ -n "${FALDA_TOKEN:-}" ]] || export FALDA_TOKEN="$(sed -n 3p <<<"$FALDA_LINES")"
+# On an Aurora compute node the only way out is the ALCF proxy. Keep local services (the HPC MCP
+# server, the inference proxy) direct. An existing proxy setting always wins.
+if [[ "$LOAM_ON_COMPUTE" == 1 && -z "${https_proxy:-}${HTTPS_PROXY:-}" ]]; then
+  export https_proxy=http://proxy.alcf.anl.gov:3128 HTTPS_PROXY=http://proxy.alcf.anl.gov:3128
+  export http_proxy=http://proxy.alcf.anl.gov:3128 HTTP_PROXY=http://proxy.alcf.anl.gov:3128
+  export no_proxy="localhost,127.0.0.1,::1${no_proxy:+,$no_proxy}"
+  export NO_PROXY="localhost,127.0.0.1,::1${NO_PROXY:+,$NO_PROXY}"
+fi
+
 exec hermes "$@"

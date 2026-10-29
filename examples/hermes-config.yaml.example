@@ -35,6 +35,15 @@ delegation:
   model: <SUBAGENT_MODEL>                     # e.g. argo:gpt-5.6-sol
 
 mcp_servers:
+  # FALDA campaign memory (the reasoner's falda_remember / falda_recall). run-hermes exports the key
+  # Loam minted and the pool. Keep the timeouts short: a slow FALDA must fail the call, not stall the agent.
+  falda:
+    url: https://falda.cairnscore.ai/mcp
+    headers:
+      Authorization: "Bearer ${FALDA_TOKEN}"
+      X-Falda-Pool: "${FALDA_POOL}"
+    timeout: 5
+    connect_timeout: 5
   # The HPC code-execution server from scripts/mcp_server.py (Step 2).
   hpc:
     url: http://127.0.0.1:8000/mcp
