@@ -37,6 +37,21 @@ def _run_id(payload: Mapping[str, Any]) -> str:
     ) or _text(payload.get("session_id")) or "direct-hook"
 
 
+_FALDA_SWITCHES = ("recall_generation", "recall_reasoner", "write_validator_outcomes", "reasoner_tools")
+
+
+def _falda_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """The FALDA configuration this run started with, for evaluation filtering."""
+
+    summary: dict[str, Any] = {"status": _text(payload.get("loam_falda_status")) or "disabled"}
+    falda = payload.get("loam_falda")
+    if isinstance(falda, Mapping):
+        summary["pool"] = _text(falda.get("pool"))
+        summary["workflow_tag"] = f"workflow:{_text(payload.get('workflow_id'))}"
+        summary.update({name: falda.get(name) is True for name in _FALDA_SWITCHES})
+    return summary
+
+
 def _identity(payload: Mapping[str, Any], state_dir: Path) -> dict[str, Any]:
     return {
         "run_id": _run_id(payload),
@@ -72,6 +87,7 @@ def _new_manifest(payload: Mapping[str, Any], state_dir: Path, event: str) -> di
         "campaign": {
             "hypothesis_orchestration_enabled": payload.get("loam_hypothesis_orchestration") is True,
             "tournament_enabled": isinstance(tournament, Mapping) and tournament.get("enabled") is True,
+            "falda": _falda_summary(payload),
         },
         "lifecycle": {"first_event": event, "last_event": event, "event_counts": {event: 1}},
         "artifacts": {
@@ -79,6 +95,7 @@ def _new_manifest(payload: Mapping[str, Any], state_dir: Path, event: str) -> di
             "orchestration_ledger": "hypothesis-orchestration.jsonl",
             "campaign_ledger": "hypothesis-campaign.jsonl",
             "tournament_reports_dir": "tournament-reports",
+            "falda_calls": "falda-calls.jsonl",
         },
     }
 

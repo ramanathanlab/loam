@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from cairn_config import cairn_config
+from falda_config import falda_config
 
 try:
     import yaml
@@ -93,6 +94,8 @@ class LoamProfile:
     execution: ExecutionConfig | None = None
     hypothesis_tournament: HypothesisTournamentConfig | None = None
     cairn: dict[str, Any] | None = None
+    falda: dict[str, Any] | None = None
+    falda_status: str = "disabled"
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any] | None:
@@ -298,6 +301,7 @@ def load_profile() -> LoamProfile | None:
     if orchestration and execution is None:
         return None
     effective_state_dir = override or Path(state_dir).expanduser()
+    falda, falda_status = falda_config(raw.get("falda"))
     return LoamProfile(
         name=requested,
         workflow_id=workflow_id,
@@ -308,6 +312,8 @@ def load_profile() -> LoamProfile | None:
         execution=execution,
         hypothesis_tournament=_tournament_config(raw.get("hypothesis_tournament"), override),
         cairn=cairn_config(raw.get("cairn")),
+        falda=falda,
+        falda_status=falda_status,
     )
 
 
@@ -392,4 +398,8 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             values["loam_hypothesis_tournament"][role] = dict(override)
     if profile.cairn is not None:
         values["loam_cairn"] = dict(profile.cairn)
+    values["loam_falda_status"] = profile.falda_status
+    if profile.falda is not None:
+        # As with Cairn, hooks receive the env-var name for the key, never the key itself.
+        values["loam_falda"] = dict(profile.falda)
     return values
