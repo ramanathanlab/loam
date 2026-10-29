@@ -1,8 +1,8 @@
 # Aurora Tool Skills
 
-Claude Code skills for the tools in `../software.md`, written and tested on an Aurora
+Claude Code skills for the Aurora tool stack, written and tested on an Aurora
 debug node (Intel Data Center GPU Max 1550, FLAT mode, 12 tiles) on 2026-10-29.
-Software lives in `/flare/FRAME-IDP/msinclair/software/<dir>`; test inputs, outputs and logs are in `../test_runs/<tool>/`.
+Software lives in `/flare/FRAME-IDP/msinclair/software/<dir>`.
 
 Pick a GPU tile with `ZE_AFFINITY_MASK=<int>` (a plain integer; `4.0` hides the device).
 
