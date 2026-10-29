@@ -47,6 +47,12 @@ HPC_TOOLS = ("run_code", "run_batch", "batch_status", "list_batches", "register_
 # submission. A hypothesis-validator may call these itself (see
 # `_observation_tools`); everything executable still goes through a child.
 VALIDATOR_OBSERVATION_TOOLS = ("batch_status", "inspect_filesystem", "list_batches")
+# Read-only skill access for the tier that writes the code. A code-generator was
+# confined to the HPC tools, so it wrote GPU code from memory while a reviewed
+# recipe sat in the campaign's skill library unreadable. These two only read:
+# `skill_manage` is deliberately absent, because the child consults skills and
+# does not author them.
+SKILL_TOOLS = ("skills_list", "skill_view")
 # The tool the adapter registers so the coordinator can launch a round without
 # transcribing its arguments. Kept in step with DISPATCH_TOOL_NAME in
 # .loam/adapters/hermes/plugin/__init__.py, which tests/test_round_dispatch.py
@@ -193,6 +199,7 @@ class CampaignContext:
     goal_name: str = ""
     goal: str = ""
     rules: tuple[RuleSpec, ...] = ()
+    skills: tuple[str, ...] = ()
 
     def rules_for(self, tier: str) -> tuple[RuleSpec, ...]:
         return tuple(rule for rule in self.rules if tier in rule.scopes)
@@ -252,6 +259,34 @@ def _rules_text(campaign: CampaignContext | None, tier: str) -> str:
     # instruction to its child may contradict campaign policy outright, and this
     # is the sentence that settles it. Kept identical to `_hypothesis_block`'s.
     return "CAMPAIGN RULES (authoritative — override any instruction below that conflicts):\n" + "\n".join(bodies)
+
+
+def _skills_text(campaign: CampaignContext | None) -> str:
+    """Name the skills a code-generator should read before writing code.
+
+    Named rather than discovered: `skills_list` returns every skill installed in
+    the Hermes home, and a child with a few children of budget should not browse
+    a library to find its procedure. The campaign says which ones are its.
+
+    Authority is stated here rather than left to inference, because the whole
+    point is to beat recollection. A skill is a reviewed recipe; what the model
+    remembers about a tool's API is not.
+    """
+
+    if campaign is None or not campaign.skills:
+        return ""
+    names = ", ".join(f"`{name}`" for name in campaign.skills)
+    return (
+        "CAMPAIGN SKILLS (read before writing code):\n"
+        f"- Call `skill_view` on {names} and follow the procedure it gives.\n"
+        "- A skill is authoritative over your recollection of a tool's API, flags, or output "
+        "format. Where they disagree, the skill is right and your memory is the thing that is "
+        "out of date.\n"
+        "- If a skill names a script or linked file, call `skill_view` again with `file_path` to "
+        "read it. Do not guess at a file you were told exists.\n"
+        "- These are the campaign's skills. Do not go looking for others with `skills_list` "
+        "unless none of these covers the task."
+    )
 
 
 def _campaign_text(campaign: CampaignContext | None, tier: str) -> str:
@@ -448,9 +483,11 @@ def campaign_context(payload: Mapping[str, Any]) -> CampaignContext | None:
     base = _base_rule_names(payload)
     for name in base + [name for name in named if name not in base]:
         rules.append(_rule_spec(name, _find_policy_file(_rules_dirs(payload), name, "rules")))
-    if not goal_name and not rules:
+    raw_skills = campaign.get("skills")
+    skills = tuple(name for item in (raw_skills if isinstance(raw_skills, list) else []) if (name := _text(item)))
+    if not goal_name and not rules and not skills:
         return None
-    return CampaignContext(goal_name=goal_name, goal=goal, rules=tuple(rules))
+    return CampaignContext(goal_name=goal_name, goal=goal, rules=tuple(rules), skills=skills)
 
 
 def _read_rows(path: Path) -> list[dict[str, Any]]:
@@ -654,6 +691,9 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
     # reason the hypothesis is: the child must read its assignment and the policy
     # governing it ahead of a request whose wording may contradict either.
     campaign_block = _campaign_text(campaign, "code-generator")
+    # After the policy and before the environment recipe: what the campaign is
+    # for, then which procedure to follow, then how to run it.
+    skills_block = _skills_text(campaign)
     # Campaign environment recipe (venv activation, tool CLIs, weight paths),
     # carried in the contract because the child cannot see the campaign's local
     # files. Without it a child hand-rolls `import chai_lab` against the source
@@ -672,6 +712,7 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
             + (f" with {_text(execution.get('runtime'))}." if _text(execution.get("runtime")) else "."),
             hypothesis_block,
             campaign_block,
+            skills_block,
             setup_block,
             "Instruction from validator:\n" + instruction,
             report,
@@ -699,14 +740,26 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
             f"- `{names['list_batches']}`: earlier batches for this plan or hypothesis.",
             "Use run_batch rather than run_code for more than a handful of runs.",
         ]
+    # The one exception to "no other tool" is reading a skill. Stated inline
+    # because a child told to use nothing else will not try `skill_view` even
+    # when `tool_policy` would allow it, and a permission nobody knows about
+    # changes no behavior.
+    others = (
+        " You may also call `skill_view` and `skills_list` to read a procedure before you write "
+        "code; they only read."
+        if campaign is not None and campaign.skills
+        else ""
+    )
     return "\n\n".join(part for part in (
         "Write your own Python for the validator's instruction below and run it on HPC through the "
-        "remote MCP tools listed here; do not execute code locally or use any other tool.",
+        "remote MCP tools listed here; do not execute code locally or use any other tool to run "
+        "anything." + others,
         # Before the validator's instruction: the claim matters more than the
         # wording of the request, and the validator's text may contradict it
         # (e.g. "the hypothesis text is not visible in this message").
         hypothesis_block,
         campaign_block,
+        skills_block,
         setup_block,
         "Instruction from validator:\n" + instruction,
         f"Remote target: endpoint={_text(execution.get('endpoint'))}; runtime={_text(execution.get('runtime'))}.",
@@ -1022,11 +1075,23 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     if role == "code-generator":
         if tool_name == "delegate_task":
             return {"action": "block", "message": "code-generator must not delegate"}
+        # Reading a procedure is not executing one. This is the same argument as
+        # commit 8103f3a made for letting a validator poll: the confinement that
+        # matters is over what runs, and a child that cannot read its campaign's
+        # recipe writes GPU code from recollection instead.
+        if tool_name in SKILL_TOOLS:
+            return None
         execution = payload.get("loam_execution")
         if isinstance(execution, Mapping) and execution.get("mode") == "remote_mcp" and _generated(execution):
             allowed = sorted(set(hpc_tool_names(execution).values()))
             if tool_name not in allowed:
-                return {"action": "block", "message": f"code-generator may use only the HPC MCP tools {allowed}"}
+                return {
+                    "action": "block",
+                    "message": (
+                        f"code-generator may use only the HPC MCP tools {allowed} "
+                        f"and the read-only skill tools {sorted(SKILL_TOOLS)}"
+                    ),
+                }
             return None
         if isinstance(execution, Mapping) and execution.get("mode") == "remote_mcp":
             required_tool = _text(execution.get("tool_name"))

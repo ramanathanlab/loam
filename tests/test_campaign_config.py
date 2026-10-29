@@ -61,7 +61,12 @@ class CampaignConfigTests(unittest.TestCase):
         values = config.payload_values(profile)
         self.assertEqual(
             values["loam_campaign"],
-            {"goal": "alkbh1-binders", "rules": ["evidence-integrity", "hpc-budget"], "dir": ""},
+            {
+                "goal": "alkbh1-binders",
+                "rules": ["evidence-integrity", "hpc-budget"],
+                "dir": "",
+                "skills": [],
+            },
         )
 
     def test_a_campaign_directory_reaches_the_hook_payload(self) -> None:
