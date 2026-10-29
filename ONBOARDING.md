@@ -88,8 +88,20 @@ allocation. `kill -9` orphans the EL cluster until walltime.
 
 ## Step 3 — Wire MCP + hooks into the Hermes config
 
-In the Hermes home's `config.yaml` (the shared home is
-`.hermes/.loam-home/config.yaml`):
+**Copy `examples/hermes-config.yaml.example` into the Hermes home as
+`config.yaml`** (the shared home is `.hermes/.loam-home/config.yaml`) and fill in
+every `<PLACEHOLDER>`. Do not hand-write this file from the keys below — the
+example is the complete one, and the pieces most easily missed are the ones that
+are not Loam-specific at all:
+
+- `model:` — the reasoner's model, provider, and `base_url` (the `:51900` tunnel).
+  Without this block there is no campaign parent.
+- `custom_providers:` — one entry per endpoint from Step 1 (Argo and Minerva).
+- `delegation.base_url` / `api_key` / `model` — `delegate_task` ignores per-agent
+  `model:` frontmatter, so this is the **only** place every child
+  (hypothesis-validator and code-generator alike) gets its model.
+
+The Loam-specific keys the example already contains, and what each one does:
 
 ```yaml
 plugins:
@@ -97,13 +109,20 @@ plugins:
 mcp_servers:
   hpc:
     url: http://127.0.0.1:8000/mcp   # (2) connects to the server from Step 2
-    timeout: 300
-    connect_timeout: 60
+    timeout: 300                     # a wedged call blocks the agent loop this
+    connect_timeout: 60              # long; prefer run_code's own `timeout`
+  hpcctl:                            # optional: start/stop/status for the
+    command: /ABS/PATH/.loam-venv/bin/python   # allocation, via hpc_control.py
+    args: [/ABS/PATH/loam/skills/hpc-deployment/scripts/hpc_control.py]
 delegation:
   max_spawn_depth: 2                 # coordinator → validator → code-generator
   orchestrator_enabled: true
   max_concurrent_children: 5
 ```
+
+`hpc` is the one the campaign needs; `hpcctl` is a convenience that lets the
+agent query or cycle the allocation itself instead of you doing it in Step 2's
+shell.
 
 `plugins.enabled: [loam-hooks]` is what makes the hooks fire. The hooks live in
 `.loam/hooks/` (`pre-llm.py` runs the tournament every `pre_llm_every` turns;
@@ -114,10 +133,9 @@ ledgers) and are loaded through the adapter at
 
 See `.loam/README.md` for the full hook contract and the global-install option.
 
-> **Config templates.** Copy `examples/hermes-config.yaml.example` into your
-> Hermes home as `config.yaml` and fill in the `<PLACEHOLDER>`s. **Credentials
-> are not in this file** — they live in `auth.json`, which is user-provided and
-> gitignored; create it with `hermes` login, never commit a filled-in one.
+> **Credentials are not in this file** — they live in `auth.json`, which is
+> user-provided and gitignored; create it with `hermes` login, and never commit a
+> filled-in one.
 
 ## Step 4 — The Loam profile (`~/.hermes/loam.yaml`)
 
@@ -134,7 +152,10 @@ contract. Key blocks:
   `setup:` recipe handed verbatim to every code-generator child (venv
   activation + the exact Chai/MPNN command lines). The child runs on Aurora and
   cannot see local files, so this recipe must be self-contained.
-- `campaign:` — `dir`, `goal`, `rules`. See Step 4b.
+- `campaign:` — `dir`, `goal`, `rules`, and `skills`. See Step 4b. `skills` names
+  the skills a code-generator must consult before writing code; they are names
+  from the Hermes skill library, not files under `dir`. Omit it and children
+  write from recollection, which is what it exists to stop.
 
 ## Step 4b — Write the campaign
 
@@ -185,6 +206,57 @@ Run the five-round arithmetic campaign in `CAMPAIGN_TEST.md` with
 hook → validator → code-generator → reasoner → next-round path deterministically
 and is the fastest way to confirm the hooks and delegation are wired correctly
 before you spend an allocation.
+
+## Step 6 — Drive the campaign
+
+`run-campaign` ends in `exec hermes "$@"`, so a successful launch drops you at an
+interactive Hermes prompt. **Nothing has happened yet.** The pre-LLM hook fires
+on a `pre_llm_call` event, so until you take a turn there is no tournament, no
+validators, and no campaign.
+
+### What to type
+
+Almost anything that produces a turn. The campaign's content does not come from
+your message — the hook injects the goal, the rules, and the round's scheduler
+directive on its own — so the opening prompt only has to start the loop:
+
+```
+Begin the campaign.
+```
+
+Do **not** restate the objective. The goal file already reaches every tier as
+`CAMPAIGN GOAL (what this experiment serves)`, and a retyped-from-memory
+objective in the first message is a second, unversioned copy that can contradict
+the file without the provenance record showing it.
+
+To launch unattended instead — the usual choice for a long allocation —
+`run-campaign` forwards its arguments to `hermes`, which takes a one-shot prompt:
+
+```bash
+./run-campaign -z "Begin the campaign."
+```
+
+### What advances a round
+
+One scheduler step per turn. Each turn the orchestration hook reads the campaign
+ledger, works out where the round is, and injects the next action:
+
+| Turn | Injected directive | What the parent does |
+|---|---|---|
+| 1 | Tournament runs, then: *N validators planned* | calls `loam_dispatch_round` |
+| 2 | (validators still running → nothing) | waits |
+| 3 | all validators complete → reasoner directive | synthesizes the brief |
+| 4 | brief steers a fresh tournament | next round begins |
+
+So a round is roughly two to three turns, and you advance it by giving Hermes
+another turn — `continue` is enough. The directive is self-contained and the
+selected hypotheses deliberately never enter the parent's context in full, so do
+not compose a `delegate_task` batch by hand: a batch you write is a substitute
+for the campaign's work rather than the campaign's work.
+
+Watch progress in `<campaign-dir>/state/` — `hypothesis-campaign.jsonl` is the
+orchestration ledger, `tournament-reports/` holds each round's ranking, and
+`parent-memory.jsonl` accumulates the accepted, source-backed findings.
 
 ---
 

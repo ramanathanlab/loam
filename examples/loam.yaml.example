@@ -72,7 +72,7 @@ profiles:
       # these, Loam only names them. Omit and children write from recollection,
       # which is what this exists to stop. `skills_list` returns the whole
       # library, so name the campaign's own rather than letting a child browse.
-      skills: [folding, inverse-folding]
+      skills: [chai, proteinmpnn]
     # Pando-style folder per hypothesis, enforced by the hooks
     # (.loam/README.md, "Hypothesis workspace"). Off unless enabled.
     workspace:

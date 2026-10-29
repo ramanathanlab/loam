@@ -98,6 +98,21 @@ LOAM_PRE_LLM_EVERY=3 ./run-hermes     # ... every three turns
 LOAM_STATE_DIR=/var/tmp/loam/$ID ./run-hermes   # isolate this run's artifacts
 ```
 
+**7. Drive it.** A launch leaves you at an interactive prompt with nothing
+started: the pre-LLM hook fires on a turn, so the campaign begins when you take
+one. `Begin the campaign.` is enough — the goal, the rules, and the round's
+scheduler directive are all injected, so the message itself carries no content.
+Unattended, pass a one-shot prompt through to Hermes:
+
+```bash
+./run-campaign -z "Begin the campaign."
+```
+
+Thereafter one scheduler step happens per turn (tournament → validators →
+reasoner brief → next tournament), so `continue` advances the round. See
+[ONBOARDING.md](ONBOARDING.md) Step 6 for the per-turn breakdown and what to
+watch in `state/`.
+
 ## Validate without a cluster first
 
 Run the arithmetic campaign in [CAMPAIGN_TEST.md](CAMPAIGN_TEST.md) with
@@ -116,12 +131,12 @@ the profile-parsing tests fail.
 
 ## Run enzyme reactions with Reactra
 
-The [Reactra skill](skills/reactra/SKILL.md) covers YAML-driven enzyme-reaction
+The [Reactra skill](skills/qm/reactra/SKILL.md) covers YAML-driven enzyme-reaction
 simulations, including packaged PMD and chorismate-mutase examples, HPC execution,
 recovery, and interpreting crossings versus barriers. Make the skill available in
 the campaign's Hermes skill library and add `reactra` to `campaign.skills` in your
 Loam profile so code-generators consult it. The
-[execution guide](skills/reactra/references/loam-execution.md) explains environment
+[execution guide](skills/qm/reactra/references/loam-execution.md) explains environment
 setup and resource ownership for direct and cluster execution.
 
 ## Where things live
