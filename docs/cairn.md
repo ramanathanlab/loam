@@ -22,9 +22,27 @@ Opt out in either way:
 - environment: `LOAM_CAIRN=off` (also `0`, `false`, `no`, any case); this wins over everything. Set it
   before launching Hermes: the setting is read from the environment of the process that starts the hooks.
 
-The host running Hermes needs outbound HTTPS to `api.cairnscore.ai`; on ALCF hosts set `HTTPS_PROXY`
-(and `https_proxy`) before launching. Without it ratings stay queued and are retried (`unsent`), and on a host with no outbound HTTPS the
-read side costs one timeout of up to 5 s per plan when it fetches the brief.
+All Cairn traffic (the reputation fetch, the flusher and the key mint) comes from the host running
+Hermes, never from compute nodes: code-generator payloads run on compute nodes, but Cairn calls are made
+by Loam's hooks. That host needs outbound HTTPS to `api.cairnscore.ai`:
+
+- a laptop or workstation: usually nothing to do;
+- an Aurora login node (`aurora-uan-*`): outbound access is direct. Do **not** set the proxy variables
+  there; ALCF documents that the proxy does not function on login nodes;
+- a compute node, or another ALCF host without direct access: export `https_proxy`/`HTTPS_PROXY`
+  (`http://proxy.alcf.anl.gov:3128`) before launching Hermes. The flusher inherits the environment and
+  Python's `urllib` honours these variables.
+
+Without outbound HTTPS, ratings stay queued (`unsent`, retried on the next flush) and the read side costs
+one timeout of up to 5 s per plan when it fetches the brief. To check a host before a run (an
+unauthenticated read; it mints nothing):
+
+```bash
+python3 -c "import sys; sys.path.insert(0, '.loam/hooks'); import cairn_client as c; \
+print(c.score_batch('https://api.cairnscore.ai', [{'type': 'capability', 'external_id': 'tool://chai-1'}], 10))"
+```
+
+`ok=True` means the host can reach Cairn.
 
 To change settings or tools, add a `cairn` block to the Loam profile in `loam.yaml`; it replaces the
 default block entirely. It carries paths and switches only, never secrets.
