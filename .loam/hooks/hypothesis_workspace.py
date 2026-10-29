@@ -38,10 +38,17 @@ EXPERIMENT_FILE = "experiment.json"
 LOG_FILE = "log.jsonl"
 LOCK_FILE = ".workspace.lock"
 RUN_FILE = "run.json"
-LAYOUT_DIRS = ("src", "runs", "outputs", "scratch", "data")
+# "validator" holds the hypothesis-validator's own provenance (its trace), the
+# way runs/rM/ holds a code-generator's. Hook-written, so a code-generator still
+# cannot write there (_layout_problem has no branch for it); it is listed so the
+# stop-time audit does not count it a stray.
+LAYOUT_DIRS = ("src", "runs", "outputs", "scratch", "data", "validator")
 # Hook-owned top-level files. With LAYOUT_DIRS this is the whole legal top level.
 RECORD_FILES = (EXPERIMENT_FILE, LOG_FILE, LOCK_FILE)
-LOG_KINDS = ("plan", "result", "note", "report", "violation")
+# "decision" is a declared high-level choice (loam_record_decision); "trace" is a
+# captured per-agent conversation pointer. Both are reasoning provenance, chained
+# into log.jsonl like everything else so they are tamper-evident.
+LOG_KINDS = ("plan", "result", "note", "report", "violation", "decision", "trace")
 # A run's outputs may be read by other runs only with one of these: hashed by the
 # hook (local), reported by the child (remote), or hashed later by the verifier.
 VERIFIED_MANIFESTS = ("recorded", "recorded_by_loam")
@@ -1310,6 +1317,101 @@ def capture_code(payload: Mapping[str, Any], start: Mapping[str, Any] | None) ->
             )
         run["inputs"] = inputs
         _write_json(path, run)
+
+
+# --- declared decisions (loam_record_decision) --------------------------------------
+
+# Per-field cap on a recorded decision. A decision is a high-level choice, not a
+# transcript; a model that pastes an essay here is told, in effect, to summarize.
+MAX_DECISION_CHARS = 2000
+DECISION_TOOL = "loam_record_decision"
+
+
+def _decision_entry(args: Mapping[str, Any], session_id: str, role: str) -> dict[str, Any] | None:
+    """One inline decision record, or None when there is no `what` to record."""
+
+    what = _text(args.get("what"))
+    if not what:
+        return None
+    raw_alts = args.get("alternatives")
+    alternatives = (
+        [a[:MAX_DECISION_CHARS] for item in raw_alts if (a := _text(item))]
+        if isinstance(raw_alts, (list, tuple))
+        else []
+    )
+    try:
+        confidence: float | None = float(args["confidence"]) if args.get("confidence") is not None else None
+    except (TypeError, ValueError):
+        confidence = None
+    entry: dict[str, Any] = {
+        "ts": _timestamp(),
+        "what": what[:MAX_DECISION_CHARS],
+        "actor": {"role": role, "session_id": session_id},
+    }
+    if _text(args.get("why")):
+        entry["why"] = _text(args.get("why"))[:MAX_DECISION_CHARS]
+    if alternatives:
+        entry["alternatives"] = alternatives
+    if _text(args.get("expected")):
+        entry["expected"] = _text(args.get("expected"))[:MAX_DECISION_CHARS]
+    if confidence is not None:
+        entry["confidence"] = confidence
+    return entry
+
+
+def record_decision(payload: Mapping[str, Any], start: Mapping[str, Any] | None) -> bool:
+    """Append one declared decision inline to the caller's Pando record. Returns whether it stuck.
+
+    Linked into the structure, not kept beside it: a code-generator's decisions
+    live in its ``runs/rM/run.json`` ``decisions`` list, a validator's in its
+    ``experiment.json`` ``decisions`` list, each also chained into ``log.jsonl``.
+    The decision is the only record of WHY a tier was chosen -- the model emits
+    no reasoning text and this deployment's provider returns no reasoning tokens
+    (see the trace capture) -- so it is captured from a tool the agent calls,
+    never scraped. Best effort and never raising into the tool handler: a
+    provenance write must not fail the agent's turn.
+
+    The reasoner has no hypothesis folder yet, so its decisions are handled with
+    the plan-level record added in a later group; until then a reasoner decision
+    returns False rather than being misfiled into a hypothesis.
+    """
+
+    if settings(payload) is None or not isinstance(start, Mapping):
+        return False
+    role = _text(start.get("role"))
+    session_id = _text(start.get("child_session_id")) or _text(payload.get("session_id"))
+    entry = _decision_entry(_arguments(payload), session_id, role)
+    if entry is None:
+        return False
+    root_text = _text(start.get("workspace"))
+    if not root_text:
+        return False
+    root = Path(root_text)
+    log_fields = {key: value for key, value in entry.items() if key != "ts"}
+    if role == "code-generator":
+        run_id = _text(start.get("run"))
+        if not _RUN_ID.fullmatch(run_id or ""):
+            return False
+        with _locked(root):
+            path = root / "runs" / run_id / RUN_FILE
+            run = read_json(path)
+            if run.get("state") != "started":
+                return False  # a frozen run takes no more decisions
+            run["decisions"] = [*run.get("decisions", []), entry]
+            _write_json(path, run)
+            _append_log_unlocked(root, "decision", {"run": run_id, **log_fields})
+        return True
+    if role == "hypothesis-validator":
+        with _locked(root):
+            path = root / EXPERIMENT_FILE
+            experiment = read_json(path)
+            if experiment.get("state") != "open":
+                return False
+            experiment["decisions"] = [*experiment.get("decisions", []), entry]
+            _write_json(path, experiment)
+            _append_log_unlocked(root, "decision", log_fields)
+        return True
+    return False
 
 
 def _call_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
