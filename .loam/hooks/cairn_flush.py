@@ -206,19 +206,23 @@ def _read_key(key_file: Path) -> str:
 
 
 def _recent_mint_failure(state: Path) -> str | None:
-    """The previous error when cairn-status.json shows a mint_failed less than the backoff ago, else None."""
+    """The previous error when cairn-status.json carries a mint_failed_at less than the backoff ago, else None."""
     try:
         previous = json.loads((state / STATUS).read_text())
-        if previous.get("key") != "mint_failed":
-            return None
-        age = (datetime.now(timezone.utc) - datetime.fromisoformat(previous["updated_at"])).total_seconds()
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(previous["mint_failed_at"])).total_seconds()
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
     return str(previous.get("error") or "") if 0 <= age < MINT_BACKOFF_SECONDS else None
 
 
-def _write_status(state: Path, base_url: str, key_file: Path, key: str, error: str, counts: dict[str, Any]) -> None:
-    """Atomically overwrite cairn-status.json (never the key). Failure is swallowed."""
+def _write_status(
+    state: Path, base_url: str, key_file: Path, key: str, error: str, counts: dict[str, Any], mint_failed: bool = False
+) -> None:
+    """Atomically overwrite cairn-status.json (never the key). Failure is swallowed.
+
+    ``mint_failed_at`` (and its error) is set on a failed mint and carried over from the previous
+    status until a mint succeeds or a key is found, so the backoff survives non-minting flushes.
+    """
     path = state / STATUS
     tmp = state / f".{STATUS}.{os.getpid()}.tmp"
     try:
@@ -236,6 +240,17 @@ def _write_status(state: Path, base_url: str, key_file: Path, key: str, error: s
             "counts": counts,
             "error": error,
         }
+        if mint_failed:
+            body["mint_failed_at"] = body["updated_at"]
+        elif key not in ("minted", "present"):
+            try:
+                previous = json.loads((state / STATUS).read_text())
+                failed_at = previous["mint_failed_at"]
+                if isinstance(failed_at, str):
+                    body["mint_failed_at"] = failed_at
+                    body["error"] = error or str(previous.get("error") or "")
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                pass
         state.mkdir(parents=True, exist_ok=True)
         tmp.write_text(json.dumps(body, sort_keys=True, indent=2) + "\n")
         os.replace(tmp, path)
@@ -265,7 +280,7 @@ def flush(
     attempted: set[str] = set()
     locked_out = False
     key_state, key_error = "", ""
-    backed_off = False
+    backed_off = mint_failed = False
     try:
         for _ in range(MAX_ROUNDS):
             with cairn_common.locked(state / cairn_common.FLUSH_LOCK, blocking=False) as acquired:
@@ -284,6 +299,7 @@ def flush(
                     )
                     key_state = {"minted": "minted", "present": "present", "busy": "mint_busy"}.get(minted.state, "mint_failed")
                     key_error = minted.error
+                    mint_failed = key_state == "mint_failed"
                     api_key = _read_key(key_file)
                 else:
                     key_state = "missing"
@@ -300,7 +316,7 @@ def flush(
     if not key_state:
         key_state = "present" if _read_key(key_file) else "missing"
     if not locked_out and not backed_off:  # a flush that did not run must not overwrite the real one's status
-        _write_status(state, base_url, key_file, key_state, key_error, counts)
+        _write_status(state, base_url, key_file, key_state, key_error, counts, mint_failed)
     return counts
 
 

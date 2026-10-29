@@ -478,10 +478,53 @@ def test_old_mint_failure_is_retried(tmp_path, monkeypatch):
     key = tmp_path / "k.key"
     flush(tmp_path, "https://c", key, 5, auto_mint=True)
     st = status_of(tmp_path)
-    st["updated_at"] = "2020-01-01T00:00:00+00:00"
+    st["mint_failed_at"] = "2020-01-01T00:00:00+00:00"
     (tmp_path / "cairn-status.json").write_text(json.dumps(st))
     flush(tmp_path, "https://c", key, 5, auto_mint=True)
     assert len(mints) == 2
+
+
+def test_backoff_survives_a_non_minting_flush(tmp_path, monkeypatch):
+    mints = fake_mint(monkeypatch, CairnResult(False, 409, None, "HTTP 409"))
+    install(monkeypatch, OK)
+    queue(tmp_path, 1)
+    key = tmp_path / "k.key"
+    flush(tmp_path, "https://c", key, 5, auto_mint=True)
+    failed_at, failed_error = status_of(tmp_path)["mint_failed_at"], status_of(tmp_path)["error"]
+    assert "409" in failed_error
+    flush(tmp_path, "https://c", key, 5)  # the operator's manual flush
+    st = status_of(tmp_path)
+    assert st["key"] == "missing" and st["mint_failed_at"] == failed_at and st["error"] == failed_error
+    flush(tmp_path, "https://c", key, 5, auto_mint=True)
+    assert len(mints) == 1
+    assert status_of(tmp_path)["mint_failed_at"] == failed_at
+
+
+def test_successful_mint_drops_mint_failed_at(tmp_path, monkeypatch):
+    fake_mint(monkeypatch)
+    install(monkeypatch, OK)
+    queue(tmp_path, 1)
+    (tmp_path / "cairn-status.json").write_text(
+        json.dumps({"key": "missing", "error": "old", "mint_failed_at": "2020-01-01T00:00:00+00:00"})
+    )
+    flush(tmp_path, "https://c", tmp_path / "k.key", 5, auto_mint=True)
+    st = status_of(tmp_path)
+    assert st["key"] == "minted" and "mint_failed_at" not in st and st["error"] == ""
+
+
+def test_present_key_drops_mint_failed_at(tmp_path, key, fake_submit_ok):
+    (tmp_path / "cairn-status.json").write_text(json.dumps({"mint_failed_at": "2099-01-01T00:00:00+00:00"}))
+    flush(tmp_path, "https://c", key, 5)
+    assert "mint_failed_at" not in status_of(tmp_path)
+
+
+def test_unparseable_or_naive_mint_failed_at_does_not_back_off(tmp_path, monkeypatch):
+    mints = fake_mint(monkeypatch, CairnResult(False, 0, None, "x"))
+    key = tmp_path / "k.key"
+    for bad in ("garbage", "2099-01-01T00:00:00", "2099-01-01T00:00:00+00:00", 5):
+        (tmp_path / "cairn-status.json").write_text(json.dumps({"mint_failed_at": bad}))
+        flush(tmp_path, "https://c", key, 5, auto_mint=True)
+    assert len(mints) == 4
 
 
 def test_locked_out_flusher_does_not_overwrite_status(tmp_path, monkeypatch):

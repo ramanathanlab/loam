@@ -85,10 +85,11 @@ process is already minting, or the mint fails, rows stay pending and the next fl
 
 Check `cairn-status.json` in the state dir (`$LOAM_STATE_DIR`): it is rewritten by every flush with
 `updated_at`, `key_file`, `key` (`present`, `minted`, `missing`, `mint_failed`, `mint_busy`),
-`identity`, `base_url`, `counts` and `error`. It never contains the key. The flusher is detached and silent, so this file is where mint problems
+`identity`, `base_url`, `counts` and `error`, plus `mint_failed_at` (UTC time of the last failed mint,
+carried through later flushes until a mint succeeds or a key is found). It never contains the key. The flusher is detached and silent, so this file is where mint problems
 appear (loose `~/.cairn/keys` permissions, a read-only `$HOME`, a failed or refused mint). After a
 mint that may have claimed an identity without a reply (`mint_failed`), minting is skipped for 10
-minutes so Cairn is not littered with orphaned identities.
+minutes (from `mint_failed_at`, even across flushes that do not mint) so Cairn is not littered with orphaned identities.
 
 An empty key file left by a killed minter (older than 10 minutes, regular file) is recovered
 automatically: it is renamed to `<key>.abandoned.<pid>.<time>` and minting proceeds; a fresh one is
