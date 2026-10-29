@@ -23,15 +23,30 @@ STATE_FILENAME = "hypothesis-orchestration.jsonl"
 CAMPAIGN_FILENAME = "hypothesis-campaign.jsonl"
 MAX_REASONER_THREAD_CHARS = 6_000
 EVIDENCE_SCORE_HEADING = "### Evidence Score"
-MAX_BRIEF_CHARS = 2_000
+# The reasoner's brief IS the next tournament's input, so this bound caps the
+# quality of every hypothesis the next turn can generate. At 2_000 it was a
+# paragraph standing in for a turn's worth of synthesis across several
+# validator threads.
+MAX_BRIEF_CHARS = 8_000
 MAX_CHILD_GOAL_CHARS = 300
 # Bound on the hypothesis text forwarded into a child's context.
 MAX_HYPOTHESIS_CHARS = 4_000
 # Bound on an injected agent definition. The checked-in prompts are ~4-10 KB;
 # this leaves headroom while keeping a runaway edit out of every child context.
 MAX_AGENT_PROMPT_CHARS = 24_000
+# Campaign context competes with the hypothesis for the front of a validator's
+# payload (see `_hypothesis_block`), so both halves are bounded tightly.
+MAX_CAMPAIGN_CHARS = 4_000
+MAX_RULES_CHARS = 4_000
+RULE_TIERS = ("validator", "code-generator", "reasoner")
+RULE_ALWAYS = "always"
+RULE_WHEN_NAMED = "when-named"
 # Tools of the hpc-deployment MCP server a generated-mode code-generator may use.
 HPC_TOOLS = ("run_code", "run_batch", "batch_status", "list_batches", "register_tool", "list_tools", "inspect_filesystem")
+# The subset of HPC_TOOLS that only looks: no compute, no registration, no
+# submission. A hypothesis-validator may call these itself (see
+# `_observation_tools`); everything executable still goes through a child.
+VALIDATOR_OBSERVATION_TOOLS = ("batch_status", "inspect_filesystem", "list_batches")
 _LOAM_TAG = re.compile(r"\[loam-[a-z-]+=[^\]]*\]")
 
 
@@ -45,7 +60,8 @@ class AgentSpec:
     direct_execution: bool
     # The prompt body, for injection into the child's task context. It cannot be
     # delivered as a path to read: `tool_policy` allows a hypothesis-validator
-    # only `delegate_task`, so a validator told to read its own definition gets
+    # `delegate_task` plus the read-only HPC observation tools, none of which
+    # reads a local file, so a validator told to read its own definition gets
     # back "hypothesis-validator must delegate executable work to
     # code-generator" and then runs with no role instructions at all. The
     # reasoner is likewise restricted. Only a code-generator could read a path,
@@ -92,8 +108,12 @@ def _front_matter(path: Path) -> dict[str, str]:
     raise ValueError(f"agent prompt has unterminated front matter: {path}")
 
 
-def _prompt_body(path: Path) -> str:
-    """Return the agent prompt with its front matter removed, bounded in size."""
+def _prompt_body(path: Path, limit: int = MAX_AGENT_PROMPT_CHARS) -> str:
+    """Return a front-matter document's body, bounded in size.
+
+    Shared by the agent prompts and the campaign/rules files, which use the same
+    `---` front matter followed by prose.
+    """
 
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -104,7 +124,7 @@ def _prompt_body(path: Path) -> str:
                 break
         else:
             raise ValueError(f"agent prompt has unterminated front matter: {path}")
-    return "\n".join(lines).strip()[:MAX_AGENT_PROMPT_CHARS]
+    return "\n".join(lines).strip()[:limit]
 
 
 def agent_registry(payload: Mapping[str, Any]) -> dict[str, AgentSpec]:
@@ -132,6 +152,299 @@ def agent_registry(payload: Mapping[str, Any]) -> dict[str, AgentSpec]:
             prompt_body=_prompt_body(path),
         )
     return registry
+
+
+@dataclass(frozen=True)
+class RuleSpec:
+    """One campaign rules file: policy text plus the tiers it applies to."""
+
+    name: str
+    scopes: frozenset[str]
+    body: str
+    # True when the rule applies to every campaign without being named, because
+    # it states something invariant (what makes a datum trustworthy; how an
+    # experiment is run and reported) rather than a domain's assay. This text was
+    # unconditional while it lived inline in `_hypothesis_block`; moving it into
+    # files must not quietly turn invariant policy into an opt-in.
+    always: bool = False
+    # Advisory note naming the `tool_policy` clause that actually enforces this
+    # rule, when one exists. Injected text cannot enforce anything on its own
+    # (see `_SCRUBBERS`, which exists because it could not), so a rule that must
+    # hold needs a veto in `pre-tool.py`; recording which keeps the distinction
+    # between "stated" and "enforced" visible instead of implied.
+    enforced_by: str = ""
+
+
+@dataclass(frozen=True)
+class CampaignContext:
+    """The invariant half of a campaign's context: its goal and its rules.
+
+    The evolving half -- current state -- is not here. It already reaches the
+    model as the reasoner brief and the reconciled findings the recall hooks
+    inject.
+    """
+
+    goal_name: str = ""
+    goal: str = ""
+    rules: tuple[RuleSpec, ...] = ()
+
+    def rules_for(self, tier: str) -> tuple[RuleSpec, ...]:
+        return tuple(rule for rule in self.rules if tier in rule.scopes)
+
+
+def campaign_provenance(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Which campaign policy was in force, by name and content digest.
+
+    Moving the objective and the rules out of this hook and into editable files
+    makes a result harder to attribute than hardcoding did, unless the policy
+    that produced it is recorded beside it. A digest is enough: it says whether
+    two runs were governed identically, and names the file to go read.
+
+    Best effort by design. A missing or malformed policy file must fail loudly
+    where it is injected (`campaign_context`), but the manifest and ledger are
+    written on every event and must not fall over with it, so a read failure is
+    recorded rather than raised.
+    """
+
+    campaign = payload.get("loam_campaign")
+    campaign = campaign if isinstance(campaign, Mapping) else {}
+    goal_name = _text(campaign.get("goal"))
+    raw_rules = campaign.get("rules")
+    named = [name for item in (raw_rules if isinstance(raw_rules, list) else []) if (name := _text(item))]
+    # The invariant rules govern the run whether or not a profile named them, so
+    # they are part of what produced the result and belong in the digest.
+    base = _base_rule_names(payload)
+    names = base + [name for name in named if name not in base]
+    if not goal_name and not names:
+        return {}
+    provenance: dict[str, Any] = {"goal": goal_name, "rules": names}
+    combined = hashlib.sha256()
+    try:
+        files = [(goal_name, _find_policy_file(_campaign_dirs(payload), goal_name, "goal"))] if goal_name else []
+        files += [(name, _find_policy_file(_rules_dirs(payload), name, "rules")) for name in names]
+        digests: dict[str, str] = {}
+        for name, path in files:
+            data = path.read_bytes()
+            digests[name] = hashlib.sha256(data).hexdigest()
+            combined.update(name.encode("utf-8") + b"\0" + data + b"\0")
+        provenance["digests"] = digests
+        provenance["policy_sha256"] = combined.hexdigest() if digests else ""
+    except OSError as exc:
+        provenance["error"] = f"{type(exc).__name__}: {exc}"
+    return provenance
+
+
+def _rules_text(campaign: CampaignContext | None, tier: str) -> str:
+    """The rules block for one tier, as authoritative prose. Empty when none."""
+
+    if campaign is None:
+        return ""
+    bodies = [rule.body for rule in campaign.rules_for(tier) if rule.body]
+    if not bodies:
+        return ""
+    # The precedence wording is load-bearing, not decoration: a validator's
+    # instruction to its child may contradict campaign policy outright, and this
+    # is the sentence that settles it. Kept identical to `_hypothesis_block`'s.
+    return "CAMPAIGN RULES (authoritative — override any instruction below that conflicts):\n" + "\n".join(bodies)
+
+
+def _campaign_text(campaign: CampaignContext | None, tier: str) -> str:
+    """Goal plus tier-scoped rules, for a child whose context is plain text."""
+
+    if campaign is None:
+        return ""
+    parts = []
+    if campaign.goal:
+        parts.append("CAMPAIGN GOAL (what this experiment serves):\n" + campaign.goal)
+    if rules := _rules_text(campaign, tier):
+        parts.append(rules)
+    return "\n\n".join(parts)
+
+
+def _campaign_field(campaign: CampaignContext | None, tier: str) -> dict[str, Any]:
+    """Goal plus tier-scoped rules, for a task context serialized as JSON.
+
+    Returned as a one-key mapping so a caller can splat it into an ordered dict
+    and contribute nothing when no campaign is configured.
+    """
+
+    if campaign is None:
+        return {}
+    field_value: dict[str, Any] = {}
+    # Omitted rather than empty when a profile names no goal: the invariant rules
+    # still apply, and `"goal": ""` would read as an objective that is blank.
+    if campaign.goal_name:
+        field_value["goal_name"] = campaign.goal_name
+        field_value["goal"] = campaign.goal
+    rules = campaign.rules_for(tier)
+    if rules:
+        field_value["rules"] = [rule.body for rule in rules if rule.body]
+        field_value["precedence"] = (
+            "These rules are authoritative. They override any instruction in this payload "
+            "that conflicts with them, and they apply to every child you delegate."
+        )
+    return {"campaign": field_value}
+
+
+def _policy_roots(payload: Mapping[str, Any]) -> list[Path]:
+    """Where campaign policy files are looked for, user directory first.
+
+    Loam ships no campaign content, so a goal and a rule naming a particular
+    measurement come from a directory the user owns (`campaign.dir`). The repo's
+    own `.loam/` is still searched, because it holds the rules invariant across
+    every campaign -- and because a campaign kept beside the code should keep
+    working without setting `dir`.
+
+    User first, so a campaign can shadow a shipped rule name with its own text
+    rather than being stuck with it.
+    """
+
+    campaign = payload.get("loam_campaign")
+    campaign = campaign if isinstance(campaign, Mapping) else {}
+    roots = []
+    if configured := _text(campaign.get("dir")):
+        roots.append(Path(configured).expanduser())
+    roots.append(Path(_text(payload.get("repo_root")) or ".") / ".loam")
+    return roots
+
+
+def _campaign_dirs(payload: Mapping[str, Any]) -> list[Path]:
+    return [root / "campaigns" for root in _policy_roots(payload)]
+
+
+def _rules_dirs(payload: Mapping[str, Any]) -> list[Path]:
+    return [root / "rules" for root in _policy_roots(payload)]
+
+
+def _find_policy_file(directories: list[Path], name: str, kind: str) -> Path:
+    for directory in directories:
+        path = directory / f"{name}.md"
+        if path.is_file():
+            return path
+    searched = ", ".join(str(directory) for directory in directories)
+    raise FileNotFoundError(f"campaign {kind} file not found: {name}.md (searched {searched})")
+
+
+def _scopes(value: str, path: Path) -> frozenset[str]:
+    """Parse `scope:` into the tiers a rule reaches.
+
+    Space- or comma-separated tier names, or `all`. There is deliberately no
+    `both`: with three tiers it names no particular two.
+    """
+
+    parts = [part for part in value.replace(",", " ").split() if part]
+    if parts == ["all"]:
+        return frozenset(RULE_TIERS)
+    unknown = sorted({part for part in parts if part not in RULE_TIERS})
+    if unknown:
+        raise ValueError(f"rules file has unknown scope {unknown}, expected {list(RULE_TIERS)} or all: {path}")
+    return frozenset(parts)
+
+
+def _applies(value: str, path: Path) -> bool:
+    """Parse `applies:` into whether the rule needs naming by a profile.
+
+    Defaults to `when-named`, the safe direction: a new assay rule dropped into
+    the directory must not reach a campaign in another domain, where the wrong
+    decisive experiment is worse than a missing one. `always` is for the
+    invariant layers, which a profile should not have to remember.
+    """
+
+    if not value or value == RULE_WHEN_NAMED:
+        return False
+    if value == RULE_ALWAYS:
+        return True
+    raise ValueError(
+        f"rules file has unknown applies {value!r}, expected {RULE_ALWAYS} or {RULE_WHEN_NAMED}: {path}"
+    )
+
+
+def _rule_spec(name: str, path: Path) -> RuleSpec:
+    front_matter = _front_matter(path)
+    if front_matter.get("name") != name:
+        raise ValueError(f"rules file name mismatch: {path}")
+    # Required rather than defaulted to `all`: a rule that silently reached a
+    # tier it was not written for would be read as authoritative there.
+    scope = _text(front_matter.get("scope"))
+    if not scope:
+        raise ValueError(f"rules file must declare a scope ({'|'.join(RULE_TIERS)}, or all): {path}")
+    return RuleSpec(
+        name=name,
+        scopes=_scopes(scope, path),
+        body=_prompt_body(path, MAX_RULES_CHARS),
+        enforced_by=_text(front_matter.get("enforced_by")),
+        always=_applies(_text(front_matter.get("applies")), path),
+    )
+
+
+def _base_rule_names(payload: Mapping[str, Any]) -> list[str]:
+    """Names of the rules that apply without being named, in injection order.
+
+    Reads only `applies:` from each file's front matter, deliberately: a
+    half-written assay rule sitting in the directory must not break a campaign
+    that never names it. A file marked `always` is then loaded and validated in
+    full like any other, so a malformed invariant rule still fails loudly.
+
+    Sorted by name within each directory, and the repo's own before the user's,
+    so a campaign that adds an always-on rule of its own reads it after the
+    framework's. Base rules precede the profile's named ones, so the campaign's
+    most specific text lands last.
+    """
+
+    names: list[str] = []
+    for directory in reversed(_rules_dirs(payload)):
+        for path in sorted(directory.glob("*.md")):
+            if path.name == "README.md" or path.stem in names:
+                continue
+            try:
+                applies = _text(_front_matter(path).get("applies"))
+            except (OSError, ValueError):
+                continue
+            if applies == RULE_ALWAYS:
+                names.append(path.stem)
+    return names
+
+
+def campaign_context(payload: Mapping[str, Any]) -> CampaignContext | None:
+    """Load the invariant rules, plus the goal and assay rules a profile names.
+
+    The invariant layers load unconditionally. A profile should not have to
+    remember that an experiment must finish before it is reported, or that a
+    reference datum must be fetched rather than recalled; those held for every
+    campaign while the text was inline in `_hypothesis_block`, and a file is
+    where the text lives, not a reason to make it optional. Only the assay layer
+    -- which decisive measurement this domain uses -- is named, because only it
+    differs between campaigns.
+
+    `None` means no goal and no invariant rules, i.e. an empty rules directory:
+    there is nothing to inject. A named-but-missing or malformed file raises
+    instead, surfacing through the calling hook's handler as a logged failure.
+    The point of the block is that every reasoning tier knows what the campaign
+    is for, and a run that quietly lost its objective while still looking
+    governed is the failure this avoids.
+    """
+
+    campaign = payload.get("loam_campaign")
+    campaign = campaign if isinstance(campaign, Mapping) else {}
+    goal_name = _text(campaign.get("goal"))
+    goal = ""
+    if goal_name:
+        goal_path = _find_policy_file(_campaign_dirs(payload), goal_name, "goal")
+        if _front_matter(goal_path).get("name") != goal_name:
+            raise ValueError(f"campaign goal name mismatch: {goal_path}")
+        goal = _prompt_body(goal_path, MAX_CAMPAIGN_CHARS)
+    raw_rules = campaign.get("rules")
+    named = [name for item in (raw_rules if isinstance(raw_rules, list) else []) if (name := _text(item))]
+    rules: list[RuleSpec] = []
+    # Base first, then the profile's, deduplicated by name: a profile that still
+    # lists an invariant rule explicitly keeps working rather than sending the
+    # text twice.
+    base = _base_rule_names(payload)
+    for name in base + [name for name in named if name not in base]:
+        rules.append(_rule_spec(name, _find_policy_file(_rules_dirs(payload), name, "rules")))
+    if not goal_name and not rules:
+        return None
+    return CampaignContext(goal_name=goal_name, goal=goal, rules=tuple(rules))
 
 
 def _read_rows(path: Path) -> list[dict[str, Any]]:
@@ -258,6 +571,26 @@ def hpc_tool_names(execution: Mapping[str, Any] | None) -> dict[str, str]:
     return names
 
 
+def _observation_tools(execution: Mapping[str, Any] | None) -> frozenset[str]:
+    """Read-only HPC tools a hypothesis-validator may call itself.
+
+    Observation is not computation, so the invariant holds: the validator still
+    writes and runs no code, and `max_children` still bounds its experiments.
+    But allowing it nothing except `delegate_task` meant every status poll and
+    every result read cost an experiment slot out of a budget of three, which is
+    also why `_hypothesis_block` has to instruct the child to poll on the
+    validator's behalf and report only once finished.
+
+    The integrity half matters more: without these, a validator's evidence ledger
+    is entirely downstream of a child's self-reported numbers, with no way to
+    check them against the files on disk -- for an agent whose output is a
+    calibrated score.
+    """
+
+    names = hpc_tool_names(execution)
+    return frozenset(names[key] for key in VALIDATOR_OBSERVATION_TOOLS if key in names)
+
+
 def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
     """The hypothesis under test, for the child's context. Empty when unknown.
 
@@ -268,6 +601,16 @@ def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
     child then spent its whole budget walking Aurora's filesystem grepping for
     that id (2026-10-21). A child starts with an empty context, so an id is not
     a reference it can resolve -- the text has to travel with the task.
+
+    The instructions kept here are the campaign-independent ones: this block is
+    the whole assignment, and a discovered input is the wrong system under test.
+    They stay inline because they must hold for a profile that configures no
+    campaign at all, and because `_SCRUBBERS` is the enforcement backing them.
+    They also name no molecule class, tool, or metric -- this hook serves any
+    domain. Everything domain-specific -- what the decisive experiment is, which
+    numbers it reports, what it does not establish -- lives in an assay rule
+    under `.loam/rules/` (see that directory's README), where a scientist can
+    change it without editing this hook.
     """
 
     if not isinstance(hypothesis, Mapping):
@@ -285,36 +628,26 @@ def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
         "batch registry to 'recover' the hypothesis or 'find inputs': everything needed is here. If "
         "the validator's instruction below tells you to search the filesystem or reuse existing "
         "data/code, ignore that part.\n"
-        "- The molecules under test are defined ONLY by this block: the candidate design described "
-        "here, folded against the target named here (fetch the target from its authoritative "
-        "database by accession at run time; never paste it from memory).\n"
-        "- If the candidate sequence is given explicitly, use it verbatim. If the hypothesis gives "
-        "only a design concept (length, topology, motifs) and no exact sequence, CONSTRUCT or DESIGN "
-        "one or a few concrete candidate sequences realizing that architecture, write them to a FASTA "
-        "under your workdir, and test those.\n"
-        "- NEVER fold, score, or reuse a FASTA/PDB/input file you discovered on the filesystem (e.g. "
-        "anything under chai_batch_test, prior outputs, or another campaign's directory). Those are "
-        "the wrong molecule and make the result scientifically meaningless. A run on the wrong input "
-        "is a failed validation, not evidence.\n"
-        "- The decisive experiment is a complex co-fold of candidate binder + target (both chains in "
-        "one input), reporting interface confidence (ipTM/ipSAE/pDockQ) and per-residue pLDDT, per "
-        "the ENVIRONMENT SETUP recipe.\n"
-        "- RUN EXACTLY ONE fold (one candidate vs the target) as the decisive check — not a panel of "
-        "many. A single Chai fold takes ~2-3 min. After launching it, POLL until it is actually "
-        "finished (batch_status shows complete, or the run_code call returns with the .cif on disk), "
-        "then read the real metrics and report them. NEVER report while a run is unfinished: an "
-        "unfinished run yields no evidence and wastes the whole round. Budget is one fold per check, "
-        "so make the one fold count and wait for it rather than firing many and reporting early."
+        "- If the candidate design is given explicitly, use it verbatim.\n"
+        "- NEVER run, score, or reuse an input you discovered on the filesystem — a sequence, "
+        "structure, parameter set, or dataset found in prior outputs, a tool's test fixtures, or "
+        "another campaign's directory. That is the wrong system under test and makes the result "
+        "scientifically meaningless. A run on the wrong input is a failed validation, not evidence."
     )
     return "\n".join(lines)
 
 
 def _generated_child_context(instruction: str, execution: Mapping[str, Any] | None, workdir: str,
-                             hypothesis: Mapping[str, Any] | None = None) -> str:
+                             hypothesis: Mapping[str, Any] | None = None,
+                             campaign: CampaignContext | None = None) -> str:
     """Context for a code-generator that writes and runs its own code."""
 
     execution = execution if isinstance(execution, Mapping) else {}
     hypothesis_block = _hypothesis_block(hypothesis)
+    # After the hypothesis and before the validator's instruction, for the same
+    # reason the hypothesis is: the child must read its assignment and the policy
+    # governing it ahead of a request whose wording may contradict either.
+    campaign_block = _campaign_text(campaign, "code-generator")
     # Campaign environment recipe (venv activation, tool CLIs, weight paths),
     # carried in the contract because the child cannot see the campaign's local
     # files. Without it a child hand-rolls `import chai_lab` against the source
@@ -332,6 +665,7 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
             "Write your own Python for the validator's instruction below and execute it locally"
             + (f" with {_text(execution.get('runtime'))}." if _text(execution.get("runtime")) else "."),
             hypothesis_block,
+            campaign_block,
             setup_block,
             "Instruction from validator:\n" + instruction,
             report,
@@ -366,6 +700,7 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
         # wording of the request, and the validator's text may contradict it
         # (e.g. "the hypothesis text is not visible in this message").
         hypothesis_block,
+        campaign_block,
         setup_block,
         "Instruction from validator:\n" + instruction,
         f"Remote target: endpoint={_text(execution.get('endpoint'))}; runtime={_text(execution.get('runtime'))}.",
@@ -485,6 +820,10 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
     # copied it into the instruction; see _hypothesis_block. Unknown id -> empty
     # block, and the child's context is exactly as it was before.
     hypothesis = _full_hypotheses(payload).get(hypothesis_id)
+    # Forwarded structurally for the same reason, and from the payload rather
+    # than from the validator's instruction: policy the validator paraphrased
+    # away would otherwise never reach the tier that runs the experiment.
+    campaign = campaign_context(payload)
     out = []
     for task in items:
         if not isinstance(task, Mapping):
@@ -497,7 +836,7 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
         out.append(
             {
                 "goal": _child_goal(hypothesis, goal, plan_id, hypothesis_id),
-                "context": _generated_child_context(instruction, execution, workdir, hypothesis),
+                "context": _generated_child_context(instruction, execution, workdir, hypothesis, campaign),
                 "role": "leaf",
             }
         )
@@ -685,7 +1024,15 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     if role != "hypothesis-validator":
         return None
     if tool_name != "delegate_task":
-        return {"action": "block", "message": "hypothesis-validator must delegate executable work to code-generator"}
+        if tool_name in _observation_tools(payload.get("loam_execution")):
+            return None
+        return {
+            "action": "block",
+            "message": (
+                "hypothesis-validator must delegate executable work to code-generator; "
+                f"it may call only the read-only tools {sorted(VALIDATOR_OBSERVATION_TOOLS)} itself"
+            ),
+        }
     arguments = payload.get("arguments")
     goals = []
     if isinstance(arguments, Mapping):
@@ -992,12 +1339,13 @@ def record_stop(payload: Mapping[str, Any]) -> None:
 def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry: Mapping[str, AgentSpec], payload: Mapping[str, Any]) -> str:
     validator = registry["hypothesis-validator"]
     execution = payload.get("loam_execution")
+    campaign = campaign_context(payload)
     tasks = []
     for item in selected:
         hypothesis = item.get("hypothesis")
         hypothesis_id = _text(hypothesis.get("hypothesis_id")) if isinstance(hypothesis, Mapping) else ""
         if _generated(execution if isinstance(execution, Mapping) else None):
-            tasks.append(_generated_validator_task(plan_id, hypothesis_id, item, execution, validator.prompt_body))  # type: ignore[arg-type]
+            tasks.append(_generated_validator_task(plan_id, hypothesis_id, item, execution, validator.prompt_body, campaign))  # type: ignore[arg-type]
             continue
         tasks.append(
             {
@@ -1014,6 +1362,7 @@ def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry:
                     {
                         "loam_validator_contract": "v1",
                         "selected_hypothesis": item,
+                        **_campaign_field(campaign, "validator"),
                         "execution_contract": execution if isinstance(execution, Mapping) else {},
                         "required_child": {
                             "role": "leaf",
@@ -1053,7 +1402,7 @@ def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry:
     return "\n".join(lines)
 
 
-def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[str, Any], execution: Mapping[str, Any], agent_definition: str = "") -> dict[str, Any]:
+def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[str, Any], execution: Mapping[str, Any], agent_definition: str = "", campaign: CampaignContext | None = None) -> dict[str, Any]:
     """Validator task for generated mode: it designs the experiment itself."""
 
     cap = _max_children(execution)
@@ -1061,8 +1410,9 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
         "goal": (
             f"Validate the supplied hypothesis by designing the smallest decisive experiment and delegating "
             f"it to at most {cap} code-generator leaf children, one at a time, iterating on their actual "
-            "results. Do not calculate directly or use any tool other than delegate_task. Then return the "
-            "required report headings, including a bare decimal Evidence Score. "
+            "results. Do not compute anything yourself; delegate_task is your only executable tool, though "
+            f"you may call {', '.join(VALIDATOR_OBSERVATION_TOOLS)} to check on and read a child's run. "
+            "Then return the required report headings, including a bare decimal Evidence Score. "
             f"[loam-agent-role=hypothesis-validator] [loam-plan-id={plan_id}] "
             f"[loam-hypothesis-id={hypothesis_id}]"
         ),
@@ -1077,6 +1427,11 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
             {
                 "loam_validator_contract": "v1",
                 "selected_hypothesis": item,
+                # Immediately after the assignment and well inside the first
+                # ~2 KB. This is the second field competing for the front of the
+                # payload, so both halves are bounded (MAX_CAMPAIGN_CHARS,
+                # MAX_RULES_CHARS) rather than left to grow.
+                **_campaign_field(campaign, "validator"),
                 "execution_contract": execution,
                 "child_template": {
                     "role": "leaf",
@@ -1086,7 +1441,7 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
                 },
                 "validator_instructions": (
                     "Follow agent_definition above; it is your role specification and is provided in full "
-                    "because you may call no tool other than delegate_task. "
+                    "because you cannot read its file. "
                     "Every code-generator child starts with an empty context and cannot see this payload, "
                     "the tournament state or the campaign files, so write selected_hypothesis into each "
                     "child's goal/context in full -- statement, candidate sequence and the falsifying "
@@ -1096,7 +1451,9 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
                     "and the acceptance condition, ending with child_template.goal_suffix; context = exact "
                     "inputs, parameter ranges and expected outputs. Children write their own code, can reuse "
                     "registered HPC tools, and run large sweeps as batches. At most max_children children in "
-                    "total. Never compute or run code yourself. Then return exactly these headings: "
+                    "total. Never compute or run code yourself. Do poll and read a child's run yourself with "
+                    f"{', '.join(VALIDATOR_OBSERVATION_TOOLS)} rather than spending a child on it, and verify a "
+                    "child's reported numbers against the files it actually wrote. Then return exactly these headings: "
                     "### Hypothesis; ### Outcome; ### Evidence Ledger; ### Credit Assignment; "
                     "### Evidence Score; ### Next Step. The Evidence Score must be a bare decimal "
                     "in [-1.00, 1.00], for example +0.75, immediately after its heading."
@@ -1112,27 +1469,77 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
     }
 
 
-def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registry: Mapping[str, AgentSpec]) -> str:
+def _elo_ratings(payload: Mapping[str, Any]) -> dict[str, float]:
+    """Jnana Elo per hypothesis id, from the latest tournament report."""
+
+    report = _latest_report(payload)
+    if report is None:
+        return {}
+    result = report[1].get("result")
+    rankings = result.get("top_hypotheses") if isinstance(result, Mapping) else None
+    ratings: dict[str, float] = {}
+    for ranking in rankings if isinstance(rankings, list) else []:
+        if not isinstance(ranking, Mapping):
+            continue
+        hypothesis_id = _text(ranking.get("hypothesis_id"))
+        value = ranking.get("elo_rating")
+        if hypothesis_id and isinstance(value, (int, float)) and not isinstance(value, bool):
+            ratings[hypothesis_id] = float(value)
+    return ratings
+
+
+def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registry: Mapping[str, AgentSpec],
+                        campaign: CampaignContext | None = None,
+                        elo_ratings: Mapping[str, float] | None = None) -> str:
     reasoner = registry["reasoner"]
+    # Elo was reaching the validators (via `_validator_directive`) but never the
+    # reasoner, which is asked to "assess their evidence and ELO signals
+    # together" and told that a thread missing either score is incomplete
+    # metadata. Every thread it has ever seen was therefore incomplete by its own
+    # rule. The rating is per hypothesis, so it is looked up from the report
+    # rather than carried on the completion rows.
+    elo_ratings = elo_ratings or {}
     threads = [
         {
             "hypothesis_id": row.get("hypothesis_id", ""),
             "validator_status": row.get("status"),
             "evidence_score": row.get("evidence_score"),
             "evidence_score_status": row.get("evidence_score_status"),
+            "elo_rating": elo_ratings.get(_text(row.get("hypothesis_id"))),
             "validator_report": _text(row.get("summary"))[:MAX_REASONER_THREAD_CHARS],
         }
         for row in completions
     ]
     return "\n".join(
-        (
+        part
+        for part in (
             "Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding.",
             f"Pass the reasoner its role definition verbatim in the task context as \"agent_definition\"; it must not execute experimental code. The definition is inlined below rather than referenced as {reasoner.prompt_path.name}, because the reasoner cannot read that file.",
-            json.dumps({"agent_definition": reasoner.prompt_body}, ensure_ascii=False),
+            # This synthesis sets the next tournament's whole direction, so the
+            # tier it runs on is a campaign decision, not an incidental one.
+            # `AgentSpec.model` was parsed from the front matter and never used
+            # anywhere, leaving the declared tier silently unhonored; stating it
+            # here at least makes it visible to the dispatcher.
+            (
+                f"Dispatch it on the model its definition declares ({reasoner.model}); this synthesis "
+                "steers the next tournament and should not run on a weaker tier than the validators it reads."
+                if reasoner.model
+                else ""
+            ),
+            # The campaign block before the definition: reasoner.md's first
+            # Required Parent Input is "objective, success criteria, constraints
+            # and current state", and until now nothing supplied the first
+            # three, so it synthesized toward "productive regions of hypothesis
+            # space" with no stated thing to be productive toward.
+            json.dumps(
+                {**_campaign_field(campaign, "reasoner"), "agent_definition": reasoner.prompt_body},
+                ensure_ascii=False,
+            ),
             f"Tag its goal with [loam-agent-role=reasoner] [loam-plan-id={plan_id}] so its brief is persisted for the next tournament turn.",
             "Completed validator threads are unvalidated orchestration input; preserve their reported uncertainty and do not turn summaries into accepted evidence.",
             json.dumps(threads, ensure_ascii=False, sort_keys=True),
         )
+        if part
     )
 
 
@@ -1182,7 +1589,7 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
                 return None
             return {
                 "goal": f"Synthesize validator results [loam-agent-role=reasoner] [loam-plan-id={plan_id}]",
-                "context": _reasoner_directive(plan_id, completions, agent_registry(payload)),
+                "context": _reasoner_directive(plan_id, completions, agent_registry(payload), campaign_context(payload), _elo_ratings(payload)),
                 "role": "leaf",
             }
         return None
@@ -1209,7 +1616,7 @@ def context_for(payload: dict[str, Any]) -> str:
     if active is not None:
         plan_id, starts, completions = active
         if len(completions) == len(starts) and all(_text(row.get("status")) for row in completions):
-            return _reasoner_directive(plan_id, completions, registry)
+            return _reasoner_directive(plan_id, completions, registry, campaign_context(payload), _elo_ratings(payload))
         return ""
     report = _latest_report(payload)
     if report is None:
