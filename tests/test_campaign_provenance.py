@@ -57,9 +57,20 @@ class CampaignProvenanceTests(unittest.TestCase):
         )
         self.assertEqual(len(provenance["policy_sha256"]), 64)
 
-    def test_no_campaign_records_nothing(self) -> None:
+    def test_the_invariant_rules_are_recorded_without_a_campaign_block(self) -> None:
+        """They govern the run whether or not a profile named them."""
+
         orchestration = _load("loam_prov_absent", "hypothesis_orchestration.py")
-        self.assertEqual(orchestration.campaign_provenance({"repo_root": str(ROOT)}), {})
+        provenance = orchestration.campaign_provenance({"repo_root": str(ROOT)})
+
+        self.assertEqual(provenance["goal"], "")
+        self.assertEqual(provenance["rules"], ["design-integrity", "experiment-discipline"])
+        self.assertEqual(len(provenance["policy_sha256"]), 64)
+
+    def test_no_policy_at_all_records_nothing(self) -> None:
+        orchestration = _load("loam_prov_nothing", "hypothesis_orchestration.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            self.assertEqual(orchestration.campaign_provenance({"repo_root": temporary}), {})
 
     def test_an_unreadable_policy_file_is_recorded_not_raised(self) -> None:
         """The injection path must fail loudly; the manifest is written on every event."""
@@ -85,7 +96,8 @@ class CampaignProvenanceTests(unittest.TestCase):
             second = json.loads(path.read_text(encoding="utf-8"))["campaign"]
 
         self.assertEqual(first["policy"]["rules"], ["design-integrity", "experiment-discipline", "binder-cofold"])
-        self.assertEqual(second["policy"]["rules"], [])
+        # The named assay rule is gone; the invariant ones cannot be dropped.
+        self.assertEqual(second["policy"]["rules"], ["design-integrity", "experiment-discipline"])
         self.assertNotEqual(first["policy"]["policy_sha256"], second["policy"]["policy_sha256"])
 
     def test_policy_is_not_part_of_deployment_identity(self) -> None:

@@ -47,9 +47,92 @@ def _rule(name: str, scope: str, body: str = "Do not fabricate a reference seque
 
 
 class CampaignContextTests(unittest.TestCase):
-    def test_absent_block_loads_nothing(self) -> None:
+    def test_the_invariant_rules_load_without_a_campaign_block(self) -> None:
+        """They were unconditional while inline in `_hypothesis_block`.
+
+        Putting the text in a file is where it lives, not a reason to make it
+        optional: a profile should not have to remember that an experiment must
+        finish before it is reported.
+        """
+
         orchestration = _load("loam_campaign_absent")
-        self.assertIsNone(orchestration.campaign_context({"repo_root": str(ROOT)}))
+        context = orchestration.campaign_context({"repo_root": str(ROOT)})
+
+        assert context is not None
+        self.assertEqual(context.goal_name, "")
+        self.assertEqual([rule.name for rule in context.rules], ["design-integrity", "experiment-discipline"])
+        self.assertTrue(all(rule.always for rule in context.rules))
+
+    def test_an_empty_rules_directory_loads_nothing(self) -> None:
+        orchestration = _load("loam_campaign_empty")
+        with tempfile.TemporaryDirectory() as temporary:
+            self.assertIsNone(orchestration.campaign_context(_repo(Path(temporary))))
+
+    def test_an_assay_rule_is_ignored_until_a_profile_names_it(self) -> None:
+        """The default direction: the wrong decisive experiment beats a missing one."""
+
+        orchestration = _load("loam_campaign_when_named")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = _repo(
+                Path(temporary),
+                rules={
+                    "base": _rule("base", "all", "Fetch, do not recall.", extra="applies: always\n"),
+                    "assay": _rule("assay", "code-generator", "Run the wrong-domain assay."),
+                },
+            )
+            unnamed = orchestration.campaign_context(payload)
+            named = orchestration.campaign_context({**payload, "loam_campaign": {"rules": ["assay"]}})
+
+        assert unnamed is not None and named is not None
+        self.assertEqual([rule.name for rule in unnamed.rules], ["base"])
+        # Base first, so the assay rule is the most specific text a child reads.
+        self.assertEqual([rule.name for rule in named.rules], ["base", "assay"])
+
+    def test_naming_an_invariant_rule_anyway_does_not_duplicate_it(self) -> None:
+        orchestration = _load("loam_campaign_dedupe")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = _repo(
+                Path(temporary),
+                rules={"base": _rule("base", "all", "Fetch, do not recall.", extra="applies: always\n")},
+            )
+            context = orchestration.campaign_context({**payload, "loam_campaign": {"rules": ["base"]}})
+
+        assert context is not None
+        self.assertEqual([rule.name for rule in context.rules], ["base"])
+
+    def test_a_malformed_unnamed_rule_does_not_break_an_unrelated_campaign(self) -> None:
+        """A draft left in the directory must not take down a running campaign."""
+
+        orchestration = _load("loam_campaign_malformed_draft")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = _repo(
+                Path(temporary),
+                rules={
+                    "base": _rule("base", "all", "Fetch, do not recall.", extra="applies: always\n"),
+                    "draft": "no front matter at all\n",
+                },
+            )
+            context = orchestration.campaign_context(payload)
+
+        assert context is not None
+        self.assertEqual([rule.name for rule in context.rules], ["base"])
+
+    def test_a_malformed_invariant_rule_still_raises(self) -> None:
+        orchestration = _load("loam_campaign_malformed_base")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = _repo(Path(temporary), rules={"base": "---\nname: base\napplies: always\n---\n\nNo scope.\n"})
+            with self.assertRaises(ValueError):
+                orchestration.campaign_context(payload)
+
+    def test_an_unknown_applies_value_raises(self) -> None:
+        orchestration = _load("loam_campaign_bad_applies")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = _repo(
+                Path(temporary),
+                rules={"assay": _rule("assay", "all", "Body.", extra="applies: sometimes\n")},
+            )
+            with self.assertRaises(ValueError):
+                orchestration.campaign_context({**payload, "loam_campaign": {"rules": ["assay"]}})
 
     def test_goal_and_rules_load_from_the_repo(self) -> None:
         orchestration = _load("loam_campaign_load")
@@ -77,7 +160,8 @@ class CampaignContextTests(unittest.TestCase):
 
         assert context is not None
         self.assertIn("EGFR", context.goal)
-        self.assertEqual(context.rules, ())
+        # The invariant rules come along; the assay rule does not, being named.
+        self.assertEqual([rule.name for rule in context.rules], ["design-integrity", "experiment-discipline"])
 
     def test_scope_selects_the_tiers_a_rule_reaches(self) -> None:
         orchestration = _load("loam_campaign_scope")
@@ -272,13 +356,25 @@ class CampaignInjectionTests(unittest.TestCase):
         self.assertNotIn("ONE decisive measurement", directive)  # experiment-discipline, code-generator
         self.assertNotIn("complex co-fold", directive)  # binder-cofold, code-generator
 
-    def test_no_campaign_block_leaves_the_directive_unchanged(self) -> None:
+    def test_no_campaign_block_still_carries_the_invariant_rules(self) -> None:
+        """Asserted inside the task context, which is an escaped JSON string.
+
+        The earlier version of this test looked for `"campaign"` in the whole
+        directive and so could only ever pass: inside the context the key reads
+        `\\"campaign\\"`. It is the same trap `_validator_context` documents.
+        """
+
         orchestration = _load("loam_campaign_validator_absent")
         with tempfile.TemporaryDirectory() as temporary:
             directive = orchestration.context_for(_orchestration_payload(Path(temporary)))
+        context = _validator_context(directive)
 
         self.assertIn("Loam orchestration directive", directive)
-        self.assertNotIn('"campaign"', directive)
+        self.assertIn('"campaign"', context)
+        self.assertIn("authoritative source", context)  # design-integrity
+        # No profile named a goal, so none is claimed.
+        self.assertNotIn('"goal"', context)
+        self.assertNotIn('"goal_name"', context)
 
     def test_child_context_carries_goal_and_rules_before_the_instruction(self) -> None:
         orchestration = _load("loam_campaign_child_inject")

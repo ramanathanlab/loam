@@ -39,6 +39,8 @@ MAX_AGENT_PROMPT_CHARS = 24_000
 MAX_CAMPAIGN_CHARS = 4_000
 MAX_RULES_CHARS = 4_000
 RULE_TIERS = ("validator", "code-generator", "reasoner")
+RULE_ALWAYS = "always"
+RULE_WHEN_NAMED = "when-named"
 # Tools of the hpc-deployment MCP server a generated-mode code-generator may use.
 HPC_TOOLS = ("run_code", "run_batch", "batch_status", "list_batches", "register_tool", "list_tools", "inspect_filesystem")
 # The subset of HPC_TOOLS that only looks: no compute, no registration, no
@@ -159,6 +161,12 @@ class RuleSpec:
     name: str
     scopes: frozenset[str]
     body: str
+    # True when the rule applies to every campaign without being named, because
+    # it states something invariant (what makes a datum trustworthy; how an
+    # experiment is run and reported) rather than a domain's assay. This text was
+    # unconditional while it lived inline in `_hypothesis_block`; moving it into
+    # files must not quietly turn invariant policy into an opt-in.
+    always: bool = False
     # Advisory note naming the `tool_policy` clause that actually enforces this
     # rule, when one exists. Injected text cannot enforce anything on its own
     # (see `_SCRUBBERS`, which exists because it could not), so a rule that must
@@ -176,8 +184,8 @@ class CampaignContext:
     inject.
     """
 
-    goal_name: str
-    goal: str
+    goal_name: str = ""
+    goal: str = ""
     rules: tuple[RuleSpec, ...] = ()
 
     def rules_for(self, tier: str) -> tuple[RuleSpec, ...]:
@@ -199,11 +207,16 @@ def campaign_provenance(payload: Mapping[str, Any]) -> dict[str, Any]:
     """
 
     campaign = payload.get("loam_campaign")
-    if not isinstance(campaign, Mapping):
-        return {}
+    campaign = campaign if isinstance(campaign, Mapping) else {}
     goal_name = _text(campaign.get("goal"))
     raw_rules = campaign.get("rules")
-    names = [name for item in (raw_rules if isinstance(raw_rules, list) else []) if (name := _text(item))]
+    named = [name for item in (raw_rules if isinstance(raw_rules, list) else []) if (name := _text(item))]
+    # The invariant rules govern the run whether or not a profile named them, so
+    # they are part of what produced the result and belong in the digest.
+    base = _base_rule_names(payload)
+    names = base + [name for name in named if name not in base]
+    if not goal_name and not names:
+        return {}
     provenance: dict[str, Any] = {"goal": goal_name, "rules": names}
     combined = hashlib.sha256()
     try:
@@ -257,7 +270,12 @@ def _campaign_field(campaign: CampaignContext | None, tier: str) -> dict[str, An
 
     if campaign is None:
         return {}
-    field_value: dict[str, Any] = {"goal_name": campaign.goal_name, "goal": campaign.goal}
+    field_value: dict[str, Any] = {}
+    # Omitted rather than empty when a profile names no goal: the invariant rules
+    # still apply, and `"goal": ""` would read as an objective that is blank.
+    if campaign.goal_name:
+        field_value["goal_name"] = campaign.goal_name
+        field_value["goal"] = campaign.goal
     rules = campaign.rules_for(tier)
     if rules:
         field_value["rules"] = [rule.body for rule in rules if rule.body]
@@ -292,6 +310,24 @@ def _scopes(value: str, path: Path) -> frozenset[str]:
     return frozenset(parts)
 
 
+def _applies(value: str, path: Path) -> bool:
+    """Parse `applies:` into whether the rule needs naming by a profile.
+
+    Defaults to `when-named`, the safe direction: a new assay rule dropped into
+    the directory must not reach a campaign in another domain, where the wrong
+    decisive experiment is worse than a missing one. `always` is for the
+    invariant layers, which a profile should not have to remember.
+    """
+
+    if not value or value == RULE_WHEN_NAMED:
+        return False
+    if value == RULE_ALWAYS:
+        return True
+    raise ValueError(
+        f"rules file has unknown applies {value!r}, expected {RULE_ALWAYS} or {RULE_WHEN_NAMED}: {path}"
+    )
+
+
 def _rule_spec(name: str, path: Path) -> RuleSpec:
     front_matter = _front_matter(path)
     if front_matter.get("name") != name:
@@ -306,45 +342,83 @@ def _rule_spec(name: str, path: Path) -> RuleSpec:
         scopes=_scopes(scope, path),
         body=_prompt_body(path, MAX_RULES_CHARS),
         enforced_by=_text(front_matter.get("enforced_by")),
+        always=_applies(_text(front_matter.get("applies")), path),
     )
 
 
-def campaign_context(payload: Mapping[str, Any]) -> CampaignContext | None:
-    """Load the campaign goal and rules named by the profile's `campaign:` block.
+def _base_rule_names(payload: Mapping[str, Any]) -> list[str]:
+    """Names of the rules that apply without being named, in injection order.
 
-    `None` means the profile declares no campaign context. A named-but-missing or
-    malformed file raises instead: the point of the block is that every reasoning
-    tier knows what the campaign is for, and a run that quietly lost its
-    objective while still looking governed is the failure this avoids. The raise
-    surfaces through the calling hook's handler as a logged hook failure.
+    Reads only `applies:` from each file's front matter, deliberately: a
+    half-written assay rule sitting in the directory must not break a campaign
+    that never names it. A file marked `always` is then loaded and validated in
+    full like any other, so a malformed invariant rule still fails loudly.
+
+    Sorted by name, which is also general-to-specific for the current pair
+    (design-integrity before experiment-discipline). Base rules precede the
+    profile's own, so a campaign's assay rule is the most specific thing a child
+    reads.
+    """
+
+    directory = _rules_dir(payload)
+    names: list[str] = []
+    for path in sorted(directory.glob("*.md")):
+        if path.name == "README.md":
+            continue
+        try:
+            applies = _text(_front_matter(path).get("applies"))
+        except (OSError, ValueError):
+            continue
+        if applies == RULE_ALWAYS:
+            names.append(path.stem)
+    return names
+
+
+def campaign_context(payload: Mapping[str, Any]) -> CampaignContext | None:
+    """Load the invariant rules, plus the goal and assay rules a profile names.
+
+    The invariant layers load unconditionally. A profile should not have to
+    remember that an experiment must finish before it is reported, or that a
+    reference datum must be fetched rather than recalled; those held for every
+    campaign while the text was inline in `_hypothesis_block`, and a file is
+    where the text lives, not a reason to make it optional. Only the assay layer
+    -- which decisive measurement this domain uses -- is named, because only it
+    differs between campaigns.
+
+    `None` means no goal and no invariant rules, i.e. an empty rules directory:
+    there is nothing to inject. A named-but-missing or malformed file raises
+    instead, surfacing through the calling hook's handler as a logged failure.
+    The point of the block is that every reasoning tier knows what the campaign
+    is for, and a run that quietly lost its objective while still looking
+    governed is the failure this avoids.
     """
 
     campaign = payload.get("loam_campaign")
-    if not isinstance(campaign, Mapping):
-        return None
+    campaign = campaign if isinstance(campaign, Mapping) else {}
     goal_name = _text(campaign.get("goal"))
-    if not goal_name:
-        return None
-    goal_path = _campaign_dir(payload) / f"{goal_name}.md"
-    if not goal_path.is_file():
-        raise FileNotFoundError(f"campaign goal file not found: {goal_path}")
-    if _front_matter(goal_path).get("name") != goal_name:
-        raise ValueError(f"campaign goal name mismatch: {goal_path}")
+    goal = ""
+    if goal_name:
+        goal_path = _campaign_dir(payload) / f"{goal_name}.md"
+        if not goal_path.is_file():
+            raise FileNotFoundError(f"campaign goal file not found: {goal_path}")
+        if _front_matter(goal_path).get("name") != goal_name:
+            raise ValueError(f"campaign goal name mismatch: {goal_path}")
+        goal = _prompt_body(goal_path, MAX_CAMPAIGN_CHARS)
     raw_rules = campaign.get("rules")
+    named = [name for item in (raw_rules if isinstance(raw_rules, list) else []) if (name := _text(item))]
     rules: list[RuleSpec] = []
-    for item in raw_rules if isinstance(raw_rules, list) else []:
-        name = _text(item)
-        if not name:
-            continue
+    # Base first, then the profile's, deduplicated by name: a profile that still
+    # lists an invariant rule explicitly keeps working rather than sending the
+    # text twice.
+    base = _base_rule_names(payload)
+    for name in base + [name for name in named if name not in base]:
         path = _rules_dir(payload) / f"{name}.md"
         if not path.is_file():
             raise FileNotFoundError(f"campaign rules file not found: {path}")
         rules.append(_rule_spec(name, path))
-    return CampaignContext(
-        goal_name=goal_name,
-        goal=_prompt_body(goal_path, MAX_CAMPAIGN_CHARS),
-        rules=tuple(rules),
-    )
+    if not goal_name and not rules:
+        return None
+    return CampaignContext(goal_name=goal_name, goal=goal, rules=tuple(rules))
 
 
 def _read_rows(path: Path) -> list[dict[str, Any]]:

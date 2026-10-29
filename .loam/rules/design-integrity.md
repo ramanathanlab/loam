@@ -1,5 +1,6 @@
 ---
 name: design-integrity
+applies: always
 scope: all
 enforced_by: partially -- _SCRUBBERS strips filesystem-recovery steering from validator instructions; the rest is advisory
 ---

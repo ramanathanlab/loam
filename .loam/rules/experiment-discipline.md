@@ -1,5 +1,6 @@
 ---
 name: experiment-discipline
+applies: always
 scope: code-generator
 ---
 

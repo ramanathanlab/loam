@@ -1,20 +1,35 @@
 # Campaign rules
 
 Policy text injected into a reasoning tier's context by `campaign_context()` in
-`.loam/hooks/hypothesis_orchestration.py`. A rule reaches a child only when the
-active profile's `campaign.rules` names it, and only in the tiers its `scope:`
+`.loam/hooks/hypothesis_orchestration.py`, in the tiers each rule's `scope:`
 front matter lists (`validator`, `code-generator`, `reasoner`, or `all`).
+
+A rule declaring `applies: always` reaches every campaign, named or not — it
+loads even from a profile with no `campaign:` block. Everything else loads only
+when the active profile's `campaign.rules` names it, which is the default for a
+file that omits `applies:`.
+
+Which way a rule goes follows from the layer it sits in. Only the assay layer
+differs between campaigns, so only the assay layer is configuration; a profile
+should not have to restate that an experiment must finish before it is reported.
+The safe default runs the other way, though: a half-written assay rule left in
+this directory must not reach a campaign in another domain, because the wrong
+decisive experiment is worse than a missing one.
 
 Loam itself is domain-neutral — the loader reads markdown and never inspects it.
 The rules are where a campaign's science lives, so they are layered by how far
 they generalize. Keep each file in one layer; a rule that mixes layers cannot be
 reused by the next campaign without being rewritten.
 
-| Layer | Holds | Changes when | Files |
-| --- | --- | --- | --- |
-| Integrity | What makes a datum trustworthy at all | ~never | `design-integrity.md` |
-| Discipline | How an experiment is run and reported | rarely | `experiment-discipline.md` |
-| Assay | The decisive measurement and its metrics | per domain | `binder-cofold.md` |
+| Layer | Holds | Changes when | `applies:` | Files |
+| --- | --- | --- | --- | --- |
+| Integrity | What makes a datum trustworthy at all | ~never | `always` | `design-integrity.md` |
+| Discipline | How an experiment is run and reported | rarely | `always` | `experiment-discipline.md` |
+| Assay | The decisive measurement and its metrics | per domain | named | `binder-cofold.md` |
+
+Base rules are injected before the named ones, in name order, so the assay rule
+is the most specific text a child reads. A profile that names an invariant rule
+anyway keeps working — the loader deduplicates rather than sending it twice.
 
 Integrity and discipline rules must not name a tool or a metric, and must stay
 true if the campaign switched domains tomorrow. They may use a domain example to
