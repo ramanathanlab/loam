@@ -99,6 +99,19 @@ if [[ ! -f "$SHARED_HERMES_HOME/config.yaml" ]]; then
 fi
 cp "$SHARED_HERMES_HOME/config.yaml" "$HERMES_HOME/config.yaml"
 
+# Register the checkout's skills/ tree in the shared library before the home is
+# assembled. Hermes resolves `campaign.skills` names against the library, so a
+# clone whose library lacks them fails inside a code-generator mid-round rather
+# than here. Idempotent and stdlib-only, so every launch keeps the library in
+# step with the checkout -- including skills a `git pull` just added. It never
+# replaces a library entry it does not own, and a conflict there is not worth
+# aborting a launch over, so this reports and continues.
+if [[ -f "$LOAM_REPO/scripts/install_skills.py" ]]; then
+  python3 "$LOAM_REPO/scripts/install_skills.py" \
+    --repo "$LOAM_REPO" --hermes-home "$SHARED_HERMES_HOME" >/dev/null ||
+    echo "run-campaign: some skills were not registered; run scripts/install_skills.py" >&2
+fi
+
 # Shared, read-mostly: credentials, persona, tool library, binaries, plugins.
 for shared_entry in auth.json SOUL.md skills bin plugins hooks; do
   [[ -e "$SHARED_HERMES_HOME/$shared_entry" ]] &&

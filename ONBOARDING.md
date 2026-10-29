@@ -43,6 +43,22 @@ Jnana generation/ranking (pre-LLM hook)
   and `pip install -e .` in this repo, then add `fastmcp`, `globus-compute-sdk`,
   `academy-py`, `pyyaml`, and a Jnana checkout.
 - The `hermes` CLI, with a model provider configured.
+- **The skills registered in your Hermes library.** Hermes resolves
+  `campaign.skills` names against the library of the home it runs in, and a
+  checkout does not register its own `skills/` tree. `run-campaign` does this for
+  you on every launch, so you only run it by hand when launching some other way,
+  or to install into a home outside the checkout:
+
+  ```bash
+  python3 scripts/install_skills.py                              # the checkout's shared home
+  python3 scripts/install_skills.py --hermes-home ~/.hermes      # your own home
+  python3 scripts/install_skills.py --hermes-home ~/.hermes --copy   # no link back to the checkout
+  ```
+
+  It symlinks by default, so one tree stays the source of truth and a `git pull`
+  updates the library with it; `--copy` is for a home that must not reference the
+  checkout. Re-running is safe, and it refuses to replace a library entry it does
+  not own. Confirm with `hermes skills list`, or `skill_view(name="chai")`.
 - A **Globus Compute endpoint already running on the HPC login node** (Aurora:
   `~/.globus_compute/loam-aurora-flex`). This is the one piece that lives on the
   cluster, not your laptop. You need its **manager UUID**. See the

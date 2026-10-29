@@ -11,6 +11,9 @@ __pycache__/
 *.pyc
 .hermes/.loam-home/sessions/request_dump_*.json
 .hermes/.loam-home/skills/.curator_backups/
+# Hermes' own skill-registry state (taps, index cache, audit log), written
+# whenever it reads the library. Not the library itself, which is tracked.
+.hermes/.loam-home/skills/.hub/
 *.lock
 
 # --- Secrets: never track ---
