@@ -12,6 +12,13 @@ description: >-
 
 # Co-folding a target+binder complex (chai_lab / Chai-1)
 
+> **On the Aurora `binder_design` deployment, use `aurora-chai-fold` instead.**
+> This skill runs Chai-1 in-process against a pre-provisioned environment. That
+> deployment runs the `chai` CLI through `bash -lc` inside
+> `envs/chai-2026-venv` after `module load frameworks/2026.1.0`, and forbids
+> importing it as a library, so the setup and invocation below do not apply
+> there. `aurora-binder-venvs` has the venv map.
+
 Fold a two-or-more-chain complex (campaign target + designed binder, optionally
 glycan/PTM chains) with the Chai-1 model, run five diffusion models, score each
 interface with ipSAE, and return the best model as a PDB alongside its interface

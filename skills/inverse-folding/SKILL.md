@@ -12,6 +12,13 @@ description: >-
 
 # Inverse folding / sequence redesign (ProteinMPNN)
 
+> **On the Aurora `binder_design` deployment, use `aurora-foundry` instead.**
+> This skill runs ProteinMPNN in-process against a `$PROTEINMPNN_PATH` repo
+> checkout. That deployment provides an `mpnn` CLI (ProteinMPNN / LigandMPNN /
+> SolubleMPNN) in `envs/foundry-2026-venv`, driven by `--structure_path`,
+> `--model_type` and `--write_fasta`, so the paths and API below do not apply
+> there. `aurora-binder-venvs` has the venv map.
+
 Given a backbone or complex structure, generate new amino-acid sequences
 predicted to fold into it. This runs ProteinMPNN **in-process** (deliberately —
 avoids a fork+exec conflict on Intel XPU) against the model's small `.pt`
