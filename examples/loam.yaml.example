@@ -67,6 +67,12 @@ profiles:
       dir: /ABS/PATH/TO/your/campaign      # absolute; `~` is expanded
       goal: my-campaign                    # <dir>/campaigns/my-campaign.md
       rules: [my-protocol]                 # <dir>/rules/my-protocol.md
+      # Skills a code-generator must consult before writing code. Names from
+      # the Hermes skill library, NOT files under `dir` -- the harness resolves
+      # these, Loam only names them. Omit and children write from recollection,
+      # which is what this exists to stop. `skills_list` returns the whole
+      # library, so name the campaign's own rather than letting a child browse.
+      skills: [folding, inverse-folding]
 
     execution:
       mode: remote_mcp                    # or: local (for CAMPAIGN_TEST.md)
