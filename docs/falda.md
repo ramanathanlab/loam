@@ -14,7 +14,7 @@ It is strictly best effort. A slow, overloaded or unreachable FALDA never fails 
 2 s to it:
 
 - **Writes** cost the agent nothing. A validator stop appends the memory to `falda-spool.jsonl` in the
-  state dir and starts a detached flusher. The flusher sends batches and stops at the first failure.
+  state dir and starts a detached flusher. The flusher sends batches of 10 and stops at the first failure.
   Rows it could not send wait for the next flush. Past 5,000 unsent rows, the oldest are dropped and
   counted.
 - **Recalls** are capped at 2 s of wall clock (`recall_timeout_seconds`). A recall that fails, times out
@@ -48,7 +48,7 @@ falda:
   auto_flush: true                             # spawn a detached flusher at each validator stop
   recall_budget_chars: 1500
   recall_timeout_seconds: 2                    # wall-clock cap for recalls (agent's path)
-  timeout_seconds: 10                          # writes and the key mint (detached flusher)
+  timeout_seconds: 60                          # writes (detached flusher; FALDA takes ~1 s/atom); mint capped at 15
 ```
 
 ## Keys: nothing to do

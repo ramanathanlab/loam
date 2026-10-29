@@ -201,3 +201,23 @@ def test_retryable_failures_keep_the_batch(payload, state, cfg):
         falda_memory.set_transport(FakeTransport(upsert=[(status_code, {"error": "x"})]))
         summary = falda_flush.flush(state, cfg)
         assert summary["rejected"] == 0 and summary["pending"] >= 1, status_code
+
+
+def test_batches_fit_falda_write_latency():
+    # Measured 2026-10-30: ~1 s per atom per upsert. A batch must finish well inside the write timeout,
+    # or FALDA stores it, the flusher times out, and the resend duplicates it.
+    assert falda_flush.BATCH_SIZE <= 10
+
+
+def test_flush_caps_the_key_mint_timeout(payload, state, cfg, monkeypatch):
+    seen = {}
+
+    def _ensure(c, timeout):
+        seen["timeout"] = timeout
+        return "", "cooling_down"
+
+    monkeypatch.setattr(falda_flush.falda_keys, "ensure_key", _ensure)
+    falda_flush.enqueue(payload, _atom(1), plan_id="p", hypothesis_id="h")
+    falda_flush.flush(state, {**cfg, "timeout_seconds": 60})
+    # well under falda_keys.STALE_LOCK_SECONDS, so a slow mint is never taken for an abandoned one
+    assert seen["timeout"] <= 15

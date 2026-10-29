@@ -21,7 +21,8 @@ DEFAULT_KEY_DIR = "~/.falda/keys"
 DEFAULT_RECALL_BUDGET_CHARS = 1500
 # Recalls sit on the agent's path; writes and the key mint run in a detached flusher.
 DEFAULT_RECALL_TIMEOUT = 2
-DEFAULT_TIMEOUT = 10
+# Writes run in the detached flusher; FALDA takes ~1 s per atom (measured 2026-10-30).
+DEFAULT_TIMEOUT = 60
 # .loam/ is three levels above this file (.loam/adapters/hermes/plugin/).
 DEFAULT_FILE = Path(__file__).resolve().parents[3] / "falda.json"
 _OFF_VALUES = {"0", "off", "false", "no"}

@@ -66,7 +66,8 @@ class FaldaConfigTests(unittest.TestCase):
         self.assertEqual(falda["pool"], POOL)
         self.assertEqual(falda["base_url"], "https://falda.cairnscore.ai")
         self.assertEqual(falda["recall_timeout_seconds"], 2)
-        self.assertEqual((falda["recall_budget_chars"], falda["timeout_seconds"]), (1500, 10))
+        # Writes run in the detached flusher; FALDA takes ~1 s per atom, so the write timeout is generous.
+        self.assertEqual((falda["recall_budget_chars"], falda["timeout_seconds"]), (1500, 60))
         self.assertEqual((falda["token_env"], falda["key_dir"]), ("FALDA_TOKEN", "~/.falda/keys"))
         for switch in ("recall_generation", "recall_reasoner", "write_validator_outcomes", "reasoner_tools",
                        "auto_mint", "auto_flush"):

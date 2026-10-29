@@ -29,8 +29,12 @@ SPOOL = "falda-spool.jsonl"
 SENT = "falda-sent.jsonl"
 STATUS = "falda-status.json"
 LOCK = "falda-flush.lock"
-BATCH_SIZE = 50
+# FALDA takes ~1 s per atom per upsert (measured 2026-10-30): a batch must finish inside the write
+# timeout, or FALDA stores it, the flusher times out, and the resend duplicates it.
+BATCH_SIZE = 10
 MAX_BATCHES = 10
+# Under falda_keys.STALE_LOCK_SECONDS, so a slow mint is never mistaken for an abandoned one.
+MINT_TIMEOUT_CAP = 15.0
 MAX_PENDING = 5000
 # Worth retrying later: no response, auth (a key may appear), timeout, rate limit, server trouble.
 # Any other 4xx (or a 2xx carrying an error) is FALDA rejecting the batch itself; resending it would
@@ -177,7 +181,7 @@ def flush(state_dir: Path, cfg: Mapping[str, Any]) -> dict[str, Any]:
                 summary["dropped"] = len(overflow)
                 pending = pending[len(overflow) :]
             if pending:
-                timeout = float(cfg.get("timeout_seconds") or 10)
+                timeout = min(float(cfg.get("timeout_seconds") or 60), MINT_TIMEOUT_CAP)
                 key, summary["key"] = falda_keys.ensure_key(cfg, timeout)
                 if key:
                     _send(state, cfg, pending, summary)  # upsert reads the key ensure_key just cached

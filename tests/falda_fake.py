@@ -29,7 +29,7 @@ def falda_block(**overrides: Any) -> dict[str, Any]:
         "auto_flush": True,
         "recall_budget_chars": 1500,
         "recall_timeout_seconds": 2,
-        "timeout_seconds": 10,
+        "timeout_seconds": 60,
     }
     block.update(overrides)
     return block
