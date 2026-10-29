@@ -92,7 +92,7 @@ In the state dir (`$LOAM_STATE_DIR`):
   key status (`env`, `cached`, `minted`, `minting_elsewhere`, `cooling_down`, `mint_failed:<reason>`).
   Never contains the key.
 - `falda-calls.jsonl`: one row per recall, upsert, skipped write and guarded tool call.
-- `falda-spool.jsonl` / `falda-sent.jsonl`: the write queue and what has left it.
+- `falda-spool.jsonl` / `falda-sent.jsonl`: the write queue and what has left it (sent, dropped on overflow, or rejected by FALDA: a batch FALDA refuses with a 4xx other than 401/403/408/429 is not retried, so it cannot block the rows behind it).
 
 At the end of a campaign, send anything still pending, or print counts with `--report`. The config JSON
 is the run's `loam_falda` block; the defaults are enough when you use `.loam/falda.json`:

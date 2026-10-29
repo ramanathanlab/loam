@@ -51,6 +51,7 @@ class UpsertResult:
     ok: bool
     error: str = ""
     atom_ids: tuple[str, ...] = ()
+    status: int = 0  # HTTP status; 0 when no response (network, missing key, client error)
 
 
 def _text(value: Any) -> str:
@@ -130,10 +131,10 @@ def log_event(payload: Mapping[str, Any], row: Mapping[str, Any]) -> None:
 
 def _post(
     cfg: Mapping[str, Any], route: str, body: Mapping[str, Any], timeout: float | None = None, key: str = ""
-) -> tuple[bool, str, Mapping[str, Any]]:
+) -> tuple[bool, str, Mapping[str, Any], int]:
     token = key or falda_keys.resolve_key(cfg)
     if not token:
-        return False, "missing_token", {}
+        return False, "missing_token", {}, 0
     pool = _text(cfg.get("pool"))
     headers = {
         "Authorization": f"Bearer {token}",
@@ -146,7 +147,7 @@ def _post(
     try:
         status, raw = _transport(url, headers, data, float(timeout or cfg.get("timeout_seconds") or 10))
     except Exception as exc:  # DNS, TLS, refused, timeout. Log the type only: messages may echo request data.
-        return False, f"network:{type(exc).__name__}", {}
+        return False, f"network:{type(exc).__name__}", {}, 0
     try:
         value = json.loads(raw.decode("utf-8")) if raw else {}
     except (UnicodeDecodeError, ValueError):
@@ -154,10 +155,10 @@ def _post(
     if not isinstance(value, Mapping):
         value = {}
     if status >= 400:
-        return False, _text(value.get("error")) or f"http_{status}", value
+        return False, _text(value.get("error")) or f"http_{status}", value, status
     if _text(value.get("error")):
-        return False, _text(value.get("error")), value
-    return True, "", value
+        return False, _text(value.get("error")), value, status
+    return True, "", value, status
 
 
 def _ids(value: Any) -> tuple[str, ...]:
@@ -184,7 +185,7 @@ def recall(payload: Mapping[str, Any], query: str, *, consumer: str, budget: int
     cap = _recall_timeout(cfg)
 
     def _call() -> RecallResult:
-        ok, error, body = _post(
+        ok, error, body, _ = _post(
             cfg, "/recall", {"query": query, "require_tags": tags, "budget": int(budget), "mode": "explicit"}, cap
         )
         return RecallResult(
@@ -231,8 +232,8 @@ def upsert(
     if cfg is None:
         return UpsertResult(ok=False, error="disabled")
     try:
-        ok, error, body = _post(cfg, "/atoms/upsert", {"atoms": atoms})
-        result = UpsertResult(ok=ok, error=error, atom_ids=_ids(body.get("items")) if ok else ())
+        ok, error, body, status = _post(cfg, "/atoms/upsert", {"atoms": atoms})
+        result = UpsertResult(ok=ok, error=error, atom_ids=_ids(body.get("items")) if ok else (), status=status)
     except Exception as exc:  # defensive: the client never raises
         result = UpsertResult(ok=False, error=f"client:{type(exc).__name__}")
     log_event(

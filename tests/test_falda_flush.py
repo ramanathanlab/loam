@@ -180,3 +180,24 @@ def test_cli_report_counts(payload, state, cfg, capsys):
     falda_flush.enqueue(payload, _atom(1), plan_id="p", hypothesis_id="h")
     assert falda_flush.main(["--state-dir", str(state), "--config-json", json.dumps(cfg), "--report"]) == 0
     assert json.loads(capsys.readouterr().out)["pending"] == 1
+
+
+def test_permanently_rejected_batch_is_dropped_and_later_rows_still_sent(payload, state, cfg, monkeypatch):
+    monkeypatch.setattr(falda_flush, "BATCH_SIZE", 1)
+    for n in range(3):
+        falda_flush.enqueue(payload, _atom(n), plan_id="p", hypothesis_id="h")
+    fake = FakeTransport(upsert=[(422, {"error": "tag_too_long"}), (200, {"items": [{"id": "a"}]}), (200, {"items": [{"id": "b"}]})])
+    falda_memory.set_transport(fake)
+    summary = falda_flush.flush(state, cfg)
+    assert summary["sent"] == 2 and summary["rejected"] == 1 and summary["pending"] == 0
+    status = json.loads((state / falda_flush.STATUS).read_text())
+    assert status["rejected_total"] == 1 and status["dropped_total"] == 0
+    assert len(fake.bodies("/atoms/upsert")) == 3
+
+
+def test_retryable_failures_keep_the_batch(payload, state, cfg):
+    for status_code in (401, 403, 429, 500, 503):
+        falda_flush.enqueue(payload, _atom(status_code), plan_id="p", hypothesis_id="h")
+        falda_memory.set_transport(FakeTransport(upsert=[(status_code, {"error": "x"})]))
+        summary = falda_flush.flush(state, cfg)
+        assert summary["rejected"] == 0 and summary["pending"] >= 1, status_code

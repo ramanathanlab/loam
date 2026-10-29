@@ -32,6 +32,14 @@ LOCK = "falda-flush.lock"
 BATCH_SIZE = 50
 MAX_BATCHES = 10
 MAX_PENDING = 5000
+# Worth retrying later: no response, auth (a key may appear), timeout, rate limit, server trouble.
+# Any other 4xx (or a 2xx carrying an error) is FALDA rejecting the batch itself; resending it would
+# block every row behind it, so it is dropped and counted as rejected.
+_RETRY_STATUSES = frozenset({0, 401, 403, 408, 429})
+
+
+def _retryable(status: int) -> bool:
+    return status in _RETRY_STATUSES or status >= 500
 
 
 def _now() -> str:
@@ -101,8 +109,9 @@ def _report(state: Path) -> dict[str, Any]:
     sent_rows = _read(state / SENT)
     return {
         "pending": len(_pending(state)),
-        "sent_total": sum(1 for row in sent_rows if not row.get("dropped")),
+        "sent_total": sum(1 for row in sent_rows if not row.get("dropped") and not row.get("rejected")),
         "dropped_total": sum(1 for row in sent_rows if row.get("dropped")),
+        "rejected_total": sum(1 for row in sent_rows if row.get("rejected")),
     }
 
 
@@ -134,7 +143,12 @@ def _send(state: Path, cfg: Mapping[str, Any], pending: list[dict[str, Any]], su
         )
         if not result.ok:
             summary["last_error"] = result.error
-            return
+            if _retryable(result.status):
+                return
+            for row in batch:
+                _append(state / SENT, {"id": row["id"], "rejected": result.error, "rejected_at": _now()})
+            summary["rejected"] += len(batch)
+            continue
         for row in batch:
             _append(state / SENT, {"id": row["id"], "sent_at": _now()})
         summary["sent"] += len(batch)
@@ -153,7 +167,7 @@ def flush(state_dir: Path, cfg: Mapping[str, Any]) -> dict[str, Any]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             return {"skipped": "locked"}
-        summary: dict[str, Any] = {"sent": 0, "dropped": 0, "last_error": "", "key": ""}
+        summary: dict[str, Any] = {"sent": 0, "dropped": 0, "rejected": 0, "last_error": "", "key": ""}
         try:
             pending = _pending(state)
             if len(pending) > MAX_PENDING:
