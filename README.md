@@ -28,6 +28,8 @@ LOAM_STATE_DIR=/var/tmp/loam/${DEPLOYMENT_ID} .loam/run-hermes
 
 
 The hook integration and its runtime state are under `.loam/`. See `.loam/README.md` for lifecycle-hook behavior and optional global Hermes installation.
+
+Campaigns use two best-effort services, both on by default and never able to fail or stall a step: Cairn tool reputation (`docs/cairn.md`) and FALDA campaign memory (`docs/falda.md`).
 ## Verify Loam orchestration
 
 The focused verification suite exercises the ranked-hypothesis lifecycle without a live MCP execution service: it loads the three prompt roles, verifies validator-to-code-generator tool boundaries, simulates tagged subagent start/stop records, collates completed validator reports into a reasoner request, and confirms the reasoner brief reaches the next tournament goal. It also covers tournament profile parsing and the existing lifecycle/provenance ledger contracts.
