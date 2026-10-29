@@ -35,6 +35,14 @@ four unreconciled records in 2026-09 and none after, and its vocabulary had no
 shape for a measurement: no interface score, no stability, no activity. A
 contract that cannot carry a campaign's evidence will not be used by it.
 
+`project_parent_memory.py` went with it. It projected that reconciler's
+per-field decisions (`validation_status`, `authoritative_value`) into
+`parent-memory.jsonl`, and the surviving reconciler emits no such rows — its
+accepted evidence carries a claim, a `source_url` and a stance. The file itself
+is still live: the reasoner writes it directly as its one durable findings
+cache, and `memory_recall` reads it. Deleting the projector left that file with
+exactly one writer.
+
 Note what went with it: that contract's reconciler fetched the authoritative
 source and compared field by field. `hypothesis_provenance_v1` reconciles
 against an explicit **review** instead, so acceptance is a human decision about

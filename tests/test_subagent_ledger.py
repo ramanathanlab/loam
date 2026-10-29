@@ -15,7 +15,6 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOKS = ROOT / ".loam" / "hooks"
 START = HOOKS / "subagent-start.py"
 STOP = HOOKS / "subagent-stop.py"
-MEMORY_PROJECTOR = ROOT / ".loam" / "reconcile" / "project_parent_memory.py"
 MEMORY_RECALL = HOOKS / "memory_recall.py"
 
 
@@ -28,10 +27,6 @@ def _load_module(name: str, path: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def _load_memory_projector():
-    return _load_module("loam_memory_projector", MEMORY_PROJECTOR)
 
 
 class SubagentLedgerTests(unittest.TestCase):
@@ -341,50 +336,6 @@ class SubagentLedgerTests(unittest.TestCase):
         self.assertEqual(candidate["candidate_status"], "pending")
         self.assertEqual(candidate["candidate"]["hypotheses"][0]["statement"], "A claim.")
 
-    def test_parent_memory_uses_only_accepted_deduplicated_findings(self) -> None:
-        projector = _load_memory_projector()
-        decisions = [
-            {
-                "parent_session_id": "parent",
-                "parent_turn_id": "turn",
-                "unit_id": "unit-a",
-                "source_kind": "uniprot",
-                "source_accession": "P00918",
-                "field": "gene_name",
-                "authoritative_value": "CA2",
-                "source_url": "https://rest.uniprot.org/uniprotkb/P00918.json",
-                "validation_status": "accepted",
-                "finding_id": "finding-ca2",
-            },
-            {
-                "parent_session_id": "parent",
-                "parent_turn_id": "turn",
-                "unit_id": "unit-b",
-                "source_kind": "uniprot",
-                "source_accession": "P00918",
-                "field": "gene_name",
-                "authoritative_value": "CA2",
-                "source_url": "https://rest.uniprot.org/uniprotkb/P00918.json",
-                "validation_status": "accepted",
-                "finding_id": "finding-ca2",
-            },
-            {
-                "parent_session_id": "parent",
-                "parent_turn_id": "turn",
-                "unit_id": "unit-c",
-                "validation_status": "claim_mismatch",
-                "finding_id": "",
-            },
-        ]
-        snapshots = projector.project(decisions)
-
-        self.assertEqual(len(snapshots), 1)
-        snapshot = snapshots[0]
-        self.assertEqual(snapshot["accepted_finding_ids"], ["finding-ca2"])
-        self.assertEqual(snapshot["accepted_findings"][0]["unit_ids"], ["unit-a", "unit-b"])
-        self.assertEqual(snapshot["validation_failure_statuses"], ["claim_mismatch"])
-        self.assertEqual(snapshot["attempted_unit_ids"], ["unit-a", "unit-b", "unit-c"])
-
     def test_recall_injects_validated_memory_and_audits_exact_duplicate(self) -> None:
         recall = _load_module("loam_memory_recall", MEMORY_RECALL)
         with tempfile.TemporaryDirectory() as tmp:
@@ -494,6 +445,49 @@ class SubagentLedgerTests(unittest.TestCase):
         self.assertEqual(blocked["action"], "block")
         self.assertEqual(blocked["reason"], "accepted_exact_duplicate")
         self.assertIsNone(distinct)
+
+
+class DuplicateFieldMatchTests(unittest.TestCase):
+    """The duplicate audit must work for any claim, not seven protein fields.
+
+    `_FIELD_PATTERNS` used to be a table of `gene_name`, `resolution_angstrom`,
+    `ligand_component_ids` and four more, inherited from the retired
+    protein-metadata pilot. A finding whose field was not one of those seven
+    could never match, so the audit was inert for every other kind of campaign.
+    """
+
+    def setUp(self) -> None:
+        self.recall = _load_module("loam_recall_fields", MEMORY_RECALL)
+
+    def _matches(self, field: str, text: str) -> bool:
+        pattern = self.recall._field_pattern(field)
+        return pattern is not None and bool(pattern.search(text))
+
+    def test_a_field_no_list_ever_contained_matches(self) -> None:
+        self.assertTrue(self._matches("melting_temperature", "measure the melting temperature"))
+        self.assertTrue(self._matches("catalytic_efficiency", "report catalytic_efficiency"))
+
+    def test_separators_are_optional_between_the_words(self) -> None:
+        for text in ("sequence length", "sequence-length", "sequence_length", "sequencelength"):
+            self.assertTrue(self._matches("sequence_length", f"fetch the {text}"), text)
+
+    def test_an_unrelated_task_does_not_match(self) -> None:
+        self.assertFalse(self._matches("gene_name", "fold the candidate against the target"))
+
+    def test_a_field_name_too_short_to_be_specific_yields_no_pattern(self) -> None:
+        """Otherwise a one- or two-letter field would match most prose."""
+
+        self.assertIsNone(self.recall._field_pattern("id"))
+        self.assertIsNone(self.recall._field_pattern("Not An Identifier"))
+
+    def test_a_finding_without_a_source_kind_never_matches(self) -> None:
+        """Quoting an accession in an unrelated task is not rediscovery."""
+
+        self.assertFalse(self.recall._mentions_source_kind("from uniprot", ""))
+        self.assertTrue(self.recall._mentions_source_kind("from uniprot", "uniprot"))
+        # Any word of the source kind counts, as the pilot's hand-written check did.
+        self.assertTrue(self.recall._mentions_source_kind("the pdb entry", "rcsb_pdb"))
+        self.assertTrue(self.recall._mentions_source_kind("rcsb says", "rcsb_pdb"))
 
 
 if __name__ == "__main__":
