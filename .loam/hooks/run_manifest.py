@@ -63,6 +63,19 @@ def _deployment_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in identity.items() if k != "run_id"}
 
 
+def _workspace_identity(workspace: Any) -> dict[str, Any]:
+    """Whether the Pando-style per-hypothesis workspace was enabled, and how."""
+
+    if not isinstance(workspace, Mapping) or workspace.get("enabled") is not True:
+        return {"workspace_enabled": False}
+    return {
+        "workspace_enabled": True,
+        "workspace_strict": workspace.get("strict") is not False,
+        "workspace_root": str(workspace.get("root") or ""),
+        "workspace_verifier": bool(workspace.get("verifier_mcp_url")),
+    }
+
+
 def _campaign(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Campaign flags plus the policy in force, for attributing results to it.
 
@@ -81,6 +94,11 @@ def _campaign(payload: Mapping[str, Any]) -> dict[str, Any]:
     }
     if policy := campaign_provenance(payload):
         value["policy"] = policy
+    # The per-hypothesis workspace governs every write a child makes, so
+    # whether it was on (and strict) belongs here for the same reason the
+    # policy does: it is what the results were produced under, and changing
+    # it mid-campaign must be recorded rather than rejected.
+    value.update(_workspace_identity(payload.get("loam_workspace")))
     return value
 
 

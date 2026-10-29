@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+import hypothesis_workspace
+
 AGENT_NAMES = ("reasoner", "hypothesis-validator", "code-generator")
 STATE_FILENAME = "hypothesis-orchestration.jsonl"
 CAMPAIGN_FILENAME = "hypothesis-campaign.jsonl"
@@ -578,8 +580,10 @@ def _max_children(execution: Mapping[str, Any] | None) -> int:
         return 3
 
 
-def _child_tags(plan_id: str, hypothesis_id: str) -> str:
-    return f"[loam-agent-role=code-generator] [loam-plan-id={plan_id}] [loam-hypothesis-id={hypothesis_id}]"
+def _child_tags(plan_id: str, hypothesis_id: str, run_id: str = "") -> str:
+    tags = f"[loam-agent-role=code-generator] [loam-plan-id={plan_id}] [loam-hypothesis-id={hypothesis_id}]"
+    # The workspace run reserved for this child (hypothesis_workspace.reserve_runs).
+    return f"{tags} [loam-run-id={run_id}]" if run_id else tags
 
 
 def _strip_tags(value: str) -> str:
@@ -680,10 +684,98 @@ def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def _shared_inputs(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    """The campaign's shared read-only input roots, for the child's layout block."""
+
+    config = hypothesis_workspace.settings(payload) or {}
+    shared = config.get("shared_inputs")
+    return tuple(_text(item) for item in (shared if isinstance(shared, (list, tuple)) else ()) if _text(item))
+
+
+def _layout_block(base: str, run_id: str, remote: bool = False, batch_root: str = "",
+                  plan_id: str = "", hypothesis_id: str = "", shared_inputs: tuple[str, ...] = ()) -> str:
+    """Where a child's files go in its hypothesis workspace (hypothesis_workspace.py).
+
+    On HPC the stop hook cannot list the run's outputs, so a remote child is
+    also told to report them as a LOAM_MANIFEST block, which
+    hypothesis_workspace.remote_manifest parses from its final report. With a
+    batch root it is also told how to name a run_batch and how to harvest its
+    results into outputs/rM, which run_batch alone does not do.
+    """
+
+    if not run_id:
+        return ""
+    # Built in order rather than inserted at an index: the shared-inputs bullet
+    # belongs with the other "where things live" bullets, and an index would
+    # move it silently the next time a bullet is added above it.
+    lines = [
+        f"WORKSPACE LAYOUT (enforced by Loam; your run is {run_id}):",
+        f"- code and scripts you write: {base}/src/",
+        f"- result files: {base}/outputs/{run_id}/",
+        f"- temporary files: {base}/scratch/{run_id}/",
+        f"- inputs: read from {base}/data/ and never write there. The campaign's inputs are already "
+        "there; nothing outside this workspace is reachable, so do not hunt the filesystem for a "
+        "file named in your instructions and never report BLOCKED because one is absent",
+    ]
+    if shared_inputs:
+        lines.append(
+            "- shared campaign reference data, readable in place and read-only to you: "
+            + ", ".join(f"{path}/" for path in shared_inputs)
+            + ". Loam records each file you read there as an input of your run."
+        )
+    lines += [
+        "- earlier results of OTHER runs (this hypothesis's or another's): readable only from their "
+        "completed runs' outputs/rK/; Loam records each such read as an input of your run",
+        "Write nothing anywhere else, and never /tmp: /tmp is local to one node and the next tool call "
+        "may run on another. Other runs' outputs are frozen; do not modify them.",
+    ]
+    if remote:
+        # fs_policy requires an explicit workdir on every run_code (the server
+        # would otherwise default it to HPC_BASE_DIR, outside the workspace).
+        # Stated here because otherwise the child learns it only by being
+        # blocked, which costs it a whole tool call -- observed in the first
+        # live campaign round. Remote only: a local child has no run_code.
+        # Always scratch, never outputs: the server writes its payload to a
+        # temporary script in the workdir and removes it when the call ends. With
+        # workdir=outputs/rM that temp file is hashed into the run's manifest and
+        # then vanishes, so the post-freeze audit reports the run's own outputs as
+        # tampered (observed live: "outputs/r1/tmps3ygefre.py was removed after
+        # run r1 finished"). Keeping cwd in scratch/ leaves outputs/ holding only
+        # deliberate results.
+        lines.append(
+            f"EVERY run_code call MUST pass workdir={base}/scratch/{run_id} -- always scratch/, "
+            f"never outputs/: the server puts a temporary script in the workdir and deletes it "
+            f"afterwards, which would corrupt your output manifest. Write results to "
+            f"{base}/outputs/{run_id}/ by absolute path from inside your program. "
+            "A run_code with no workdir is REFUSED."
+        )
+    if remote and batch_root:
+        prefix = hypothesis_workspace.batch_prefix(hypothesis_id, run_id)
+        labels = hypothesis_workspace.batch_labels(plan_id, hypothesis_id, run_id)
+        lines += [
+            f"RUN_BATCH (if you use it): pass batch_id='{prefix}<name>' and labels={json.dumps(labels)}. "
+            "run_batch writes its results to the shared batch folder, not to your outputs. Poll batch_status "
+            "until the batch is complete, then copy its results into your outputs by running this program "
+            "with run_code (set batch_id first), BEFORE the output manifest step:",
+            hypothesis_workspace.harvest_program(batch_root, f"{base}/outputs/{run_id}"),
+        ]
+    if remote:
+        lines += [
+            "OUTPUT MANIFEST (required): as your LAST tool call, run this program with run_code, then paste its "
+            "complete output verbatim at the end of your report:",
+            hypothesis_workspace.manifest_program(f"{base}/outputs/{run_id}"),
+        ]
+    return "\n".join(lines)
+
+
 def _generated_child_context(instruction: str, execution: Mapping[str, Any] | None, workdir: str,
                              hypothesis: Mapping[str, Any] | None = None,
-                             campaign: CampaignContext | None = None) -> str:
-    """Context for a code-generator that writes and runs its own code."""
+                             campaign: CampaignContext | None = None, layout: str = "") -> str:
+    """Context for a code-generator that writes and runs its own code.
+
+    ``layout`` is the _layout_block for the child's reserved run; empty when the
+    workspace is off, which leaves the context exactly as before.
+    """
 
     execution = execution if isinstance(execution, Mapping) else {}
     hypothesis_block = _hypothesis_block(hypothesis)
@@ -714,6 +806,7 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
             campaign_block,
             skills_block,
             setup_block,
+            layout,
             "Instruction from validator:\n" + instruction,
             report,
         ) if part)
@@ -764,8 +857,10 @@ def _generated_child_context(instruction: str, execution: Mapping[str, Any] | No
         "Instruction from validator:\n" + instruction,
         f"Remote target: endpoint={_text(execution.get('endpoint'))}; runtime={_text(execution.get('runtime'))}.",
         "Tools:\n" + "\n".join(lines),
-        f"Write scripts and inputs files {place}, never /tmp: /tmp is local to one node and the next "
-        "tool call may run on another.",
+        layout or (
+            f"Write scripts and inputs files {place}, never /tmp: /tmp is local to one node and the next "
+            "tool call may run on another."
+        ),
         report,
     ) if part)
 
@@ -847,7 +942,8 @@ def _note_scrubbed(removed: list[str]) -> None:
     print(message, file=sys.stderr)
 
 
-def _child_goal(hypothesis: Mapping[str, Any] | None, validator_goal: str, plan_id: str, hypothesis_id: str) -> str:
+def _child_goal(hypothesis: Mapping[str, Any] | None, validator_goal: str, plan_id: str, hypothesis_id: str,
+                run_id: str = "") -> str:
     """Lead the child's GOAL with the hypothesis, not the validator's framing.
 
     The hypothesis is injected in the context block, but luna skims past it and
@@ -855,7 +951,7 @@ def _child_goal(hypothesis: Mapping[str, Any] | None, validator_goal: str, plan_
     the primary task instead of "go find a hypothesis."
     """
 
-    tags = _child_tags(plan_id, hypothesis_id)
+    tags = _child_tags(plan_id, hypothesis_id, run_id)
     lead = ""
     if isinstance(hypothesis, Mapping):
         claim = _text(hypothesis.get("summary")) or _text(hypothesis.get("content"))
@@ -883,7 +979,7 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
     # than from the validator's instruction: policy the validator paraphrased
     # away would otherwise never reach the tier that runs the experiment.
     campaign = campaign_context(payload)
-    out = []
+    parsed = []
     for task in items:
         if not isinstance(task, Mapping):
             return None
@@ -892,14 +988,69 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
             return None
         clean = _neutralize_fs_recovery(goal)
         instruction = "\n\n".join(part for part in (clean, _neutralize_fs_recovery(_strip_tags(_text(task.get("context"))))) if part)
+        parsed.append((goal, instruction))
+    # Reserve only once every task is known to be valid, so a rejected batch
+    # leaves no reserved runs behind. The reservation key is the child's goal as
+    # record_start will see it: _child_goal with its tags stripped again, which
+    # is independent of the run id the tags will carry.
+    keys = [_strip_tags(_child_goal(hypothesis, goal, plan_id, hypothesis_id)) for goal, _ in parsed]
+    run_ids, layout_base = _reserve_child_runs(payload, execution, workdir, plan_id, hypothesis_id, keys)
+    remote = isinstance(execution, Mapping) and _text(execution.get("mode")) == "remote_mcp"
+    batch_root = hypothesis_workspace.batch_root_for(execution if isinstance(execution, Mapping) else None) if remote else ""
+    out = []
+    for (goal, instruction), run_id in zip(parsed, run_ids):
         out.append(
             {
-                "goal": _child_goal(hypothesis, goal, plan_id, hypothesis_id),
-                "context": _generated_child_context(instruction, execution, workdir, hypothesis, campaign),
+                "goal": _child_goal(hypothesis, goal, plan_id, hypothesis_id, run_id),
+                "context": _generated_child_context(
+                    instruction, execution, workdir, hypothesis, campaign,
+                    _layout_block(layout_base, run_id, remote, batch_root, plan_id, hypothesis_id,
+                                  _shared_inputs(payload)),
+                ),
                 "role": "leaf",
             }
         )
     return {"tasks": out}
+
+
+def _reserve_child_runs(
+    payload: Mapping[str, Any],
+    execution: Any,
+    workdir: str,
+    plan_id: str,
+    hypothesis_id: str,
+    goals: list[str],
+) -> tuple[list[str], str]:
+    """Reserve one workspace run per child, and the folder the child should write under.
+
+    Returns empty run ids when the workspace is off or reservation fails; the
+    children are then delegated exactly as before, and record_start adopts or
+    allocates a run for each when it starts. A workspace problem never blocks
+    delegation.
+
+    ``goals`` are the children's goals with Loam's tags stripped -- the same
+    form record_start sees. They make reservation idempotent, because this runs
+    inside `canonical_delegation_args`, which is request middleware and may run
+    again for one dispatch (a validator delegating twice, a retried call). The
+    goals also let `hypothesis_workspace.adopt_run` put a child whose run-id tag
+    did not survive into the run its own instructions name.
+    """
+
+    count = len(goals)
+    if hypothesis_workspace.settings(payload) is None:
+        return [""] * count, ""
+    try:
+        root = hypothesis_workspace.workspace_root(payload, plan_id, hypothesis_id)
+        run_ids = hypothesis_workspace.reserve_runs(root, count, goals)
+    except Exception as exc:
+        print(f"loam workspace: could not reserve runs: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return [""] * count, ""
+    if isinstance(execution, Mapping) and _text(execution.get("mode")) == "remote_mcp":
+        # The child writes on HPC: the remote workdir mirrors the local layout.
+        base = workdir or f"<HPC base directory (HPC_BASE_DIR)>/{plan_id}/{hypothesis_id}"
+    else:
+        base = str(root)
+    return run_ids, base
 
 
 def _marker(value: str, key: str) -> str:
@@ -1159,6 +1310,97 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     return None
 
 
+_START_ROW_CACHE: dict[tuple[str, str, int, int], Mapping[str, Any] | None] = {}
+
+
+def _session_start(payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The calling session's latest agent_started row, as tool_policy finds it.
+
+    Cached for the life of the process, keyed on the state file's size and
+    mtime, because one pre-tool run asks for this twice (workspace_policy and
+    workspace_capture) and the file is the whole campaign's history. A changed
+    file is a different key, so the cache can never serve a stale row.
+    """
+
+    session_id = _text(payload.get("session_id")) or _text(payload.get("parent_session_id"))
+    if not session_id:
+        return None
+    path = _state_path(payload)
+    try:
+        stat = path.stat()
+        key: tuple[str, str, int, int] | None = (session_id, str(path), stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        key = None
+    if key is not None and key in _START_ROW_CACHE:
+        return _START_ROW_CACHE[key]
+    row = next(
+        (
+            item
+            for item in reversed(_read_rows(path))
+            if item.get("event") == "agent_started" and _text(item.get("child_session_id")) == session_id
+        ),
+        None,
+    )
+    if key is not None:
+        _START_ROW_CACHE[key] = row
+    return row
+
+
+def workspace_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
+    """Pando-style workspace boundary for a campaign child (hypothesis_workspace.fs_policy)."""
+
+    if hypothesis_workspace.settings(payload) is None:
+        return None
+    return hypothesis_workspace.fs_policy(payload, _session_start(payload))
+
+
+def workspace_capture(payload: Mapping[str, Any]) -> None:
+    """Record the code an allowed campaign child runs (hypothesis_workspace.capture_code)."""
+
+    if hypothesis_workspace.settings(payload) is not None:
+        hypothesis_workspace.capture_code(payload, _session_start(payload))
+
+
+def workspace_stop(payload: Mapping[str, Any]) -> None:
+    """Close a stopped child's workspace run, or its validator's workspace.
+
+    Runs after record_stop, whose completion row it mirrors (it never decides
+    completion itself). The start row is found the way record_stop finds it.
+    Audit problems are also reported to the campaign ledger.
+    """
+
+    if hypothesis_workspace.settings(payload) is None:
+        return
+    rows = _read_rows(_state_path(payload))
+    child_id = _text(payload.get("child_subagent_id"))
+    child_session = _text(payload.get("child_session_id"))
+
+    def _same_child(row: Mapping[str, Any]) -> bool:
+        return _text(row.get("child_subagent_id")) == child_id or _text(row.get("child_session_id")) == child_session
+
+    start = next((row for row in reversed(rows) if row.get("event") == "agent_started" and _same_child(row)), None)
+    if start is None:
+        return
+    completion = next(
+        (row for row in reversed(rows) if row.get("event") == "validator_completed" and _same_child(row)), None
+    )
+    problems = hypothesis_workspace.on_agent_stopped(payload, start, completion)
+    if problems:
+        _append_campaign(
+            payload,
+            {
+                "event": "workspace_violation",
+                "observed_at": _timestamp(),
+                "run_id": _text(payload.get("loam_run_id")),
+                "workflow_id": _text(payload.get("workflow_id")),
+                "plan_id": _text(start.get("plan_id")),
+                "hypothesis_id": _text(start.get("hypothesis_id")),
+                "workspace": _text(start.get("workspace")),
+                "problems": problems,
+            },
+        )
+
+
 def is_campaign_child(payload: Mapping[str, Any]) -> bool:
     """Return whether this callback belongs to a tagged campaign child."""
 
@@ -1325,6 +1567,25 @@ def record_start(payload: Mapping[str, Any]) -> None:
         "child_subagent_id": _text(payload.get("child_subagent_id")),
         "child_session_id": _text(payload.get("child_session_id")),
     }
+    # Pando-style workspace (off unless loam_workspace is enabled): a validator
+    # gets its hypothesis folder, a code-generator its run. The fields land on
+    # this row because every later hook identifies a session by it.
+    hypothesis = (
+        _full_hypotheses(payload).get(record["hypothesis_id"])
+        if role == "hypothesis-validator" and hypothesis_workspace.settings(payload) is not None
+        else None
+    )
+    record.update(
+        hypothesis_workspace.on_agent_started(
+            payload,
+            role,
+            plan_id,
+            record["hypothesis_id"],
+            run_id=_marker(goal, "loam-run-id"),
+            goal=_strip_tags(goal),
+            statement=(_text(hypothesis.get("content")) or _text(hypothesis.get("summary"))) if hypothesis else "",
+        )
+    )
     _append(_state_path(payload), record)
     if role == "hypothesis-validator":
         _append_campaign(payload, {**record, "event": "hypothesis_validation_started"})
@@ -1626,7 +1887,14 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
         part
         for part in (
             "Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding.",
-            f"Pass the reasoner its role definition verbatim in the task context as \"agent_definition\"; it must not execute experimental code. The definition is inlined below rather than referenced as {reasoner.prompt_path.name}, because the reasoner cannot read that file.",
+            # The reasoner is still dispatched with delegate_task (the round's
+            # dispatch tool covers the validators only), and this directive
+            # carries the whole definition, so it is still big enough for
+            # Hermes to spill it to a file. Demanding a verbatim copy of text
+            # the model may not be able to see is what deadlocked the
+            # coordinator three times live; the middleware supplies the
+            # definition either way, so say that instead.
+            f"The reasoner's role definition ({reasoner.prompt_path.name}) is below and Loam itself puts it into the dispatched task as \"agent_definition\"; the reasoner must not execute experimental code. Call delegate_task once for the reasoner -- Loam replaces your arguments with the canonical task, definition included. Do not reproduce the definition yourself, and if this directive was written to a file instead of shown inline, dispatch anyway: you do not need to read that file to comply.",
             # This synthesis sets the next tournament's whole direction, so the
             # tier it runs on is a campaign decision, not an incidental one.
             # `AgentSpec.model` was parsed from the front matter and never used

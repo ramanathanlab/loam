@@ -12,7 +12,7 @@ import json
 import sys
 from typing import Any
 
-from hypothesis_orchestration import tool_policy
+from hypothesis_orchestration import tool_policy, workspace_capture, workspace_policy
 from memory_recall import audit_duplicates
 from provenance import record as record_provenance
 from run_manifest import ensure as ensure_run_manifest
@@ -41,9 +41,14 @@ def main() -> int:
     #    failure here must NOT silently become "allow" (the adapter maps any
     #    nonzero hook exit to allow). For a tagged orchestration call we fail
     #    CLOSED by emitting a block; a non-campaign call we leave alone.
+    #    workspace_policy is the second boundary: tool_policy decides WHAT a role
+    #    may call, workspace_policy WHERE a code-generator may write. It shares
+    #    this try, so its failure on a tagged call also blocks fail-closed.
     result: dict[str, Any] | None = None
     try:
         result = tool_policy(payload)
+        if result is None:
+            result = workspace_policy(payload)
         if result is None and payload.get("tool_name") == "delegate_task":
             result = audit_duplicates(payload)
     except Exception as exc:
@@ -74,6 +79,12 @@ def main() -> int:
         ensure_run_manifest(payload)
     except Exception as exc:
         print(f"loam pre-tool: run_manifest failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+    if result is None:
+        try:
+            # Only for a call that will run: a blocked call's code never executed.
+            workspace_capture(payload)
+        except Exception as exc:
+            print(f"loam pre-tool: workspace_capture failed: {type(exc).__name__}: {exc}", file=sys.stderr)
 
     if result is not None:
         print(json.dumps(result))

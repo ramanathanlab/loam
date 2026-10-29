@@ -112,10 +112,48 @@ class ExecutionConfig:
     # Prefix of the HPC server's other MCP tool names (run_batch, list_tools,
     # ...). Empty: derived from tool_name when it ends with function_name.
     tool_prefix: str = ""
+    # Other spellings of a workdir_root prefix, as (alias, canonical) pairs:
+    # on Aurora /lus/flare/projects/X and /flare/X are one directory. The
+    # workspace checks compare HPC paths as text, so they need to be told.
+    workdir_aliases: tuple[tuple[str, str], ...] = ()
+    # Where the HPC server keeps run_batch results (its HPC_BATCH_ROOT).
+    # Empty: <workdir_root>/../batches (hypothesis_workspace.batch_root_for).
+    batch_root: str = ""
 
 
 _EXECUTION_MODES = {"remote_mcp", "local"}
 _CODE_SOURCES = {"fixed", "generated"}
+
+
+@dataclass(frozen=True)
+class WorkspaceConfig:
+    """Pando-style per-hypothesis workspace (see .loam/hooks/hypothesis_workspace.py)."""
+
+    # Parent of the <plan_id>/<hypothesis_id> folders. Empty: <state_dir>/hypotheses,
+    # resolved in payload_values so a LOAM_STATE_DIR override moves it too.
+    root: str = ""
+    # true: pre-tool blocks layout violations. false: they are only logged.
+    strict: bool = True
+    # Background verifier for HPC runs (.loam/reconcile/verify_workspace.py):
+    # an interpreter that has fastmcp, and the HPC MCP server's URL. Both empty:
+    # no verifier is launched and a missing remote manifest stays missing.
+    verifier_python: str = ""
+    verifier_mcp_url: str = ""
+    # Campaign inputs every hypothesis starts with, COPIED into its own data/
+    # so the record is self-contained: `inputs_dir` is a local directory copied
+    # by the hook, `remote_inputs_dir` an HPC directory the operator staged once
+    # and the verifier copies (a hook cannot reach HPC). Either may be set.
+    inputs_dir: str = ""
+    remote_inputs_dir: str = ""
+    # Read-only reference data too large to copy per hypothesis. Children may
+    # READ these absolute paths in place; each read is recorded as an input.
+    # Nothing is ever written there, and it is opt-in: unset, the only readable
+    # inputs are the hypothesis's own data/.
+    shared_inputs: tuple[str, ...] = ()
+    # Refuse a seed bigger than this rather than silently copying a dataset
+    # into every hypothesis. 0 keeps the hook's default.
+    max_input_bytes: int = 0
+
 
 @dataclass(frozen=True)
 class LoamProfile:
@@ -128,6 +166,7 @@ class LoamProfile:
     campaign: CampaignConfig | None = None
     execution: ExecutionConfig | None = None
     hypothesis_tournament: HypothesisTournamentConfig | None = None
+    workspace: WorkspaceConfig | None = None
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any] | None:
@@ -246,6 +285,8 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
         workdir_root=_clean_text(raw.get("workdir_root")),
         tool_prefix=_clean_text(raw.get("tool_prefix")),
         setup=_clean_text(raw.get("setup")),
+        workdir_aliases=_aliases(raw.get("workdir_aliases")),
+        batch_root=_clean_text(raw.get("batch_root")),
     )
     if mode == "local":
         return ExecutionConfig(mode=mode, runtime=_clean_text(raw.get("runtime")), **extras)
@@ -264,6 +305,54 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
         runtime=_clean_text(raw.get("runtime")),
         **extras,
     )
+
+def _workspace_config(value: Any) -> WorkspaceConfig | None:
+    """`workspace: {enabled: true, ...}` turns the workspace on; anything else leaves it off."""
+
+    raw = _as_mapping(value)
+    if raw is None or raw.get("enabled") is not True:
+        return None
+    return WorkspaceConfig(
+        root=_clean_text(raw.get("root")),
+        strict=raw.get("strict") is not False,
+        verifier_python=_clean_text(raw.get("verifier_python")),
+        verifier_mcp_url=_clean_text(raw.get("verifier_mcp_url")),
+        inputs_dir=_clean_text(raw.get("inputs_dir")),
+        remote_inputs_dir=_clean_text(raw.get("remote_inputs_dir")),
+        shared_inputs=_shared_inputs(raw.get("shared_inputs")),
+        max_input_bytes=_positive_int(raw.get("max_input_bytes"), 0),
+    )
+
+
+def _shared_inputs(value: Any) -> tuple[str, ...]:
+    """`shared_inputs: [/abs/path, ...]` -- absolute paths only, deduplicated.
+
+    A relative path is dropped rather than resolved: these are matched against
+    paths a child names, and the hook's working directory is not the child's.
+    """
+
+    items = value if isinstance(value, (list, tuple)) else [value] if value else []
+    paths = []
+    for item in items:
+        text = _clean_text(item).rstrip("/")
+        if text.startswith("~"):
+            text = str(Path(text).expanduser()).rstrip("/")
+        if text.startswith("/") and text not in paths:
+            paths.append(text)
+    return tuple(paths)
+
+
+def _aliases(value: Any) -> tuple[tuple[str, str], ...]:
+    """`workdir_aliases: {alias: canonical}` as normalized absolute-path pairs."""
+
+    raw = _as_mapping(value) or {}
+    pairs = []
+    for alias, canonical in raw.items():
+        alias, canonical = _clean_text(alias).rstrip("/"), _clean_text(canonical).rstrip("/")
+        if alias.startswith("/") and canonical.startswith("/") and alias != canonical:
+            pairs.append((alias, canonical))
+    return tuple(sorted(pairs))
+
 
 def _tournament_config(value: Any, state_dir: Path | None = None) -> HypothesisTournamentConfig | None:
     raw = _as_mapping(value)
@@ -414,6 +503,7 @@ def load_profile() -> LoamProfile | None:
         campaign=campaign,
         execution=execution,
         hypothesis_tournament=_tournament_config(raw.get("hypothesis_tournament"), override),
+        workspace=_workspace_config(raw.get("workspace")),
     )
 
 
@@ -478,6 +568,24 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "workdir_root": execution.workdir_root,
             "tool_prefix": execution.tool_prefix,
         }
+        if execution.workdir_aliases:
+            values["loam_execution"]["workdir_aliases"] = dict(execution.workdir_aliases)
+        if execution.batch_root:
+            values["loam_execution"]["batch_root"] = execution.batch_root
+    workspace = profile.workspace
+    if workspace is not None:
+        values["loam_workspace"] = {
+            "enabled": True,
+            "root": str(Path(workspace.root).expanduser() if workspace.root else profile.state_dir / "hypotheses"),
+            "strict": workspace.strict,
+        }
+        for key in ("verifier_python", "verifier_mcp_url", "remote_inputs_dir", "max_input_bytes"):
+            if getattr(workspace, key):
+                values["loam_workspace"][key] = getattr(workspace, key)
+        if workspace.inputs_dir:
+            values["loam_workspace"]["inputs_dir"] = str(Path(workspace.inputs_dir).expanduser())
+        if workspace.shared_inputs:
+            values["loam_workspace"]["shared_inputs"] = list(workspace.shared_inputs)
     run_id = _clean_text(os.environ.get("LOAM_RUN_ID"))
     if run_id:
         values["loam_run_id"] = run_id

@@ -169,6 +169,102 @@ profiles:
       model: tournament-model
 ```
 
+### Hypothesis workspace (Pando-style)
+
+With `workspace.enabled: true` (and orchestration on), every hypothesis-validator
+gets its own folder, laid out like a [Pando](https://github.com/zjniu/Pando)
+experiment and kept by the hooks in `.loam/hooks/hypothesis_workspace.py`:
+
+```
+$LOAM_STATE_DIR/hypotheses/<plan_id>/<hypothesis_id>/
+├─ experiment.json   index + state (open -> closed)              hooks only
+├─ log.jsonl         append-only history: plan / result / note /  hooks only
+│                    report / violation, each line hash-chained
+├─ src/              code the children ran (run_code payloads saved as rM_NN.py)
+├─ runs/rM/run.json  per child: goal, state, code hashes, inputs, manifest   hooks only
+├─ outputs/rM/       that run's result files; frozen when the run ends
+├─ scratch/rM/       that run's temporary files; never hashed
+└─ data/             campaign inputs, seeded before any child runs; read-only to agents
+```
+
+On HPC the same layout lives under `<execution.workdir_root>/<plan_id>/<hypothesis_id>/`.
+
+- **Start.** A validator's start creates the folder. Delegating children reserves
+  one run each (`[loam-run-id=rM]` in the child's goal, so its instructions can
+  name `outputs/rM/`); a child's start moves its run to `started` and logs a `plan`.
+  Reserving is idempotent in the children's goals, because it happens inside
+  request middleware that may run again for one dispatch. A child whose tag was
+  replayed, re-dispatched or lost still gets a run: the same one for a replayed
+  start, otherwise the run reserved for its own goal, and only failing that a new
+  one. Every substitution is logged, so the record shows which run the child was
+  told about and which it got — a child must never end up with no run, because
+  that would refuse the writes its own instructions asked for.
+- **Every tool call.** After `tool_policy` (what a role may call),
+  `workspace_policy` decides where a code-generator may write: only `src/` and its
+  own `outputs/rM/` and `scratch/rM/`. Record files, `data/`, other runs, other
+  hypotheses, stray names and anything outside are blocked, with the legal place in
+  the message. Other runs' results, this hypothesis's or another's, may be read only
+  from `outputs/rK/` of a `completed` run with a verified manifest; each such read is
+  recorded in the reading run's `inputs` with the source file's hash. Reads are
+  read-only calls and stay allowed whatever state the run is in — including
+  `skill_view` and `skills_list`, so a child whose run is frozen or whose workspace
+  failed can still re-read the campaign's recipe.
+- **Stop.** A child's stop records the run's state, hashes `outputs/rM/` (a remote
+  child prints a `LOAM_MANIFEST` block it is given the program for), logs a
+  `result` and freezes the run. A validator's stop drops unfinished runs, closes
+  `experiment.json` with values copied from its `validator_completed` row, logs a
+  `report` and audits the folder (log chain, strays, local outputs changed after
+  freeze). Problems are logged and reported as a `workspace_violation` campaign
+  row; nothing is repaired. The completion signal is unchanged.
+- **Batches.** `run_batch` writes to the server's shared batch folder
+  (`execution.batch_root`, default `<workdir_root>/../batches`), not to the run.
+  A child must name each batch `<hypothesis>-<run>-<name>` with labels
+  `{plan_id, hypothesis_id, run}`, so it is recorded in `run.json` `batches` and
+  the server refuses to resume it under another hypothesis. `batch_status` and
+  batch-folder reads are limited to the run's own batches. The child is given a
+  program that copies a finished batch into `outputs/rM/<batch_id>/`, so batch
+  results are hashed, frozen and shareable like any other output.
+- **Campaign inputs.** `workspace.inputs_dir` is copied into every hypothesis's
+  `data/` before its children run, and each file is hashed into `experiment.json`
+  `inputs`. Each hypothesis gets its own copy on purpose: editing the campaign's
+  inputs afterwards cannot retroactively change what an earlier hypothesis was
+  given, and a file whose hash no longer matches what was recorded is logged as a
+  violation rather than silently replaced. Symlinks are resolved, so `data/` can
+  never point out of the workspace, and a seed over `max_input_bytes` (default
+  1 GiB) is refused whole rather than copied halfway. For remote execution the
+  hook cannot write to HPC, so stage the inputs there once and set
+  `remote_inputs_dir`: the validator's start launches the verifier's `seed`,
+  which copies them where they are and records the hashes locally.
+  `shared_inputs` is the other half of the trade: absolute paths of read-only
+  reference data too large to copy per hypothesis. Children may read them in
+  place and nothing may write there; each file read is recorded in the run's
+  `inputs`, with a hash when the hook can see the file and `hashed: false` when
+  it is HPC-side. That is weaker provenance than a copied `data/`, which is why
+  it is opt-in and per-path.
+- **HPC verifier.** The hooks can't reach HPC files. When configured,
+  `.loam/reconcile/verify_workspace.py` is launched detached: `fill` hashes a
+  remote run whose child reported no manifest (`recorded_by_loam`), and `recheck`
+  re-hashes completed remote runs at validator stop, and `batches` flags a run's
+  batches that were still unfinished when it closed (`batches_unfinished`). It can
+  also be run by hand.
+
+```yaml
+    workspace:
+      enabled: true
+      root: ""               # default: <state_dir>/hypotheses
+      strict: true           # false: violations are logged, not blocked
+      verifier_python: /abs/path/to/venv/bin/python   # needs fastmcp
+      verifier_mcp_url: http://127.0.0.1:8000/mcp     # the HPC MCP server
+      inputs_dir: ""         # local dir copied into every hypothesis's data/
+      remote_inputs_dir: ""  # dir already staged on HPC; the verifier copies it
+      shared_inputs: []      # absolute paths children may read in place, read-only
+      max_input_bytes: 0     # 0: 1 GiB; refuses an oversize seed whole
+    execution:
+      workdir_root: /flare/<PROJECT>/<USER>/hpc-run/work
+      batch_root: ""         # default: <workdir_root>/../batches (the server's HPC_BATCH_ROOT)
+      workdir_aliases:       # other spellings of the same HPC directory
+        /lus/flare/projects/<PROJECT>: /flare/<PROJECT>
+```
 
 - `pre-tool.py` may return `{"action":"block","message":"..."}` to veto a
   Hermes tool call.

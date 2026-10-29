@@ -129,6 +129,26 @@ class HookContractTests(unittest.TestCase):
                 self.assertNotIn("Traceback", completed.stderr)
                 self._assert_response(spec["behavior"], completed.stdout)
 
+    def test_payload_with_workspace_enabled_stays_within_contract(self) -> None:
+        # An active campaign with the per-hypothesis workspace on, but no
+        # campaign session yet: every hook must still answer within its
+        # behavior, and nothing may be blocked.
+        active = {
+            "loam_state_dir": str(self.state_dir),
+            "workflow_id": "contract-v1",
+            "loam_hypothesis_orchestration": True,
+            "loam_workspace": {"enabled": True, "root": str(self.state_dir / "hypotheses"), "strict": True},
+        }
+        for event, spec in _manifest_hooks().items():
+            payload = {"event": event, "repo_root": str(ROOT), **VALID_PAYLOADS[event], **active}
+            with self.subTest(event=event):
+                completed = self._run(LOAM / spec["script"], json.dumps(payload))
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertNotIn("Traceback", completed.stderr)
+                self._assert_response(spec["behavior"], completed.stdout)
+                if spec["behavior"] == "may_block":
+                    self.assertEqual(completed.stdout.strip(), "")
+
     def test_inactive_pre_tool_call_is_not_blocked(self) -> None:
         script = LOAM / _manifest_hooks()["pre_tool_call"]["script"]
         payload = {"event": "pre_tool_call", "repo_root": str(ROOT), **VALID_PAYLOADS["pre_tool_call"]}
