@@ -134,6 +134,33 @@ contract. Key blocks:
   `setup:` recipe handed verbatim to every code-generator child (venv
   activation + the exact Chai/MPNN command lines). The child runs on Aurora and
   cannot see local files, so this recipe must be self-contained.
+- `campaign:` — `dir`, `goal`, `rules`. See Step 4b.
+
+## Step 4b — Write the campaign
+
+Loam ships no campaign content: no goal, and no rule naming a measurement. In a
+directory you own — the one `campaign.dir` points at — write:
+
+```
+<campaign.dir>/campaigns/<goal>.md   # objective, success criteria,
+                                     # constraints, the decision it informs
+<campaign.dir>/rules/<name>.md       # rules specific to this campaign
+```
+
+The goal reaches all three tiers. A rule is policy injected into the tiers its
+`scope:` front matter names; often a few lines is enough — which measurement
+decides a hypothesis, or which hypotheses and tool categories are out of bounds.
+Names are resolved in `campaign.dir` first, then in the repo's `.loam/`, so you
+can shadow a shipped rule with your own text.
+
+A named-but-missing file **raises**, listing every directory searched: a run that
+quietly lost its objective while still looking governed is the failure this
+avoids. A campaign with no rules of its own still runs governed by the invariant
+rules the repo ships (`evidence-integrity`, `experiment-discipline`), which load
+whether or not a profile names them.
+
+See `.loam/rules/README.md` for the rule layers, the front matter, and what a
+protocol rule has to answer.
 
 ## Step 5 — Launch a campaign
 
@@ -194,5 +221,7 @@ to a newcomer specifically:
 | Allocation control plane | `skills/hpc-deployment/scripts/hpc_control.py` |
 | Per-campaign env | `skills/hpc-deployment/set_env_akv.sh` |
 | Launcher + preflight | `run-campaign`, `scripts/campaign_preflight.py` |
+| Invariant rules (shipped) | `.loam/rules/` |
 | Profile config | `~/.hermes/loam.yaml` |
+| Campaign goal + its own rules | `<campaign.dir>/{campaigns,rules}/` (yours) |
 | Per-campaign state (ledgers, manifest, Jnana memory) | `<campaign-dir>/state/` |

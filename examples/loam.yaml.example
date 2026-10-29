@@ -56,6 +56,18 @@ profiles:
       top_k: 3                # hypotheses handed to validators per round
       timeout_seconds: 600
 
+    # What this campaign is for, and the rules specific to it. Loam ships no
+    # campaign content, so these files are yours: `dir` is a directory you own
+    # holding `campaigns/<goal>.md` and `rules/<name>.md`. Names are resolved
+    # there first, then in the repo's `.loam/`, which carries only the rules
+    # invariant across every campaign -- those load whether or not this block
+    # exists. Omit the block entirely and children get the invariant rules but
+    # no objective. See .loam/rules/README.md.
+    campaign:
+      dir: /ABS/PATH/TO/your/campaign      # absolute; `~` is expanded
+      goal: my-campaign                    # <dir>/campaigns/my-campaign.md
+      rules: [my-protocol]                 # <dir>/rules/my-protocol.md
+
     execution:
       mode: remote_mcp                    # or: local (for CAMPAIGN_TEST.md)
       tool_name: mcp__hpc__run_code
