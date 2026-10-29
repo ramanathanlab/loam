@@ -232,7 +232,7 @@ def _orchestration_payload(root: Path, campaign: dict | None = None) -> dict:
     return payload
 
 
-CAMPAIGN = {"goal": "egfr-binders", "rules": ["design-integrity", "fold-protocol"]}
+CAMPAIGN = {"goal": "egfr-binders", "rules": ["design-integrity", "experiment-discipline", "binder-cofold"]}
 
 
 def _validator_context(directive: str) -> str:
@@ -269,7 +269,8 @@ class CampaignInjectionTests(unittest.TestCase):
             directive = orchestration.context_for(_orchestration_payload(Path(temporary), CAMPAIGN))
 
         self.assertIn("authoritative source", directive)  # design-integrity, scope: all
-        self.assertNotIn("EXACTLY ONE fold", directive)  # fold-protocol, scope: code-generator
+        self.assertNotIn("ONE decisive measurement", directive)  # experiment-discipline, code-generator
+        self.assertNotIn("complex co-fold", directive)  # binder-cofold, code-generator
 
     def test_no_campaign_block_leaves_the_directive_unchanged(self) -> None:
         orchestration = _load("loam_campaign_validator_absent")
@@ -291,7 +292,8 @@ class CampaignInjectionTests(unittest.TestCase):
         assert tasks is not None
         context = tasks["tasks"][0]["context"]
         self.assertIn("CAMPAIGN GOAL", context)
-        self.assertIn("EXACTLY ONE fold", context)
+        self.assertIn("ONE decisive measurement", context)  # discipline layer
+        self.assertIn("complex co-fold", context)  # assay layer
         self.assertLess(context.index("CAMPAIGN RULES"), context.index("Instruction from validator"))
 
     def test_reasoner_directive_carries_the_campaign(self) -> None:
@@ -313,7 +315,7 @@ class CampaignInjectionTests(unittest.TestCase):
         # "agent_definition" before it appears as a key.
         block = next(line for line in directive.splitlines() if '"agent_definition"' in line and line.startswith("{"))
         self.assertLess(block.index('"campaign"'), block.index('"agent_definition"'))
-        self.assertNotIn("EXACTLY ONE fold", directive)  # code-generator scope only
+        self.assertNotIn("ONE decisive measurement", directive)  # code-generator scope only
 
 
 class HypothesisBlockExtractionTests(unittest.TestCase):
@@ -323,11 +325,56 @@ class HypothesisBlockExtractionTests(unittest.TestCase):
 
         self.assertIn("A claim.", block)
         # Kept: campaign-independent, and backed by _SCRUBBERS.
-        self.assertIn("NEVER fold, score, or reuse", block)
+        self.assertIn("NEVER run, score, or reuse", block)
         self.assertIn("complete assignment", block)
-        # Moved to .loam/rules/fold-protocol.md.
-        self.assertNotIn("EXACTLY ONE fold", block)
+        # Moved to the assay rules under .loam/rules/.
+        self.assertNotIn("ONE decisive measurement", block)
         self.assertNotIn("ipTM", block)
+        self.assertNotIn("co-fold", block)
+
+
+class RuleLayeringTests(unittest.TestCase):
+    """Loam must serve any domain; only the assay layer may name one.
+
+    Binder design and enzyme engineering are the near-term campaigns, and the
+    first version of these rules read as binder-only -- the decisive experiment
+    was "a co-fold", the metrics were ipTM/ipSAE/pDockQ, and the hook itself
+    named one campaign's scratch directory. An enzyme campaign would have had to
+    rewrite the invariant rules to say anything at all. See .loam/rules/README.md.
+    """
+
+    # Tool and metric names: checkable, and exactly what leaked last time. A
+    # domain example in prose is allowed; a named instrument or number is not.
+    DOMAIN_TERMS = (
+        "co-fold", "cofold", "iptm", "ipsae", "pdockq", "plddt", "chai",
+        "fasta", ".cif", ".pdb", "proteinmpnn", "batch_status",
+    )
+
+    def _assert_domain_neutral(self, name: str) -> None:
+        body = (ROOT / ".loam" / "rules" / f"{name}.md").read_text(encoding="utf-8").lower()
+        for term in self.DOMAIN_TERMS:
+            self.assertNotIn(term, body, f"{name}.md names {term!r}; that belongs in an assay rule")
+
+    def test_the_integrity_rule_is_domain_neutral(self) -> None:
+        self._assert_domain_neutral("design-integrity")
+
+    def test_the_discipline_rule_is_domain_neutral(self) -> None:
+        self._assert_domain_neutral("experiment-discipline")
+
+    def test_the_hook_itself_is_domain_neutral(self) -> None:
+        """Inline text reaches every child of every campaign, configured or not."""
+
+        orchestration = _load("loam_rule_layering")
+        block = orchestration._hypothesis_block({"hypothesis_id": "h-1", "content": "A claim."}).lower()
+        for term in self.DOMAIN_TERMS:
+            self.assertNotIn(term, block, f"_hypothesis_block names {term!r}; it must serve any domain")
+
+    def test_the_assay_rule_is_where_the_domain_lives(self) -> None:
+        """The negative tests above are only meaningful if something carries it."""
+
+        body = (ROOT / ".loam" / "rules" / "binder-cofold.md").read_text(encoding="utf-8")
+        self.assertIn("co-fold", body)
+        self.assertIn("ipSAE", body)
 
 
 if __name__ == "__main__":

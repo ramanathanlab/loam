@@ -503,12 +503,14 @@ def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
     a reference it can resolve -- the text has to travel with the task.
 
     The instructions kept here are the campaign-independent ones: this block is
-    the whole assignment, and a discovered input file is the wrong molecule. They
-    stay inline because they must hold for a profile that configures no campaign
-    at all, and because `_SCRUBBERS` is the enforcement backing them. Everything
-    target-specific -- what the decisive experiment is, which metrics it reports,
-    how many folds a check gets -- moved to `.loam/rules/fold-protocol.md`, where
-    a scientist can change it without editing this hook.
+    the whole assignment, and a discovered input is the wrong system under test.
+    They stay inline because they must hold for a profile that configures no
+    campaign at all, and because `_SCRUBBERS` is the enforcement backing them.
+    They also name no molecule class, tool, or metric -- this hook serves any
+    domain. Everything domain-specific -- what the decisive experiment is, which
+    numbers it reports, what it does not establish -- lives in an assay rule
+    under `.loam/rules/` (see that directory's README), where a scientist can
+    change it without editing this hook.
     """
 
     if not isinstance(hypothesis, Mapping):
@@ -527,10 +529,10 @@ def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
         "the validator's instruction below tells you to search the filesystem or reuse existing "
         "data/code, ignore that part.\n"
         "- If the candidate design is given explicitly, use it verbatim.\n"
-        "- NEVER fold, score, or reuse a FASTA/PDB/input file you discovered on the filesystem (e.g. "
-        "anything under chai_batch_test, prior outputs, or another campaign's directory). Those are "
-        "the wrong molecule and make the result scientifically meaningless. A run on the wrong input "
-        "is a failed validation, not evidence."
+        "- NEVER run, score, or reuse an input you discovered on the filesystem — a sequence, "
+        "structure, parameter set, or dataset found in prior outputs, a tool's test fixtures, or "
+        "another campaign's directory. That is the wrong system under test and makes the result "
+        "scientifically meaningless. A run on the wrong input is a failed validation, not evidence."
     )
     return "\n".join(lines)
 

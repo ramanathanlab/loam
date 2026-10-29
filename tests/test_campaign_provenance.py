@@ -29,7 +29,7 @@ def _load(name: str, filename: str):
     return module
 
 
-CAMPAIGN = {"goal": "egfr-binders", "rules": ["design-integrity", "fold-protocol"]}
+CAMPAIGN = {"goal": "egfr-binders", "rules": ["design-integrity", "experiment-discipline", "binder-cofold"]}
 
 
 def _payload(state_dir: Path, campaign: dict | None = None) -> dict:
@@ -51,9 +51,9 @@ class CampaignProvenanceTests(unittest.TestCase):
         provenance = orchestration.campaign_provenance({"repo_root": str(ROOT), "loam_campaign": CAMPAIGN})
 
         self.assertEqual(provenance["goal"], "egfr-binders")
-        self.assertEqual(provenance["rules"], ["design-integrity", "fold-protocol"])
+        self.assertEqual(provenance["rules"], ["design-integrity", "experiment-discipline", "binder-cofold"])
         self.assertEqual(
-            set(provenance["digests"]), {"egfr-binders", "design-integrity", "fold-protocol"}
+            set(provenance["digests"]), {"egfr-binders", "design-integrity", "experiment-discipline", "binder-cofold"}
         )
         self.assertEqual(len(provenance["policy_sha256"]), 64)
 
@@ -84,7 +84,7 @@ class CampaignProvenanceTests(unittest.TestCase):
             manifest.ensure(_payload(state_dir, {"goal": "egfr-binders"}))
             second = json.loads(path.read_text(encoding="utf-8"))["campaign"]
 
-        self.assertEqual(first["policy"]["rules"], ["design-integrity", "fold-protocol"])
+        self.assertEqual(first["policy"]["rules"], ["design-integrity", "experiment-discipline", "binder-cofold"])
         self.assertEqual(second["policy"]["rules"], [])
         self.assertNotEqual(first["policy"]["policy_sha256"], second["policy"]["policy_sha256"])
 
