@@ -103,6 +103,21 @@ def workspace_root(payload: Mapping[str, Any], plan_id: str, hypothesis_id: str)
     return base / safe_segment(plan_id) / safe_segment(hypothesis_id)
 
 
+# The reasoner is plan-level, not per-hypothesis, so its record sits beside the
+# hypothesis folders under <plan_id>/ rather than inside one of them. Hypothesis
+# ids are UUIDs, so this name never collides with one.
+REASONER_DIR = "reasoner"
+REASONER_FILE = "reasoner.json"
+
+
+def reasoner_root(payload: Mapping[str, Any], plan_id: str) -> Path:
+    config = settings(payload)
+    if config is None:
+        raise ValueError("loam_workspace is not enabled")
+    base = Path(_text(config.get("root"))).expanduser()
+    return base / safe_segment(plan_id) / REASONER_DIR
+
+
 @contextlib.contextmanager
 def _locked(root: Path) -> Iterator[None]:
     """Serialize writers of one workspace (a validator's children run in parallel).
@@ -447,6 +462,65 @@ def seed_configured_inputs(payload: Mapping[str, Any], root: Path, fresh: bool) 
         record_inputs(root, entries, source, "copied_by_hook")
 
 
+def ensure_reasoner(payload: Mapping[str, Any], plan_id: str, session_id: str) -> Path:
+    """Create the plan's reasoner record and its chained log; idempotent.
+
+    ``synthesized_from`` links the record to the hypotheses this plan actually
+    produced -- every sibling folder under <plan_id>/ that has an experiment.json
+    -- so the reasoner's synthesis is tied to the evidence it reasoned over.
+    """
+
+    root = reasoner_root(payload, plan_id)
+    plan_dir = root.parent
+    synthesized_from = sorted(
+        entry.name for entry in (plan_dir.iterdir() if plan_dir.is_dir() else [])
+        if entry.name != REASONER_DIR and (entry / EXPERIMENT_FILE).is_file()
+    )
+    with _locked(root):
+        record = root / REASONER_FILE
+        if not record.is_file():
+            _write_json(
+                record,
+                {
+                    "schema": "loam_reasoner_v1",
+                    "plan_id": plan_id,
+                    "role": "reasoner",
+                    "workflow_id": _text(payload.get("workflow_id")),
+                    "loam_run_id": _text(payload.get("loam_run_id")),
+                    "session_id": session_id,
+                    "state": "open",
+                    "created_at": _timestamp(),
+                    "closed_at": None,
+                    "synthesized_from": synthesized_from,
+                    "decisions": [],
+                },
+            )
+            _append_log_unlocked(
+                root, "note",
+                {"what": f"reasoner dispatched; synthesizing {len(synthesized_from)} hypotheses",
+                 "synthesized_from": synthesized_from,
+                 "actor": {"role": "reasoner", "session_id": session_id}},
+            )
+    return root
+
+
+def close_reasoner(root: Path, summary: str) -> None:
+    """Close the reasoner record at its stop and log its synthesis report. Idempotent."""
+
+    with _locked(root):
+        path = root / REASONER_FILE
+        record = read_json(path)
+        if record.get("state") != "open":
+            return
+        record.update(state="closed", closed_at=_timestamp())
+        _write_json(path, record)
+        _append_log_unlocked(
+            root, "report",
+            {"what": "reasoner finished", "results": summary[:MAX_RESULT_CHARS],
+             "actor": {"role": "reasoner", "session_id": _text(record.get("session_id"))}},
+        )
+
+
 def _next_run_id(root: Path) -> str:
     numbers = [
         int(match.group(1))
@@ -652,10 +726,17 @@ def on_agent_started(
     ``workspace_error`` and the failure is reported on stderr.
     """
 
-    if settings(payload) is None or role not in {"hypothesis-validator", "code-generator"} or not hypothesis_id:
+    if settings(payload) is None:
+        return {}
+    # A code-generator needs its hypothesis; a reasoner is plan-level and has none.
+    if role not in {"hypothesis-validator", "code-generator", "reasoner"}:
+        return {}
+    if role in {"hypothesis-validator", "code-generator"} and not hypothesis_id:
         return {}
     session_id = _text(payload.get("child_session_id"))
     try:
+        if role == "reasoner":
+            return {"workspace": str(ensure_reasoner(payload, plan_id, session_id))}
         if role == "hypothesis-validator":
             root = ensure_workspace(payload, plan_id, hypothesis_id, statement, session_id)
             _launch_seed(payload, plan_id, hypothesis_id, root)
@@ -1411,6 +1492,16 @@ def record_decision(payload: Mapping[str, Any], start: Mapping[str, Any] | None)
             _write_json(path, experiment)
             _append_log_unlocked(root, "decision", log_fields)
         return True
+    if role == "reasoner":
+        with _locked(root):
+            path = root / REASONER_FILE
+            record = read_json(path)
+            if record.get("state") != "open":
+                return False
+            record["decisions"] = [*record.get("decisions", []), entry]
+            _write_json(path, record)
+            _append_log_unlocked(root, "decision", log_fields)
+        return True
     return False
 
 
@@ -1961,6 +2052,9 @@ def capture_trace(payload: Mapping[str, Any], start: Mapping[str, Any]) -> bool:
         dest, where, log_extra = root / "runs" / run_id, root / "runs" / run_id / RUN_FILE, {"run": run_id}
     elif role == "hypothesis-validator":
         dest, where, log_extra = root / "validator", root / EXPERIMENT_FILE, {}
+    elif role == "reasoner":
+        # root IS the reasoner dir; its trace sits in it, pointer on reasoner.json.
+        dest, where, log_extra = root, root / REASONER_FILE, {}
     else:
         return False
     pointer = write_trace(dest, read_trace(db_path, session_id, full))
@@ -2011,6 +2105,10 @@ def on_agent_stopped(
         if remote:
             _launch_verifier(payload, start, root, ["recheck"])
         return problems
+    if role == "reasoner":
+        close_reasoner(root, _text(payload.get("child_summary")))
+        _capture_trace_safe(payload, start)
+        return []
     return []
 
 
