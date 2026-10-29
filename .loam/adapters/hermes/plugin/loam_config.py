@@ -153,6 +153,11 @@ class WorkspaceConfig:
     # Refuse a seed bigger than this rather than silently copying a dataset
     # into every hypothesis. 0 keeps the hook's default.
     max_input_bytes: int = 0
+    # Keep the FULL per-agent trace (every tool result verbatim) when capturing
+    # it from state.db at stop. Default false strips the bodies of skill reads,
+    # which are already hashed under the run's `skills`, so the trace is not a
+    # second copy of the whole skill library.
+    trace_full: bool = False
 
 
 @dataclass(frozen=True)
@@ -321,6 +326,7 @@ def _workspace_config(value: Any) -> WorkspaceConfig | None:
         remote_inputs_dir=_clean_text(raw.get("remote_inputs_dir")),
         shared_inputs=_shared_inputs(raw.get("shared_inputs")),
         max_input_bytes=_positive_int(raw.get("max_input_bytes"), 0),
+        trace_full=raw.get("trace_full") is True,
     )
 
 
@@ -579,6 +585,8 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "root": str(Path(workspace.root).expanduser() if workspace.root else profile.state_dir / "hypotheses"),
             "strict": workspace.strict,
         }
+        if workspace.trace_full:
+            values["loam_workspace"]["trace_full"] = True
         for key in ("verifier_python", "verifier_mcp_url", "remote_inputs_dir", "max_input_bytes"):
             if getattr(workspace, key):
                 values["loam_workspace"][key] = getattr(workspace, key)
