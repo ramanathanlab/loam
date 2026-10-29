@@ -250,8 +250,19 @@ def record(payload: Mapping[str, Any]) -> None:
             **lineage,
         }
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        # Concurrent code-generator children write here at once; an unlocked
+        # append has been seen to drop whole rows under that contention.
+        line = json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
+        descriptor = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+            try:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            except (ImportError, OSError):
+                pass
+            handle.write(line)
+            handle.flush()
         os.chmod(path, 0o600)
     except Exception:  # noqa: BLE001 - an observer must never affect a tool call
         return

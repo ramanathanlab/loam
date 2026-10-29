@@ -89,8 +89,18 @@ def record(payload: Mapping[str, Any]) -> None:
             record["arguments"] = {"truncated": True, "chars": len(line)}
             line = json.dumps(record, ensure_ascii=False, sort_keys=True)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
+        # Every agent in the campaign writes a row here per tool call, so this
+        # is the most contended of the ledgers; append under a lock.
+        descriptor = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+            try:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            except (ImportError, OSError):
+                pass
             handle.write(line + "\n")
+            handle.flush()
         os.chmod(path, 0o600)
     except Exception:  # noqa: BLE001 - an observer must never affect a tool call
         return

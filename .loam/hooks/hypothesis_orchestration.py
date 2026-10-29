@@ -153,9 +153,35 @@ def _read_rows(path: Path) -> list[dict[str, Any]]:
 
 
 def _append(path: Path, row: Mapping[str, Any]) -> None:
+    """Append one record under an advisory lock, as ledger.append_record does.
+
+    Every validator in a batch finishes at once, so several subagent-stop
+    subprocesses append here within the same millisecond. Plain ``open("a")``
+    lost whole rows under exactly that contention -- observed twice, each time
+    a validator_completed row that a tail had already read was absent from the
+    file minutes later, taking its evidence score with it. The ledger's locked
+    writer, fed by the same events, never lost one.
+    """
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(dict(row), ensure_ascii=False, sort_keys=True) + "\n")
+    line = json.dumps(dict(row), ensure_ascii=False, sort_keys=True) + "\n"
+    descriptor = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+        try:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            pass
+        handle.write(line)
+        handle.flush()
+        os.fsync(handle.fileno())
+        try:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except (ImportError, OSError):
+            pass
 
 
 
@@ -480,6 +506,10 @@ def _marker(value: str, key: str) -> str:
 
 _EVIDENCE_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s*Evidence\s+Score\b", re.IGNORECASE | re.MULTILINE)
 _SIGNED_DECIMAL_RE = re.compile(r"[-+−]?\d*\.?\d+")
+# The harness line that names where it put a report too long for the context
+# window, e.g. "Full subagent output saved to: /abs/path/summary-0-...txt".
+_SPILL_PATH_RE = re.compile(r"Full subagent output saved to:\s*(\S+\.txt)")
+MAX_SPILL_BYTES = 4_000_000
 
 
 def _evidence_score(summary: str) -> float | None:
@@ -510,6 +540,30 @@ def _evidence_score(summary: str) -> float | None:
     except ValueError:
         return None
     return score if -1.0 <= score <= 1.0 else None
+
+
+def _spilled_summary(summary: str) -> str | None:
+    """Return the full report when the harness truncated what it handed us.
+
+    A validator report that does not fit the parent's context window arrives
+    with its middle omitted and a pointer to the complete text on disk. The
+    Evidence Score heading sits near the end of a full report, so it is exactly
+    what the omitted middle swallows: observed on 2026-10-26, three validators
+    whose nine code-generator executions all completed were recorded
+    missing_or_invalid because the score never reached this parser. Read the
+    file the harness names rather than discarding the round's evidence.
+    """
+
+    match = _SPILL_PATH_RE.search(summary)
+    if not match:
+        return None
+    path = Path(match.group(1).strip())
+    try:
+        if not path.is_file() or path.stat().st_size > MAX_SPILL_BYTES:
+            return None
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
 
 def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     """Block tool use that violates a tagged orchestration role's boundary."""
@@ -888,6 +942,12 @@ def record_stop(payload: Mapping[str, Any]) -> None:
     }
     if role == "hypothesis-validator":
         score = _evidence_score(summary)
+        score_from_spill = False
+        if score is None:
+            full = _spilled_summary(summary)
+            if full is not None:
+                score = _evidence_score(full)
+                score_from_spill = score is not None
         plan = _text(start.get("plan_id"))
         hyp = _text(start.get("hypothesis_id"))
         # C2: a reported score is only trustworthy if a code-generator child
@@ -915,6 +975,11 @@ def record_stop(payload: Mapping[str, Any]) -> None:
             record["evidence_score_status"] = (
                 "reported" if score is not None else "missing_or_invalid"
             )
+            if score_from_spill:
+                # Same standing as any reported score -- the number is the
+                # validator's own -- but record that the truncated report had to
+                # be re-read from disk, so an audit can tell the two apart.
+                record["evidence_score_source"] = "spill_file"
     _append(_state_path(payload), record)
     if role == "hypothesis-validator":
         _append_campaign(payload, {**record, "event": "hypothesis_validation_completed"})
