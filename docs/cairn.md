@@ -9,24 +9,25 @@ report section, queues one rating event per backed tool, and submits the queue t
 from a detached process. Every Cairn failure is recorded and swallowed; it never changes delegation
 or fails a campaign.
 
-## Project silo: set `CAIRN_PROJECT` before launching Hermes
+## Project silo: nothing to set
 
-Every Cairn request (the brief, the flusher, the key mint) carries `X-Cairn-Project: $CAIRN_PROJECT`, so
-the run reads and writes its own private silo instead of production scores. Set it once, in the shell
-that launches Hermes:
+Every Cairn request (the brief, the flusher, the key mint) carries `X-Cairn-Project: <project>`, so the
+run reads and writes its own private silo instead of production scores. By default the project is
+derived from the profile's `workflow_id` (`loam-<workflow-id>`, lower-cased, non-alphanumerics as `-`,
+at most 63 characters; `loam-<UTC date>` without one), so every runner of one campaign shares a silo
+with no setup. To choose it yourself, export it in the shell that launches Hermes:
 
 ```bash
 export CAIRN_PROJECT=<experiment-name>    # ^[a-z0-9][a-z0-9-]{2,62}$; use an unguessable name for sensitive runs
 ```
 
-It comes only from the launch environment: profiles cannot set it and agents never see or type it.
+It comes only from the launch environment or the workflow id: profiles cannot set it and agents never see
+or type it.
 The value is bound when the profile loads and written into every queued rating; a flush sends only
 rows queued under its own project (others are counted as `other_project`).
 
-If `CAIRN_PROJECT` is unset or invalid, Cairn sends **nothing** (a request without the header would
-write to production): Hermes logs `Loam Cairn: CAIRN_PROJECT is not set ...` once, there is no
-reputation brief, ratings are still recorded locally and stay `pending`, and `cairn-status.json`
-shows the error. Every response must echo the header; a missing or different echo logs a warning,
+If `CAIRN_PROJECT` is invalid, Loam logs `Loam Cairn: WARNING CAIRN_PROJECT=... is invalid ...: using
+<default>` once and uses the default project. A request never goes out without the header. Every response must echo the header; a missing or different echo logs a warning,
 discards a fetched brief, and sets `project_echo` in `cairn-status.json`. Keys are not bound to
 projects, so the same key works in every silo.
 

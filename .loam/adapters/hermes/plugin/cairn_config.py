@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -31,28 +32,39 @@ ALLOWED_ROLES = {"code-generator", "hypothesis-validator", "reasoner"}
 _ENTITY_PREFIXES = ("mcp://", "tool://")
 _BOOL_KEYS = ("read_side", "rate_agent_reports", "rate_hook_fallback", "auto_flush", "auto_mint")
 _NON_TAG_RE = re.compile(r"[^a-z0-9_]+")
-# Mirrors cairn_client.PROJECT_RE. The project silo comes only from the launch environment, never
-# from a profile or a model, and every Cairn request carries it as X-Cairn-Project.
+# Mirrors cairn_client.PROJECT_RE. The project silo comes only from the launch environment or, by
+# default, the campaign's workflow id, never from a profile or a model, and every Cairn request
+# carries it as X-Cairn-Project.
 PROJECT_ENV = "CAIRN_PROJECT"
 _PROJECT_RE = re.compile(r"[a-z0-9][a-z0-9-]{2,62}")
 _warned: set[str] = set()
 logger = logging.getLogger(__name__)
 
 
-def _project() -> tuple[str, str]:
-    """(project, error) from CAIRN_PROJECT; the project is "" whenever it is unusable."""
+def default_project(workflow_id: str) -> str:
+    """The silo a campaign gets without CAIRN_PROJECT: derived from its workflow id, so every runner of
+    one campaign shares it with no setup (dated when there is no id)."""
+    slug = re.sub(r"[^a-z0-9]+", "-", workflow_id.lower()).strip("-")
+    if not slug:
+        slug = datetime.now(timezone.utc).strftime("%Y%m%d")
+    project = slug if slug.startswith("loam-") else f"loam-{slug}"
+    return project[:63].rstrip("-")
+
+
+def _project(workflow_id: str = "") -> tuple[str, str]:
+    """(project, error): CAIRN_PROJECT when set and valid, else the campaign's default silo."""
     raw = os.environ.get(PROJECT_ENV, "").strip()
     if not raw:
-        error = f"{PROJECT_ENV} is not set: Cairn will not read or write (export it before launching Hermes)"
-    elif not _PROJECT_RE.fullmatch(raw):
-        error = f"{PROJECT_ENV}={raw!r} is invalid (^[a-z0-9][a-z0-9-]{{2,62}}$): Cairn will not read or write"
-    else:
+        return default_project(workflow_id), ""
+    if _PROJECT_RE.fullmatch(raw):
         return raw, ""
+    project = default_project(workflow_id)
+    error = f"{PROJECT_ENV}={raw!r} is invalid (^[a-z0-9][a-z0-9-]{{2,62}}$): using {project}"
     if error not in _warned:  # loud, but once per process
         _warned.add(error)
         logger.warning("Loam Cairn: %s", error)
         print(f"Loam Cairn: WARNING {error}", file=sys.stderr)
-    return "", error
+    return project, error
 
 
 def _snake_tag(value: str) -> str:
@@ -108,16 +120,17 @@ def _default_block() -> Any:
         return None
 
 
-def cairn_config(value: Any) -> dict[str, Any] | None:
-    """Validated Cairn settings. ``value`` is the profile's ``cairn`` block; None means the repo default."""
+def cairn_config(value: Any, workflow_id: str = "") -> dict[str, Any] | None:
+    """Validated Cairn settings. ``value`` is the profile's ``cairn`` block; None means the repo default.
+    ``workflow_id`` names the default project silo when CAIRN_PROJECT is not set."""
     if os.environ.get("LOAM_CAIRN", "").strip().lower() in _OFF_VALUES:
         return None
     if value is None:
         value = _default_block()
-    return _parse(value)
+    return _parse(value, workflow_id)
 
 
-def _parse(value: Any) -> dict[str, Any] | None:
+def _parse(value: Any, workflow_id: str = "") -> dict[str, Any] | None:
     if not isinstance(value, Mapping) or value.get("enabled") is not True:
         return None
     flags: dict[str, bool] = {}
@@ -150,7 +163,7 @@ def _parse(value: Any) -> dict[str, Any] | None:
     if entities is None:
         return None
     entities.setdefault(executor, {"patterns": [], "task_tags": ["code_exec"]})
-    project, project_error = _project()
+    project, project_error = _project(workflow_id)
     return {
         "enabled": True,
         "base_url": base_url,

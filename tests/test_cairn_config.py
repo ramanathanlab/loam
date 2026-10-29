@@ -181,13 +181,36 @@ def test_profile_cannot_choose_the_project(monkeypatch):
     assert cairn_config({**BLOCK, "project": "somewhere-else"})["project"] == "loam-exp-12"
 
 
-@pytest.mark.parametrize("value", ["", "Not_Valid"])
-def test_unset_or_invalid_project_keeps_cairn_on_but_unusable(monkeypatch, capsys, value):
+def test_unset_project_defaults_from_the_workflow_id(monkeypatch):
+    # Hands-free: every runner of one campaign derives the same private silo.
+    monkeypatch.delenv("CAIRN_PROJECT", raising=False)
+    cfg = cairn_config(BLOCK, workflow_id="Aurora_Binder campaign.v2")
+    assert cfg["project"] == "loam-aurora-binder-campaign-v2" and cfg["project_error"] == ""
+    assert cairn_config(BLOCK, workflow_id="loam-exp-3")["project"] == "loam-exp-3"
+
+
+def test_derived_project_fits_the_silo_pattern(monkeypatch):
+    import re
+
+    monkeypatch.delenv("CAIRN_PROJECT", raising=False)
+    project = cairn_config(BLOCK, workflow_id="W" * 200 + "!!")["project"]
+    assert re.fullmatch(r"[a-z0-9][a-z0-9-]{2,62}", project) and not project.endswith("-")
+
+
+def test_no_workflow_id_defaults_to_a_dated_silo(monkeypatch):
+    import datetime
+
+    monkeypatch.delenv("CAIRN_PROJECT", raising=False)
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
+    assert cairn_config(BLOCK)["project"] == f"loam-{today}"
+
+
+def test_invalid_project_env_falls_back_to_the_default_and_warns_once(monkeypatch, capsys):
     import cairn_config as module
 
     monkeypatch.setattr(module, "_warned", set())
-    monkeypatch.setenv("CAIRN_PROJECT", value)
-    cfg = cairn_config(BLOCK)
-    assert cfg is not None and cfg["project"] == "" and "CAIRN_PROJECT" in cfg["project_error"]
-    cairn_config(BLOCK)
+    monkeypatch.setenv("CAIRN_PROJECT", "Not_Valid")
+    cfg = cairn_config(BLOCK, workflow_id="wf-1")
+    assert cfg["project"] == "loam-wf-1" and "CAIRN_PROJECT" in cfg["project_error"]
+    cairn_config(BLOCK, workflow_id="wf-1")
     assert capsys.readouterr().err.count("WARNING") == 1  # loud once, not on every profile load

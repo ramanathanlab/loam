@@ -319,7 +319,7 @@ def load_profile() -> LoamProfile | None:
         hypothesis_orchestration=orchestration,
         execution=execution,
         hypothesis_tournament=_tournament_config(raw.get("hypothesis_tournament"), override),
-        cairn=cairn_config(raw.get("cairn")),
+        cairn=cairn_config(raw.get("cairn"), workflow_id),
         falda=falda,
         falda_status=falda_status,
     )
