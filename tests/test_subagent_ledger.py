@@ -16,7 +16,6 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOKS = ROOT / ".loam" / "hooks"
 START = HOOKS / "subagent-start.py"
 STOP = HOOKS / "subagent-stop.py"
-RECONCILER = ROOT / ".loam" / "reconcile" / "protein_structure_metadata.py"
 MEMORY_PROJECTOR = ROOT / ".loam" / "reconcile" / "project_parent_memory.py"
 MEMORY_RECALL = HOOKS / "memory_recall.py"
 
@@ -30,10 +29,6 @@ def _load_module(name: str, path: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def _load_reconciler():
-    return _load_module("loam_reconciler", RECONCILER)
 
 
 def _load_memory_projector():
@@ -278,16 +273,14 @@ class SubagentLedgerTests(unittest.TestCase):
             summary = '''Candidate output:
 ```json
 {
-  "contract_version": "protein_structure_metadata_v1",
-  "source_kind": "uniprot",
-  "source_accession": "P00918",
-  "source_url": "https://www.uniprot.org/uniprotkb/P00918",
-  "claims": {
-    "recommended_name": "Carbonic anhydrase 2",
-    "gene_name": "CA2",
-    "sequence_length": 260
-  },
-  "uncertainties": []
+  "contract_version": "hypothesis_provenance_v1",
+  "hypotheses": [
+    {"hypothesis_key": "h1", "statement": "The candidate engages the target interface.", "parent_hypothesis_keys": []}
+  ],
+  "evidence_candidates": [
+    {"hypothesis_key": "h1", "claim": "The record reports the interface residues.",
+     "source_url": "https://example.org/record/1", "stance": "supports"}
+  ]
 }
 ```'''
             completed = self._run_hook(
@@ -309,14 +302,26 @@ class SubagentLedgerTests(unittest.TestCase):
             candidate = json.loads(candidate_file.read_text())
 
         self.assertEqual(candidate["candidate_status"], "pending")
-        self.assertEqual(candidate["candidate"]["source_accession"], "P00918")
-        self.assertEqual(candidate["candidate"]["claims"]["gene_name"], "CA2")
+        self.assertEqual(candidate["record_version"], "hypothesis_provenance_v1")
+        self.assertEqual(candidate["candidate"]["hypotheses"][0]["hypothesis_key"], "h1")
+        self.assertEqual(
+            candidate["candidate"]["evidence_candidates"][0]["source_url"],
+            "https://example.org/record/1",
+        )
+        # Extraction is not acceptance: no finding until explicit reconciliation.
         self.assertNotIn("finding_id", candidate)
 
     def test_completed_plain_fence_contract_creates_pending_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ledger = Path(tmp) / "ledger.jsonl"
-            summary = '''Verified record:\n\n```\n{"contract_version":"protein_structure_metadata_v1","source_kind":"uniprot","source_accession":"P00918","source_url":"https://www.uniprot.org/uniprotkb/P00918","claims":{"recommended_name":"Carbonic anhydrase 2","gene_name":"CA2","sequence_length":260},"uncertainties":[]}\n```'''
+            summary = (
+                "Verified record:\n\n```\n"
+                '{"contract_version":"hypothesis_provenance_v1",'
+                '"hypotheses":[{"hypothesis_key":"h1","statement":"A claim.","parent_hypothesis_keys":[]}],'
+                '"evidence_candidates":[{"hypothesis_key":"h1","claim":"The source states it.",'
+                '"source_url":"https://example.org/record/1","stance":"supports"}]}'
+                "\n```"
+            )
             completed = self._run_hook(
                 STOP,
                 {
@@ -335,42 +340,7 @@ class SubagentLedgerTests(unittest.TestCase):
             candidate = json.loads(ledger.with_name("candidate-results.jsonl").read_text())
 
         self.assertEqual(candidate["candidate_status"], "pending")
-        self.assertEqual(candidate["candidate"]["source_accession"], "P00918")
-
-    def test_reconciler_accepts_matching_uniprot_claims(self) -> None:
-        reconciler = _load_reconciler()
-        candidate_record = {
-            "candidate_status": "pending",
-            "candidate_id": "candidate-1",
-            "unit_id": "unit-1",
-            "candidate": {
-                "source_kind": "uniprot",
-                "source_accession": "P00918",
-                "claims": {
-                    "recommended_name": "Carbonic anhydrase 2",
-                    "gene_name": "CA2",
-                    "sequence_length": 260,
-                },
-            },
-        }
-        source = {
-            "proteinDescription": {
-                "recommendedName": {"fullName": {"value": "Carbonic anhydrase 2"}}
-            },
-            "genes": [{"geneName": {"value": "CA2"}}],
-            "sequence": {"length": 260},
-        }
-        module: Any = reconciler
-        original = module._fetch_json
-        module._fetch_json = lambda _url, _timeout: (source, "ok")
-        try:
-            rows = list(module.decisions(candidate_record, 1.0))
-        finally:
-            module._fetch_json = original
-
-        self.assertEqual(len(rows), 3)
-        self.assertTrue(all(row["validation_status"] == "accepted" for row in rows))
-        self.assertTrue(all(row["finding_id"] for row in rows))
+        self.assertEqual(candidate["candidate"]["hypotheses"][0]["statement"], "A claim.")
 
     def test_parent_memory_uses_only_accepted_deduplicated_findings(self) -> None:
         projector = _load_memory_projector()
