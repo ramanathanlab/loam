@@ -264,9 +264,13 @@ class WorkspaceStartTests(_OrchestrationHelpers, unittest.TestCase):
                 self.assertIn("never /tmp", task["context"])
                 run = json.loads((root / "runs" / run_id / "run.json").read_text())
                 self.assertEqual(run["state"], "reserved")
-            # Reserving is not starting: no plan is logged until a child begins.
+                # The validator->child edge is recorded at dispatch (G3).
+                self.assertEqual(run["dispatched_by"]["validator_session"], "validator-1")
+            # Reserving is not starting: the dispatch logs notes (the validator
+            # start, and one edge per child), but no `plan` until a child begins.
             kinds = [json.loads(line)["kind"] for line in (root / "log.jsonl").read_text().splitlines()]
-            self.assertEqual(kinds, ["note"])
+            self.assertEqual(set(kinds), {"note"})
+            self.assertNotIn("plan", kinds)
 
     def test_child_start_moves_reserved_run_to_started_and_logs_plan(self) -> None:
         orchestration = _load("loam_orch_ws_child", ORCHESTRATION)
@@ -281,8 +285,13 @@ class WorkspaceStartTests(_OrchestrationHelpers, unittest.TestCase):
             run = json.loads((root / "runs" / "r1" / "run.json").read_text())
             self.assertEqual((run["state"], run["child_session_id"]), ("started", "child-1"))
             self.assertNotIn("[loam-", run["goal"])
+            # validator-start note, the dispatch-edge note for r1 (G3), then the
+            # child's plan once it begins.
             entries = [json.loads(line) for line in (root / "log.jsonl").read_text().splitlines()]
-            self.assertEqual([(e["kind"], e.get("run")) for e in entries], [("note", None), ("plan", "r1")])
+            self.assertEqual(
+                [(e["kind"], e.get("run")) for e in entries],
+                [("note", None), ("note", "r1"), ("plan", "r1")],
+            )
 
     def test_local_mode_layout_points_at_the_local_workspace(self) -> None:
         orchestration = _load("loam_orch_ws_local", ORCHESTRATION)
@@ -2227,6 +2236,69 @@ class WorkspaceDecisionTests(WorkspacePolicyTests):
             workspace = _load("loam_ws_decision_audit")
             problems = workspace.close_workspace(root, {"status": "completed"}, remote=False)
             self.assertEqual([p for p in problems if "validator" in p], [])
+
+
+class WorkspaceDispatchEdgeTests(_StopHelpers, unittest.TestCase):
+    """G3: the validator->child edge, recorded at dispatch on both ends."""
+
+    def test_dispatch_links_run_to_validator_and_flags_the_rewrite(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            # _hypothesis runs canonical_delegation_args, which records the edges.
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold B with T.", "Dock B."])
+
+            experiment = json.loads((root / "experiment.json").read_text())
+            children = experiment["children"]
+            self.assertEqual([c["run"] for c in children], ["r1", "r2"])
+            for c in children:
+                self.assertEqual(len(c["instruction_sha256"]), 64)
+                # Loam injects layout/campaign/hypothesis blocks, so the child's
+                # instruction is not the validator's verbatim ask.
+                self.assertTrue(c["rewritten"])
+
+            run = json.loads((root / "runs" / "r1" / "run.json").read_text())
+            edge = run["dispatched_by"]
+            self.assertEqual(edge["validator_session"], "validator-h-1")
+            self.assertNotEqual(edge["requested_sha256"], edge["instruction_sha256"])
+            self.assertEqual(edge["instruction_sha256"], children[0]["instruction_sha256"])
+
+    def test_the_edge_hash_matches_what_the_child_was_actually_given(self) -> None:
+        import hashlib
+
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold B with T."])
+            # tasks[0] is exactly what Hermes will hand the child.
+            canonical = tasks[0]["goal"] + "\n\n" + tasks[0]["context"]
+            expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            run = json.loads((root / "runs" / "r1" / "run.json").read_text())
+            self.assertEqual(run["dispatched_by"]["instruction_sha256"], expected)
+
+    def test_redispatch_does_not_duplicate_a_child_edge(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            self._start(orchestration, payload, "validator-h-1",
+                        "Validate [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1]")
+            args = {**payload, "session_id": "validator-h-1", "arguments": {"tasks": [{"goal": "Fold B with T."}]}}
+            orchestration.canonical_delegation_args(args)
+            orchestration.canonical_delegation_args(args)  # middleware ran twice
+            root = Path(payload["loam_workspace"]["root"]) / "plan-1" / "h-1"
+            experiment = json.loads((root / "experiment.json").read_text())
+            self.assertEqual([c["run"] for c in experiment["children"]], ["r1"])
+
+    def test_edge_survives_the_child_starting(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold B with T."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])  # child starts on r1
+            run = json.loads((root / "runs" / "r1" / "run.json").read_text())
+            self.assertEqual(run["state"], "started")
+            self.assertEqual(run["child_session_id"], "child-1")
+            self.assertIn("dispatched_by", run)  # starting the run did not clobber the edge
 
 
 class WorkspaceTraceTests(WorkspacePolicyTests):

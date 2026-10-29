@@ -1414,6 +1414,57 @@ def record_decision(payload: Mapping[str, Any], start: Mapping[str, Any] | None)
     return False
 
 
+def record_dispatch(
+    root: Path, run_id: str, validator_session: str, requested_sha256: str, instruction_sha256: str
+) -> None:
+    """Link a reserved run to the validator that dispatched it, at dispatch time.
+
+    The validator↔code-generator handoff, made explicit and checkable. Written
+    before the child starts, onto two ends of one edge:
+
+    * the reserved ``run.json`` gets ``dispatched_by`` (validator session, and
+      the two hashes), and
+    * the validator's ``experiment.json`` gets a ``children`` entry for the run.
+
+    ``instruction_sha256`` is the hash of the canonical goal+context the child
+    actually receives; ``requested_sha256`` is the validator's own ask before
+    Loam augmented it with the layout, campaign and hypothesis blocks. They
+    differ whenever Loam rewrote the task -- which is the norm, not the
+    exception -- so the pair is what lets the validator's trace (the ask) and
+    the child's trace (what ran) be reconciled rather than silently diverge.
+    Idempotent: the dispatch middleware may run more than once for one round.
+    """
+
+    rewritten = requested_sha256 != instruction_sha256
+    edge = {
+        "validator_session": validator_session,
+        "requested_sha256": requested_sha256,
+        "instruction_sha256": instruction_sha256,
+        "rewritten": rewritten,
+    }
+    with _locked(root):
+        run_path = root / "runs" / run_id / RUN_FILE
+        run = read_json(run_path)
+        if run:
+            run["dispatched_by"] = {**edge, "at": _timestamp()}
+            _write_json(run_path, run)
+        experiment_path = root / EXPERIMENT_FILE
+        experiment = read_json(experiment_path)
+        if experiment:
+            others = [c for c in experiment.get("children", []) if isinstance(c, Mapping) and c.get("run") != run_id]
+            child = {"run": run_id, "instruction_sha256": instruction_sha256, "rewritten": rewritten}
+            experiment["children"] = sorted([*others, child], key=lambda c: c.get("run", ""))
+            _write_json(experiment_path, experiment)
+            if run_id not in {c.get("run") for c in others}:
+                _append_log_unlocked(
+                    root,
+                    "note",
+                    {"run": run_id,
+                     "what": f"dispatched by validator {validator_session[:12] or '(unknown)'}"
+                             + (" (instruction rewritten by Loam)" if rewritten else " (instruction verbatim)")},
+                )
+
+
 def _call_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
     """The run.json ``calls`` entry for a tool call, or None for calls not worth recording.
 
