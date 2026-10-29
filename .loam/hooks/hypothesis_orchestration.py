@@ -1010,7 +1010,43 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
                 "role": "leaf",
             }
         )
+    _record_dispatch_edges(payload, plan_id, hypothesis_id, items, out, run_ids)
     return {"tasks": out}
+
+
+def _record_dispatch_edges(
+    payload: Mapping[str, Any], plan_id: str, hypothesis_id: str,
+    items: list, out: list[dict[str, Any]], run_ids: list[str],
+) -> None:
+    """Record the validator->child edge for each dispatched run (hypothesis_workspace.record_dispatch).
+
+    Hashes the validator's original ask (``items``) and the canonical task the
+    child receives (``out``) so a Loam rewrite between them is on the record.
+    Runs at dispatch, when the runs are reserved but the children have not
+    started. A workspace problem never blocks the dispatch.
+    """
+
+    if hypothesis_workspace.settings(payload) is None or not any(run_ids):
+        return
+    validator_session = _text(payload.get("session_id")) or _text(payload.get("parent_session_id"))
+    try:
+        root = hypothesis_workspace.workspace_root(payload, plan_id, hypothesis_id)
+    except Exception as exc:
+        print(f"loam workspace: dispatch edge skipped: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return
+    for item, entry, run_id in zip(items, out, run_ids):
+        if not run_id or not isinstance(item, Mapping):
+            continue
+        requested = _text(item.get("goal")) + "\n\n" + _text(item.get("context"))
+        canonical = _text(entry.get("goal")) + "\n\n" + _text(entry.get("context"))
+        try:
+            hypothesis_workspace.record_dispatch(
+                root, run_id, validator_session,
+                hashlib.sha256(requested.encode("utf-8")).hexdigest(),
+                hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+            )
+        except Exception as exc:
+            print(f"loam workspace: could not record dispatch edge for {run_id}: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
 def _reserve_child_runs(
