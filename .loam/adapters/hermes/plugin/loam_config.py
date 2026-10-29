@@ -56,11 +56,20 @@ class CampaignConfig:
     """Invariant campaign context: what the campaign is for, and its rules.
 
     This is campaign policy rather than compute configuration, so it sits beside
-    `execution` instead of inside it. Both fields name files that the hooks
-    resolve against `repo_root` (`.loam/campaigns/<goal>.md`,
-    `.loam/rules/<name>.md`), the way agent prompts are already loaded: the hook
-    holds `repo_root` and this module does not, so a name is validated here and
-    read there.
+    `execution` instead of inside it. `goal` and `rules` name files that the
+    hooks read, the way agent prompts are already loaded: the hook holds the
+    paths and this module does not, so a name is validated here and read there.
+
+    `dir` is where those files live -- a directory the user owns, outside this
+    repo. Loam ships no campaign content: a goal, and a rule naming a particular
+    measurement, belong to whoever is running the campaign, and checking one in
+    would make this framework quietly about protein binders. The repo's own
+    `.loam/rules/` holds only rules invariant across every campaign, and those
+    load whether or not `dir` is set.
+
+    Names stay bare and validated even though `dir` is a free path: the user
+    chooses the directory once, in their own profile, and nothing inside the
+    campaign can then reach a file outside it.
 
     Only the invariant half of a campaign's context lives here. The evolving
     half -- current state -- already exists as the reasoner brief and the
@@ -69,6 +78,7 @@ class CampaignConfig:
 
     goal: str
     rules: tuple[str, ...] = ()
+    dir: str = ""
 
 
 @dataclass(frozen=True)
@@ -175,7 +185,25 @@ def _campaign_config(value: Any) -> CampaignConfig | None:
     names = tuple(_campaign_name(item, "rules") for item in rules)
     if len(set(names)) != len(names):
         raise ValueError(f"campaign.rules must not repeat a name: {list(names)!r}")
-    return CampaignConfig(goal=goal, rules=names)
+    return CampaignConfig(goal=goal, rules=names, dir=_campaign_dir(raw.get("dir")))
+
+
+def _campaign_dir(value: Any) -> str:
+    """Parse the optional `campaign.dir`, the user's own campaign directory.
+
+    Absolute after `~` expansion, because a relative path would resolve against
+    whatever directory the harness happened to spawn the hook in. Empty means
+    the campaign's files are expected in the repo, which is the older behavior
+    and still works for someone keeping their campaign beside the code.
+    """
+
+    raw = _clean_text(value)
+    if not raw:
+        return ""
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"campaign.dir must be an absolute path: {value!r}")
+    return str(path)
 
 
 def _execution_config(value: Any) -> ExecutionConfig | None:
@@ -413,9 +441,13 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
     }
     campaign = profile.campaign
     if campaign is not None:
-        # Names only. The hooks resolve them against `repo_root`, which this
-        # module never sees, so no file is read here.
-        values["loam_campaign"] = {"goal": campaign.goal, "rules": list(campaign.rules)}
+        # Names plus the directory holding them. The hooks do the reading; this
+        # module never opens a campaign file.
+        values["loam_campaign"] = {
+            "goal": campaign.goal,
+            "rules": list(campaign.rules),
+            "dir": campaign.dir,
+        }
     execution = profile.execution
     if execution is not None:
         values["loam_execution"] = {

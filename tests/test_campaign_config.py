@@ -1,6 +1,6 @@
 """Profile parsing for the optional `campaign:` block.
 
-The block names files (`.loam/campaigns/<goal>.md`, `.loam/rules/<name>.md`) that
+The block names files (`<dir>/campaigns/<goal>.md`, `<dir>/rules/<name>.md`) that
 the hooks resolve against `repo_root`; this layer only validates and forwards the
 names, so these tests cover the names and the payload shape, never file content.
 """
@@ -61,8 +61,26 @@ class CampaignConfigTests(unittest.TestCase):
         values = config.payload_values(profile)
         self.assertEqual(
             values["loam_campaign"],
-            {"goal": "alkbh1-binders", "rules": ["evidence-integrity", "hpc-budget"]},
+            {"goal": "alkbh1-binders", "rules": ["evidence-integrity", "hpc-budget"], "dir": ""},
         )
+
+    def test_a_campaign_directory_reaches_the_hook_payload(self) -> None:
+        """Campaign files live in a directory the user owns, not in this repo."""
+
+        config = _load("loam_config_campaign_dir", CONFIG)
+        profile = _profile(config, {"goal": "alkbh1-binders", "dir": "~/campaigns/alkbh1"})
+
+        assert profile is not None and profile.campaign is not None
+        expected = str(Path("~/campaigns/alkbh1").expanduser())
+        self.assertEqual(profile.campaign.dir, expected)
+        self.assertEqual(config.payload_values(profile)["loam_campaign"]["dir"], expected)
+
+    def test_a_relative_campaign_directory_is_rejected(self) -> None:
+        """It would resolve against whatever directory the harness spawned in."""
+
+        config = _load("loam_config_campaign_relative", CONFIG)
+        with self.assertRaises(ValueError):
+            _profile(config, {"goal": "alkbh1-binders", "dir": "campaigns/alkbh1"})
 
     def test_rules_are_optional(self) -> None:
         config = _load("loam_config_campaign_no_rules", CONFIG)

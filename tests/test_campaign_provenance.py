@@ -29,7 +29,19 @@ def _load(name: str, filename: str):
     return module
 
 
-CAMPAIGN = {"goal": "egfr-binders", "rules": ["evidence-integrity", "experiment-discipline", "binder-cofold"]}
+FIXTURE_GOAL = "---\nname: fixture-goal\n---\n\nEstablish whether the fixture subject behaves as predicted.\n"
+FIXTURE_PROTOCOL = "---\nname: fixture-protocol\nscope: code-generator\n---\n\n- The decisive check.\n"
+
+
+def _campaign(root: Path) -> dict:
+    """A campaign in a user-owned directory; the repo ships no campaign content."""
+
+    policy = root / "campaign-policy"
+    (policy / "campaigns").mkdir(parents=True, exist_ok=True)
+    (policy / "rules").mkdir(parents=True, exist_ok=True)
+    (policy / "campaigns" / "fixture-goal.md").write_text(FIXTURE_GOAL, encoding="utf-8")
+    (policy / "rules" / "fixture-protocol.md").write_text(FIXTURE_PROTOCOL, encoding="utf-8")
+    return {"dir": str(policy), "goal": "fixture-goal", "rules": ["fixture-protocol"]}
 
 
 def _payload(state_dir: Path, campaign: dict | None = None) -> dict:
@@ -48,12 +60,18 @@ def _payload(state_dir: Path, campaign: dict | None = None) -> dict:
 class CampaignProvenanceTests(unittest.TestCase):
     def test_policy_is_recorded_with_a_digest(self) -> None:
         orchestration = _load("loam_prov_orchestration", "hypothesis_orchestration.py")
-        provenance = orchestration.campaign_provenance({"repo_root": str(ROOT), "loam_campaign": CAMPAIGN})
+        with tempfile.TemporaryDirectory() as temporary:
+            campaign = _campaign(Path(temporary))
+            provenance = orchestration.campaign_provenance({"repo_root": str(ROOT), "loam_campaign": campaign})
 
-        self.assertEqual(provenance["goal"], "egfr-binders")
-        self.assertEqual(provenance["rules"], ["evidence-integrity", "experiment-discipline", "binder-cofold"])
+        self.assertEqual(provenance["goal"], "fixture-goal")
         self.assertEqual(
-            set(provenance["digests"]), {"egfr-binders", "evidence-integrity", "experiment-discipline", "binder-cofold"}
+            provenance["rules"], ["evidence-integrity", "experiment-discipline", "fixture-protocol"]
+        )
+        # A user-supplied rule is digested like a shipped one: it governed the run.
+        self.assertEqual(
+            set(provenance["digests"]),
+            {"fixture-goal", "evidence-integrity", "experiment-discipline", "fixture-protocol"},
         )
         self.assertEqual(len(provenance["policy_sha256"]), 64)
 
@@ -87,16 +105,19 @@ class CampaignProvenanceTests(unittest.TestCase):
         manifest = _load("loam_prov_manifest", "run_manifest.py")
         with tempfile.TemporaryDirectory() as temporary:
             state_dir = Path(temporary)
-            path = manifest.ensure(_payload(state_dir, CAMPAIGN))
+            campaign = _campaign(state_dir)
+            path = manifest.ensure(_payload(state_dir, campaign))
             first = json.loads(path.read_text(encoding="utf-8"))["campaign"]
 
             # A later event in the same deployment must not be rejected, and must
             # re-read the policy rather than keep a weeks-old snapshot.
-            manifest.ensure(_payload(state_dir, {"goal": "egfr-binders"}))
+            manifest.ensure(_payload(state_dir, {"dir": campaign["dir"], "goal": "fixture-goal"}))
             second = json.loads(path.read_text(encoding="utf-8"))["campaign"]
 
-        self.assertEqual(first["policy"]["rules"], ["evidence-integrity", "experiment-discipline", "binder-cofold"])
-        # The named assay rule is gone; the invariant ones cannot be dropped.
+        self.assertEqual(
+            first["policy"]["rules"], ["evidence-integrity", "experiment-discipline", "fixture-protocol"]
+        )
+        # The named protocol rule is gone; the invariant ones cannot be dropped.
         self.assertEqual(second["policy"]["rules"], ["evidence-integrity", "experiment-discipline"])
         self.assertNotEqual(first["policy"]["policy_sha256"], second["policy"]["policy_sha256"])
 
@@ -106,9 +127,10 @@ class CampaignProvenanceTests(unittest.TestCase):
         manifest = _load("loam_prov_identity", "run_manifest.py")
         with tempfile.TemporaryDirectory() as temporary:
             state_dir = Path(temporary)
-            manifest.ensure(_payload(state_dir, CAMPAIGN))
+            campaign = _campaign(state_dir)
+            manifest.ensure(_payload(state_dir, campaign))
             # No raise: the policy changed, the deployment did not.
-            manifest.ensure(_payload(state_dir, {"goal": "egfr-binders", "rules": ["evidence-integrity"]}))
+            manifest.ensure(_payload(state_dir, {**campaign, "rules": ["evidence-integrity"]}))
             manifest.ensure(_payload(state_dir, None))
 
 

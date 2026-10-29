@@ -150,18 +150,75 @@ class CampaignContextTests(unittest.TestCase):
         self.assertEqual(len(context.rules), 1)
         self.assertEqual(context.rules[0].scopes, frozenset(orchestration.RULE_TIERS))
 
-    def test_the_checked_in_campaign_file_is_well_formed(self) -> None:
-        """Guards the real `.loam/campaigns/` fixture, not just a synthetic one."""
+    def test_the_repo_ships_no_campaign_content(self) -> None:
+        """The framework must not carry one field's goal or protocol.
 
-        orchestration = _load("loam_campaign_real_file")
-        context = orchestration.campaign_context(
-            {"repo_root": str(ROOT), "loam_campaign": {"goal": "egfr-binders"}}
-        )
+        A checked-in goal made this repo quietly about protein binders, and the
+        test suite asserted against it, so the coupling was load-bearing in both
+        directions. Campaign files now come from `campaign.dir`.
+        """
+
+        orchestration = _load("loam_campaign_no_content")
+        self.assertFalse((ROOT / ".loam" / "campaigns").exists())
+        shipped = {
+            path.stem
+            for path in (ROOT / ".loam" / "rules").glob("*.md")
+            if path.name != "README.md"
+        }
+        self.assertEqual(shipped, {"evidence-integrity", "experiment-discipline", "design-provenance"})
+        # And what ships loads with no campaign configured at all.
+        context = orchestration.campaign_context({"repo_root": str(ROOT)})
+        assert context is not None
+        self.assertEqual([rule.name for rule in context.rules], ["evidence-integrity", "experiment-discipline"])
+
+    def test_a_user_directory_supplies_the_goal_and_protocol(self) -> None:
+        orchestration = _load("loam_campaign_user_dir")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            campaign = _campaign(root)
+            context = orchestration.campaign_context({"repo_root": str(ROOT), "loam_campaign": campaign})
 
         assert context is not None
-        self.assertIn("EGFR", context.goal)
-        # The invariant rules come along; the assay rule does not, being named.
-        self.assertEqual([rule.name for rule in context.rules], ["evidence-integrity", "experiment-discipline"])
+        self.assertIn("FIXTURE SUBJECT", context.goal)
+        # The user's protocol rule, after the invariant rules the repo ships.
+        self.assertEqual(
+            [rule.name for rule in context.rules],
+            ["evidence-integrity", "experiment-discipline", "fixture-protocol"],
+        )
+
+    def test_a_user_rule_shadows_a_shipped_one_of_the_same_name(self) -> None:
+        orchestration = _load("loam_campaign_shadow")
+        with tempfile.TemporaryDirectory() as temporary:
+            policy = Path(temporary) / "policy"
+            (policy / "rules").mkdir(parents=True)
+            (policy / "rules" / "design-provenance.md").write_text(
+                "---\nname: design-provenance\nscope: all\n---\n\nMy own provenance policy.\n",
+                encoding="utf-8",
+            )
+            context = orchestration.campaign_context(
+                {
+                    "repo_root": str(ROOT),
+                    "loam_campaign": {"dir": str(policy), "rules": ["design-provenance"]},
+                }
+            )
+
+        assert context is not None
+        body = next(rule.body for rule in context.rules if rule.name == "design-provenance")
+        self.assertEqual(body, "My own provenance policy.")
+
+    def test_a_missing_file_names_every_directory_searched(self) -> None:
+        orchestration = _load("loam_campaign_missing_both")
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaises(FileNotFoundError) as raised:
+                orchestration.campaign_context(
+                    {
+                        "repo_root": str(ROOT),
+                        "loam_campaign": {"dir": temporary, "rules": ["no-such-rule"]},
+                    }
+                )
+
+        self.assertIn(temporary, str(raised.exception))
+        self.assertIn(str(ROOT / ".loam" / "rules"), str(raised.exception))
 
     def test_scope_selects_the_tiers_a_rule_reaches(self) -> None:
         orchestration = _load("loam_campaign_scope")
@@ -316,7 +373,30 @@ def _orchestration_payload(root: Path, campaign: dict | None = None) -> dict:
     return payload
 
 
-CAMPAIGN = {"goal": "egfr-binders", "rules": ["evidence-integrity", "experiment-discipline", "binder-cofold"]}
+FIXTURE_GOAL = (
+    "---\nname: fixture-goal\n---\n\nEstablish whether the FIXTURE SUBJECT behaves as predicted.\n"
+)
+FIXTURE_PROTOCOL = (
+    "---\nname: fixture-protocol\nscope: code-generator\n---\n\n"
+    "- The decisive check is the FIXTURE MEASUREMENT.\n"
+)
+
+
+def _campaign(root: Path) -> dict:
+    """A campaign in a directory the user owns, which is where they now live.
+
+    Loam ships no goal and no protocol rule, so these tests supply their own
+    rather than asserting against checked-in campaign content -- which is the
+    point of `campaign.dir`, and also what kept this suite coupled to one
+    protein target.
+    """
+
+    policy = root / "campaign-policy"
+    (policy / "campaigns").mkdir(parents=True, exist_ok=True)
+    (policy / "rules").mkdir(parents=True, exist_ok=True)
+    (policy / "campaigns" / "fixture-goal.md").write_text(FIXTURE_GOAL, encoding="utf-8")
+    (policy / "rules" / "fixture-protocol.md").write_text(FIXTURE_PROTOCOL, encoding="utf-8")
+    return {"dir": str(policy), "goal": "fixture-goal", "rules": ["fixture-protocol"]}
 
 
 def _validator_context(directive: str) -> str:
@@ -338,10 +418,10 @@ class CampaignInjectionTests(unittest.TestCase):
 
         orchestration = _load("loam_campaign_validator_inject")
         with tempfile.TemporaryDirectory() as temporary:
-            directive = orchestration.context_for(_orchestration_payload(Path(temporary), CAMPAIGN))
+            directive = orchestration.context_for(_orchestration_payload(Path(temporary), _campaign(Path(temporary))))
 
         context = _validator_context(directive)
-        self.assertIn("EGFR", context)
+        self.assertIn("FIXTURE SUBJECT", context)
         self.assertLess(context.index('"campaign"'), context.index('"validator_instructions"'))
         self.assertLess(context.index('"campaign"'), context.index('"agent_definition"'))
         # The whole point of the ordering: policy lands where the model reads it.
@@ -350,11 +430,11 @@ class CampaignInjectionTests(unittest.TestCase):
     def test_validator_payload_omits_a_child_scoped_rule(self) -> None:
         orchestration = _load("loam_campaign_validator_scope")
         with tempfile.TemporaryDirectory() as temporary:
-            directive = orchestration.context_for(_orchestration_payload(Path(temporary), CAMPAIGN))
+            directive = orchestration.context_for(_orchestration_payload(Path(temporary), _campaign(Path(temporary))))
 
         self.assertIn("authoritative source", directive)  # evidence-integrity, scope: all
         self.assertNotIn("smallest action", directive)  # experiment-discipline, code-generator
-        self.assertNotIn("complex co-fold", directive)  # binder-cofold, code-generator
+        self.assertNotIn("FIXTURE MEASUREMENT", directive)  # fixture-protocol, code-generator
 
     def test_no_campaign_block_still_carries_the_invariant_rules(self) -> None:
         """Asserted inside the task context, which is an escaped JSON string.
@@ -380,7 +460,7 @@ class CampaignInjectionTests(unittest.TestCase):
         orchestration = _load("loam_campaign_child_inject")
         with tempfile.TemporaryDirectory() as temporary:
             payload = {
-                **_orchestration_payload(Path(temporary), CAMPAIGN),
+                **_orchestration_payload(Path(temporary), _campaign(Path(temporary))),
                 "arguments": {"tasks": [{"goal": "Co-fold the candidate.", "context": "Inputs follow."}]},
             }
             tasks = orchestration._generated_child_tasks(payload, "plan-1", "h-1")
@@ -389,7 +469,7 @@ class CampaignInjectionTests(unittest.TestCase):
         context = tasks["tasks"][0]["context"]
         self.assertIn("CAMPAIGN GOAL", context)
         self.assertIn("smallest action", context)  # discipline layer
-        self.assertIn("complex co-fold", context)  # assay layer
+        self.assertIn("FIXTURE MEASUREMENT", context)  # the user's protocol rule
         self.assertLess(context.index("CAMPAIGN RULES"), context.index("Instruction from validator"))
 
     def test_reasoner_directive_carries_the_campaign(self) -> None:
@@ -397,7 +477,9 @@ class CampaignInjectionTests(unittest.TestCase):
 
         orchestration = _load("loam_campaign_reasoner_inject")
         registry = orchestration.agent_registry({"repo_root": str(ROOT)})
-        context = orchestration.campaign_context({"repo_root": str(ROOT), "loam_campaign": CAMPAIGN})
+        with tempfile.TemporaryDirectory() as temporary:
+            campaign = _campaign(Path(temporary))
+            context = orchestration.campaign_context({"repo_root": str(ROOT), "loam_campaign": campaign})
         directive = orchestration._reasoner_directive(
             "plan-1",
             [{"hypothesis_id": "h-1", "status": "supported", "evidence_score": 0.5, "summary": "Report."}],
@@ -406,7 +488,7 @@ class CampaignInjectionTests(unittest.TestCase):
             {"h-1": 1210.0},
         )
 
-        self.assertIn("EGFR", directive)
+        self.assertIn("FIXTURE SUBJECT", directive)
         # Asserted inside the JSON block, because the surrounding prose names
         # "agent_definition" before it appears as a key.
         block = next(line for line in directive.splitlines() if '"agent_definition"' in line and line.startswith("{"))
@@ -480,17 +562,18 @@ class RuleLayeringTests(unittest.TestCase):
         for term in self.DOMAIN_TERMS:
             self.assertNotIn(term, block, f"_hypothesis_block names {term!r}; it must serve any domain")
 
-    def test_the_named_rules_are_where_the_specifics_live(self) -> None:
-        """The negative tests above are only meaningful if something carries it."""
+    def test_the_shape_rule_is_named_rather_than_always_on(self) -> None:
+        """The negative tests above are only meaningful if something is excluded.
 
-        protocol = (ROOT / ".loam" / "rules" / "binder-cofold.md").read_text(encoding="utf-8")
-        self.assertIn("co-fold", protocol)
-        self.assertIn("ipSAE", protocol)
-        # Paste-what-was-designed is campaign shape, not an invariant: a campaign
-        # testing an existing claim designs nothing.
+        Paste-what-was-designed is campaign shape, not an invariant: a campaign
+        testing an existing claim designs nothing, so it must not arrive unasked.
+        """
+
         shape = (ROOT / ".loam" / "rules" / "design-provenance.md").read_text(encoding="utf-8")
         self.assertIn("Paste what was designed", shape)
-        self.assertNotIn("applies:", shape)  # named, not always-on
+        self.assertNotIn("applies:", shape)
+        orchestration = _load("loam_rule_layering_shape")
+        self.assertNotIn("design-provenance", orchestration._base_rule_names({"repo_root": str(ROOT)}))
 
 
 if __name__ == "__main__":

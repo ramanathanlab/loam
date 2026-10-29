@@ -220,8 +220,8 @@ def campaign_provenance(payload: Mapping[str, Any]) -> dict[str, Any]:
     provenance: dict[str, Any] = {"goal": goal_name, "rules": names}
     combined = hashlib.sha256()
     try:
-        files = [(goal_name, _campaign_dir(payload) / f"{goal_name}.md")] if goal_name else []
-        files += [(name, _rules_dir(payload) / f"{name}.md") for name in names]
+        files = [(goal_name, _find_policy_file(_campaign_dirs(payload), goal_name, "goal"))] if goal_name else []
+        files += [(name, _find_policy_file(_rules_dirs(payload), name, "rules")) for name in names]
         digests: dict[str, str] = {}
         for name, path in files:
             data = path.read_bytes()
@@ -286,12 +286,43 @@ def _campaign_field(campaign: CampaignContext | None, tier: str) -> dict[str, An
     return {"campaign": field_value}
 
 
-def _campaign_dir(payload: Mapping[str, Any]) -> Path:
-    return Path(_text(payload.get("repo_root")) or ".") / ".loam" / "campaigns"
+def _policy_roots(payload: Mapping[str, Any]) -> list[Path]:
+    """Where campaign policy files are looked for, user directory first.
+
+    Loam ships no campaign content, so a goal and a rule naming a particular
+    measurement come from a directory the user owns (`campaign.dir`). The repo's
+    own `.loam/` is still searched, because it holds the rules invariant across
+    every campaign -- and because a campaign kept beside the code should keep
+    working without setting `dir`.
+
+    User first, so a campaign can shadow a shipped rule name with its own text
+    rather than being stuck with it.
+    """
+
+    campaign = payload.get("loam_campaign")
+    campaign = campaign if isinstance(campaign, Mapping) else {}
+    roots = []
+    if configured := _text(campaign.get("dir")):
+        roots.append(Path(configured).expanduser())
+    roots.append(Path(_text(payload.get("repo_root")) or ".") / ".loam")
+    return roots
 
 
-def _rules_dir(payload: Mapping[str, Any]) -> Path:
-    return Path(_text(payload.get("repo_root")) or ".") / ".loam" / "rules"
+def _campaign_dirs(payload: Mapping[str, Any]) -> list[Path]:
+    return [root / "campaigns" for root in _policy_roots(payload)]
+
+
+def _rules_dirs(payload: Mapping[str, Any]) -> list[Path]:
+    return [root / "rules" for root in _policy_roots(payload)]
+
+
+def _find_policy_file(directories: list[Path], name: str, kind: str) -> Path:
+    for directory in directories:
+        path = directory / f"{name}.md"
+        if path.is_file():
+            return path
+    searched = ", ".join(str(directory) for directory in directories)
+    raise FileNotFoundError(f"campaign {kind} file not found: {name}.md (searched {searched})")
 
 
 def _scopes(value: str, path: Path) -> frozenset[str]:
@@ -354,23 +385,23 @@ def _base_rule_names(payload: Mapping[str, Any]) -> list[str]:
     that never names it. A file marked `always` is then loaded and validated in
     full like any other, so a malformed invariant rule still fails loudly.
 
-    Sorted by name, which is also general-to-specific for the current pair
-    (evidence-integrity before experiment-discipline). Base rules precede the
-    profile's own, so a campaign's assay rule is the most specific thing a child
-    reads.
+    Sorted by name within each directory, and the repo's own before the user's,
+    so a campaign that adds an always-on rule of its own reads it after the
+    framework's. Base rules precede the profile's named ones, so the campaign's
+    most specific text lands last.
     """
 
-    directory = _rules_dir(payload)
     names: list[str] = []
-    for path in sorted(directory.glob("*.md")):
-        if path.name == "README.md":
-            continue
-        try:
-            applies = _text(_front_matter(path).get("applies"))
-        except (OSError, ValueError):
-            continue
-        if applies == RULE_ALWAYS:
-            names.append(path.stem)
+    for directory in reversed(_rules_dirs(payload)):
+        for path in sorted(directory.glob("*.md")):
+            if path.name == "README.md" or path.stem in names:
+                continue
+            try:
+                applies = _text(_front_matter(path).get("applies"))
+            except (OSError, ValueError):
+                continue
+            if applies == RULE_ALWAYS:
+                names.append(path.stem)
     return names
 
 
@@ -398,9 +429,7 @@ def campaign_context(payload: Mapping[str, Any]) -> CampaignContext | None:
     goal_name = _text(campaign.get("goal"))
     goal = ""
     if goal_name:
-        goal_path = _campaign_dir(payload) / f"{goal_name}.md"
-        if not goal_path.is_file():
-            raise FileNotFoundError(f"campaign goal file not found: {goal_path}")
+        goal_path = _find_policy_file(_campaign_dirs(payload), goal_name, "goal")
         if _front_matter(goal_path).get("name") != goal_name:
             raise ValueError(f"campaign goal name mismatch: {goal_path}")
         goal = _prompt_body(goal_path, MAX_CAMPAIGN_CHARS)
@@ -412,10 +441,7 @@ def campaign_context(payload: Mapping[str, Any]) -> CampaignContext | None:
     # text twice.
     base = _base_rule_names(payload)
     for name in base + [name for name in named if name not in base]:
-        path = _rules_dir(payload) / f"{name}.md"
-        if not path.is_file():
-            raise FileNotFoundError(f"campaign rules file not found: {path}")
-        rules.append(_rule_spec(name, path))
+        rules.append(_rule_spec(name, _find_policy_file(_rules_dirs(payload), name, "rules")))
     if not goal_name and not rules:
         return None
     return CampaignContext(goal_name=goal_name, goal=goal, rules=tuple(rules))
