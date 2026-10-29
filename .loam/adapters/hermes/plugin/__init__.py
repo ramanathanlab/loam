@@ -145,12 +145,19 @@ def canonicalize_campaign_delegation(tool_name: str, args: dict[str, Any], **kwa
 
         # The model's own args are passed so a generated-mode validator's
         # instruction to its code-generator survives canonicalization.
-        canonical = canonical_delegation_args(_payload("tool_request", arguments=args, **values))
+        payload = _payload("tool_request", arguments=args, **values)
+        canonical = canonical_delegation_args(payload)
     except Exception as exc:
         logger.warning("Loam campaign delegation canonicalization failed: %s", exc)
         return None
     if canonical is None:
         return None
+    try:
+        from cairn_brief import decorate_delegation
+
+        canonical = decorate_delegation(canonical, payload)
+    except Exception as exc:
+        logger.warning("Loam Cairn brief skipped: %s", exc)
     return {
         "args": canonical,
         "source": "loam-campaign",
