@@ -96,7 +96,7 @@ wrap the string with `DockingPartners.docking_partners_from_string`. `AB_C` grou
 ## Helper scripts (tested) - `scripts/` next to this file
 `scripts/rosetta_tool.py` (single structure; prints JSON):
 ```bash
-S=/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/skills/analysis/pyrosetta/scripts
+S=<skill>/scripts                 # this skill's own scripts/, next to SKILL.md
 $PY $S/rosetta_tool.py score     in.pdb [--json out.json] [--sfxn ref2015]
 $PY $S/rosetta_tool.py perres    in.pdb --csv perres.csv           # per-residue weighted total + unweighted terms
 $PY $S/rosetta_tool.py relax     in.pdb --out relaxed.pdb [--rounds 1] [--max-iter N] [--constrain]
@@ -150,8 +150,8 @@ generalized PBS template of the repo job (`qsub -v TOP_DIR=...,WORKERS=96`); its
 PyRosetta is free for academic/non-profit use; **commercial use requires a license** (license@uw.edu; see
 `.venv/lib/python3.12/site-packages/pyrosetta-2026.34+release.de92a3c0de.dist-info/licenses/`). The banner printed at init states this.
 
-## Test artifacts
-`/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/test_runs/pyrosetta/` (score_6MRR.json,
-perres_6MRR.csv, 6MRR_relax1.pdb, pdl1_relax1.pdb, iface_*.json, repo_top4/, generic2/).
-Small test inputs: `/flare/FRAME-IDP/msinclair/software/ProteinMPNN/inputs/PDB_monomers/pdbs/6MRR.pdb`,
+## Test inputs
+A verified run produces `score_6MRR.json`, `perres_6MRR.csv`, `6MRR_relax1.pdb`,
+`pdl1_relax1.pdb` and `iface_*.json`; write them somewhere you own. These inputs
+are durable and reusable: `/flare/FRAME-IDP/msinclair/software/ProteinMPNN/inputs/PDB_monomers/pdbs/6MRR.pdb`,
 `.../PDB_complexes/pdbs/3HTN.pdb` (3 chains), `/flare/FRAME-IDP/msinclair/software/ProtonPottsMPNN/inference/examples/pdl1_seed_binder.pdb` (A/B).

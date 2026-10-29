@@ -89,8 +89,6 @@ cd <run dir>; $PY /path/to/skills/qm/uma/scripts/uma_xpu_test.py uma-s-1p2p1 bat
 
 ## Test results (tile 9/10, 2026-10-29)
 
-Outputs in `/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/test_runs/uma/`.
-
 | inference_settings | H2O E (eV) | H2O max abs F (eV/Å) | first-call | ethanol LBFGS (28 steps, fmax 0.011) | wall |
 |---|---|---|---|---|---|
 | `batch` | -2079.861972 | **0.4827** | 1.6 s | 1.97 s, Ef = -4218.478884 | 13 s |

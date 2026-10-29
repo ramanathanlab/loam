@@ -25,7 +25,7 @@ Alternative for imports only: put an empty `intel_extension_for_pytorch/__init__
 ## Environment
 ```bash
 CHAI_PY=/flare/FRAME-IDP/msinclair/software/chai-lab/.venv/bin/python   # system frameworks python + venv; no module load needed
-LAUNCH=/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/skills/structure-prediction/chai/scripts/chai_xpu.py
+LAUNCH=<skill>/scripts/chai_xpu.py    # travels with this skill
 export ZE_AFFINITY_MASK=3     # ONE tile; it appears as xpu:0 (the code always uses xpu:0)
 export CHAI_DOWNLOADS_DIR=/flare/FRAME-IDP/msinclair/software/chai-lab/downloads
 # for --use-msa-server only:
@@ -62,7 +62,6 @@ $CHAI_PY $LAUNCH fold ubq.fasta out --num-trunk-recycles 1 --num-diffn-timesteps
 $CHAI_PY $LAUNCH fold ubq_lig.fasta out_lig --use-msa-server --num-trunk-recycles 1 \
   --num-diffn-timesteps 50 --num-diffn-samples 2 --seed 42 --device xpu:0
 ```
-The test outputs and logs are in `/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/test_runs/chai/`.
 For production, use the defaults (`--num-trunk-recycles 3 --num-diffn-timesteps 200 --num-diffn-samples 5`) with the MSA server. Those settings were not timed here.
 
 ## Main options (`fold FASTA OUT_DIR`)

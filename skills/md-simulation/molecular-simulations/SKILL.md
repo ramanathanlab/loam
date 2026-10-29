@@ -31,7 +31,7 @@ export ZE_AFFINITY_MASK=0        # pin to ONE tile; ALWAYS set before python sta
 The script is `scripts/molsim_xpu_smoke.py` in this skill folder. It runs
 ExplicitSolvent build, then Simulator with tiny step counts on `platform='OpenCL'`.
 ```bash
-cd /lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/test_runs/molecular-simulations
+cd <a directory you own>     # everything below is written here; no shared dir to reuse
 export http_proxy=http://proxy.alcf.anl.gov:3128 https_proxy=http://proxy.alcf.anl.gov:3128
 curl -s -o 1L2Y_raw.pdb https://files.rcsb.org/download/1L2Y.pdb          # Trp-cage, 20 res
 awk '/^MODEL/{m++} m<=1 && /^ATOM/ && $NF!="H"' 1L2Y_raw.pdb > 1L2Y.pdb; echo END >> 1L2Y.pdb   # model 1, drop H

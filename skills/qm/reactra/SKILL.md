@@ -42,17 +42,26 @@ The uv venv is missing `mech-format`. Any MECH-dependent command (inspect-mech, 
 validate, plan, example) then refuses with "MECH inspection requires mech-format". Fix it without
 touching the checkout:
 
+Build the overlay in a directory **you** own and keep it for the campaign's lifetime.
+There is no shared copy to inherit: if `$REACTRA_MECH_OVERLAY` is unset or missing,
+build it here before any other command.
+
 ```bash
 export http_proxy=http://proxy.alcf.anl.gov:3128 https_proxy=http://proxy.alcf.anl.gov:3128
-O=/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/test_runs/reactra   # any dir you own
+O=<a directory you own>          # e.g. the campaign's work dir; must persist between calls
 uv pip install --python /flare/FRAME-IDP/msinclair/software/reactra/.venv/bin/python \
   --target $O/mech_overlay \
   "mech-format @ git+https://github.com/MechanismAtlas/mech-format.git@29c79dc7ee9e352dc55e0ac0004750a7f8dd65dc"
 # mech_format looks for its schema at <overlay>/../schema (parents[2] of its module), so:
 ln -sfn mech_overlay/share/mech-format/schema $O/schema
+export REACTRA_MECH_OVERLAY=$O/mech_overlay
 ```
-The overlay already exists at that path. The wrapper `scripts/reactra_cli.sh` sets
-`PYTHONPATH=<overlay>` and `PYTHONDONTWRITEBYTECODE=1` and runs the venv's `reactra`.
+
+The schema symlink is not optional — the layout, not just the package, is what
+makes MECH resolve. The wrapper `scripts/reactra_cli.sh` reads
+`$REACTRA_MECH_OVERLAY`, puts it on `PYTHONPATH` with `PYTHONDONTWRITEBYTECODE=1`,
+and runs the venv's `reactra`. It refuses rather than guessing if that variable is
+unset, so export it in the same `run_code` call that invokes the CLI.
 
 ## Choose and review the experiment
 
@@ -84,8 +93,9 @@ evidence reconstruction around it.
 ## Verified commands (2026-10-29, all < 25 s, no GPU needed)
 
 ```bash
-RX=/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/skills/qm/reactra/scripts/reactra_cli.sh
+RX=<skill>/scripts/reactra_cli.sh      # this skill's own wrapper
 S=/flare/FRAME-IDP/msinclair/software/reactra
+export REACTRA_MECH_OVERLAY=$O/mech_overlay   # from the one-time setup above
 $RX capabilities                                   # operations + operation kinds (JSON)
 $RX schema --section stages.sampling               # authoring JSON schema
 $RX inspect-mech $S/src/reactra/data/mechanisms/chorismate-mutase.mech   # resolved MECH JSON
@@ -102,8 +112,9 @@ $RX validate cm/run.yaml          # {"valid": true, "scientific_identity": "4f8d
 $RX plan cm/run.yaml --format text  # "Declared deployment admitted; no scientific work launched."
                                     # 13 fresh operations, ≤103002 dynamics steps
 ```
-Outputs of these runs: `/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/test_runs/reactra/`
-(`inspect_mech_cm.json`, `preview_authoring.txt`, `cm/`, `cm_validate.json`, `cm_plan.txt`).
+Each command above was checked to produce `inspect_mech_cm.json`,
+`preview_authoring.txt`, `cm/`, `cm_validate.json` and `cm_plan.txt`. Write yours
+into a directory you own; there is no shared output tree to read back.
 
 ## Running a workflow (NOT verified here; from docs)
 

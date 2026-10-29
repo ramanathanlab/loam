@@ -2,9 +2,13 @@
 # Minimal RFD4-Proteina generation on Aurora (one XPU tile).
 set -eo pipefail
 REPO=/flare/FRAME-IDP/msinclair/software/RFD4-Proteina
-# BASE must be a writable dir holding shim/sitecustomize.py (copy it from this
-# skill's scripts/ next to this file). Override on the command line if needed.
-BASE=${BASE:-/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/test_runs/rfd4-proteina}
+# BASE is a writable directory you own; it holds shim/, data_path/ and hf/. There
+# is no shared copy to inherit, so it must be set. The shim is installed from this
+# skill's own scripts/ below, so no manual copy step is needed.
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+BASE=${BASE:?set BASE to a writable directory you own (it will hold shim/, data_path/, hf/)}
+mkdir -p "$BASE/shim"
+[[ -f $BASE/shim/sitecustomize.py ]] || cp "$HERE/sitecustomize.py" "$BASE/shim/"
 export ZE_AFFINITY_MASK=${ZE_AFFINITY_MASK:-7}
 export http_proxy=http://proxy.alcf.anl.gov:3128 https_proxy=http://proxy.alcf.anl.gov:3128
 export CLUSTER=local

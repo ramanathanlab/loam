@@ -46,8 +46,7 @@ $PY $REPO/scripts/aurora/fold_sequence.py \
 ```
 
 Verified 2026-10-29 on tile 4 (GB1, L=56): model load 92.6 s, fold 253.5 s,
-**pLDDT 0.843, pTM 0.769**, peak 13.9 GB; total wall 6 m 27 s. Test dir:
-`/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/test_runs/esmfold2/`.
+**pLDDT 0.843, pTM 0.769**, peak 13.9 GB; total wall 6 m 27 s.
 
 ### fold_sequence.py options
 | flag | default | meaning |

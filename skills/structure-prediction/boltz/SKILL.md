@@ -73,7 +73,6 @@ $BOLTZ predict ubq_msa.fasta --use_msa_server --out_dir out --cache ~/.boltz --a
   --recycling_steps 1 --sampling_steps 50 --diffusion_samples 1 --output_format pdb --override --num_workers 0
 ```
 The test inputs are in `scripts/` next to this file, together with the wrapper `scripts/run_boltz_xpu.sh <input> <out_dir> [tile] [extra args]`.
-The test outputs are in `/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/test_runs/boltz/`.
 For production runs, use the defaults (`--recycling_steps 3 --sampling_steps 200`) and `--diffusion_samples 5`. Those settings were not timed here.
 
 ## Main options

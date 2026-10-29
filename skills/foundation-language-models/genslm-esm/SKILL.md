@@ -84,10 +84,10 @@ genslm-esm-sae-train    --config tiny_train.yaml          # add --resume-from-ch
 genslm-esm-sae-validate --config tiny_train.yaml --checkpoint-dir <ckpt>/layerNN   # or a single-layer ckpt dir
 ```
 The config is a YAML file with these keys: `model_id`, `layer` (int or list), `modality`, `max_length`, `train_data`/`validation_data` (globs), `codebook_dim`, `k`, `output_dir`, and `training_args` (a dict passed to `transformers.TrainingArguments`). See `configs/first_sweep.yaml` and `campaigns/600m-codon/configs*/`.
-The tested tiny config (8 seqs truncated to 64 codons, codebook 1024, k 16, 4 steps, bf16, `dataloader_num_workers: 0`) is at `/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/test_runs/genslm-esm/tiny_train.yaml`.
+For a smoke test, write your own tiny config: 8 seqs truncated to 64 codons, `codebook_dim` 1024, `k` 16, 4 steps, bf16, `dataloader_num_workers: 0`.
 - Training ran for 4 steps on xpu (loss about 1.09) in 40 s wall. It writes `output_dir/checkpoint-4/` and `train_config.yaml`.
 - Validation runs a single process (don't use torchrun/mpiexec) and writes `validation.json` into the checkpoint dir. It takes about 13 s.
-- Validating the real `best/layer32` SAE on 512 tokens gave recon loss 0.157 with 64 active features per token. The validate CLI writes into `--checkpoint-dir`, so **copy a production checkpoint to your own dir first** (the test copied `best/layer32` to `test_runs/genslm-esm/best_layer32_copy/`).
+- Validating the real `best/layer32` SAE on 512 tokens gave recon loss 0.157 with 64 active features per token. The validate CLI writes into `--checkpoint-dir`, so **copy a production checkpoint to your own dir first** (the verified run copied `best/layer32` to a scratch dir of its own first).
 
 Multi-tile/multi-node training (not re-tested here) uses `campaigns/600m-codon/train_layers.pbs` / `train_stack.pbs`: `mpiexec -n 12 --ppn 12 ... rank_env.sh python -m genslm_esm_sae.train`. `rank_env.sh` maps `PALS_RANKID` to `RANK`/`LOCAL_RANK`, and a launch needs `WORLD_SIZE` and `MASTER_ADDR`/`MASTER_PORT`. oneCCL requires an mpiexec launch, not torchrun.
 
@@ -110,9 +110,7 @@ Multi-tile/multi-node training (not re-tested here) uses `campaigns/600m-codon/t
 - Garbage SAE features come from a layer or modality mismatch. Check `sae.config.layer` and `sae.config.modality`.
 - NaN eval losses in long training runs are what the `genslm-esm-sae-nanfix` branch addresses.
 
-## Test artifacts
-
-`/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/test_runs/genslm-esm/` contains:
+## What a verified run produces
 - `run.sh` + `run.log` (recipe 1)
 - `out/results.json`, `*_meanpool.pt`, `sae_layer32_features.pt`
 - `run_cli.sh` + `run_cli.log` (recipe 2)

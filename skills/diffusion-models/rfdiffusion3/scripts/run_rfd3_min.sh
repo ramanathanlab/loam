@@ -6,7 +6,7 @@ module swap frameworks/2026.1.0 frameworks/2025.3.1 2>/dev/null || module load f
 export ZE_AFFINITY_MASK=${ZE_AFFINITY_MASK:-6}
 export FOUNDRY_CHECKPOINT_DIRS=/flare/FRAME-IDP/msinclair/software/checkpoints
 FOUNDRY=/flare/FRAME-IDP/msinclair/software/foundry
-OUT=${1:-/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/test_runs/rfdiffusion3/out_uncond50}
+OUT=${1:-$PWD/out_uncond50}      # a directory you own; defaults under the current one
 cd "$FOUNDRY"
 time "$FOUNDRY/.venv/bin/rfd3" design \
   inputs=null +specification.length=50 \

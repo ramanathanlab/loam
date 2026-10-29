@@ -62,7 +62,7 @@ $PROTENIX pred -i gb1.json -o out_mini -s 101 \
   --trimul_kernel torch --triatt_kernel torch
 ```
 Tested script + input: `scripts/run_protenix_example.sh`, `scripts/example_gb1.json`
-(run dir `/lus/flare/projects/FRAME-IDP/msinclair/testing_grounds/env_tests/test_runs/protenix/`).
+(the script copies the input beside itself into a work dir you name).
 
 Results 2026-10-29, GB1 (56 aa), 1 seed, 1 sample, 4 cycles, 20 steps, bf16:
 
