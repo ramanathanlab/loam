@@ -19,9 +19,10 @@ import cairn_common  # noqa: E402
 
 
 class _Response:
-    def __init__(self, status: int, body: bytes) -> None:
+    def __init__(self, status: int, body: bytes, headers=None) -> None:
         self.status = status
         self._body = body
+        self.headers = headers or {}
 
     def getcode(self) -> int:
         return self.status
@@ -37,8 +38,8 @@ class _Response:
 
 
 class _Fake:
-    def __init__(self, status=200, body=b"[]", raises=None) -> None:
-        self.status, self.body, self.raises = status, body, raises
+    def __init__(self, status=200, body=b"[]", raises=None, echo="__same__") -> None:
+        self.status, self.body, self.raises, self.echo = status, body, raises, echo
         self.request = None
         self.timeout = None
 
@@ -46,7 +47,8 @@ class _Fake:
         self.request, self.timeout = request, timeout
         if self.raises is not None:
             raise self.raises
-        return _Response(self.status, self.body)
+        echo = request.get_header("X-cairn-project") if self.echo == "__same__" else self.echo
+        return _Response(self.status, self.body, {} if echo is None else {"X-Cairn-Project": echo})
 
 
 @pytest.fixture
@@ -251,3 +253,54 @@ def test_request_construction_errors_are_unsent(fake_urlopen):
 
 def test_result_sent_defaults_to_true():
     assert cairn_client.CairnResult(False, 0, None, "x").sent is True
+
+
+# --- project silo (X-Cairn-Project) ---
+
+
+@pytest.mark.parametrize("call", ["score", "submit", "mint"])
+def test_every_request_carries_the_project_header(fake_urlopen, call):
+    {
+        "score": lambda: cairn_client.score_batch("https://c.example", [], 5, project="exp-silo-1"),
+        "submit": lambda: cairn_client.submit_batch("https://c.example", "k", [], 5, project="exp-silo-1"),
+        "mint": lambda: cairn_client.mint_key("https://c.example", "agent://x/y", 5, project="exp-silo-1"),
+    }[call]()
+    assert fake_urlopen.request.get_header("X-cairn-project") == "exp-silo-1"
+
+
+def test_project_defaults_to_the_environment(fake_urlopen, monkeypatch):
+    monkeypatch.setenv("CAIRN_PROJECT", "from-env-7")
+    r = cairn_client.score_batch("https://c.example", [], 5)
+    assert fake_urlopen.request.get_header("X-cairn-project") == "from-env-7"
+    assert r.ok and r.echo == "ok"
+
+
+@pytest.mark.parametrize("value", ["", "Bad", "ab", "-lead", "has_underscore", "a" * 64])
+def test_missing_or_invalid_project_is_never_sent(fake_urlopen, monkeypatch, capsys, value):
+    monkeypatch.setenv("CAIRN_PROJECT", value)
+    r = cairn_client.submit_batch("https://c.example", "k", [{"score": 1}], 5)
+    assert not r.ok and r.status == 0 and r.sent is False and "CAIRN_PROJECT" in r.error
+    assert fake_urlopen.request is None
+    assert "CAIRN_PROJECT" in capsys.readouterr().err
+
+
+def test_explicit_empty_project_does_not_fall_back_to_env(fake_urlopen, monkeypatch):
+    monkeypatch.setenv("CAIRN_PROJECT", "from-env-7")
+    r = cairn_client.score_batch("https://c.example", [], 5, project="")
+    assert not r.ok and fake_urlopen.request is None
+
+
+@pytest.mark.parametrize("echo,state", [(None, "missing"), ("other-proj", "mismatch")])
+def test_missing_or_wrong_echo_warns(monkeypatch, capsys, echo, state):
+    fake = _Fake(echo=echo)
+    monkeypatch.setattr(cairn_client, "_urlopen", fake)
+    r = cairn_client.score_batch("https://c.example", [], 5, project="exp-silo-1")
+    assert r.echo == state
+    assert "WARNING" in capsys.readouterr().err
+
+
+def test_http_error_echo_is_checked(monkeypatch):
+    err = urllib.error.HTTPError("https://c.example", 422, "bad", {"X-Cairn-Project": "exp-silo-1"}, io.BytesIO(b""))
+    monkeypatch.setattr(cairn_client, "_urlopen", _Fake(raises=err))
+    r = cairn_client.submit_batch("https://c.example", "k", [], 5, project="exp-silo-1")
+    assert r.status == 422 and r.echo == "ok"

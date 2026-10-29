@@ -23,6 +23,10 @@ PLACEMENT = {
 # Spec 7: the reputation brief goes only where tools are chosen and judged. The reasoner's synthesis
 # becomes Jnana steering, so it never sees reputation (at most the rating instructions).
 BRIEF_ROLES = frozenset({"code-generator", "hypothesis-validator"})
+SILO_NOTE = (
+    "These Cairn scores come from this experiment's private silo, not global Cairn: early in the run "
+    "most tools will have few or no ratings. Rate honestly after each tool use."
+)
 
 
 def _warn(message: str) -> None:
@@ -43,9 +47,12 @@ def _timeout(cfg: Mapping[str, Any]) -> float:
 
 def _fetch(cfg: Mapping[str, Any], ids: list[str]) -> tuple[dict[str, dict[str, float]] | None, str]:
     refs = [{"type": "capability", "external_id": ext} for ext in ids]
-    result = cairn_client.score_batch(str(cfg.get("base_url", "")), refs, _timeout(cfg))
+    project = str(cfg.get("project") or "")
+    result = cairn_client.score_batch(str(cfg.get("base_url", "")), refs, _timeout(cfg), project=project)
     if not result.ok:
         return None, str(result.error or f"status {result.status}")
+    if result.echo != "ok":  # without the echo these may be production scores, not the experiment's silo
+        return None, f"X-Cairn-Project echo {result.echo or 'missing'}"
     data = result.data
     if not isinstance(data, list) or len(data) != len(ids):
         return None, "unexpected score batch response"
@@ -136,7 +143,7 @@ def appendix(payload: Mapping[str, Any], plan_id: str, role: str) -> str:
     if cfg.get("read_side") is True and role in BRIEF_ROLES:
         scores = reputation(payload, plan_id)
         if scores:
-            lines = ["Tool reputation from Cairn (read before choosing a tool):"]
+            lines = [SILO_NOTE, "", "Tool reputation from Cairn (read before choosing a tool):"]
             for ext in ids:
                 entry = scores.get(ext)
                 if not entry or not entry.get("confidence"):

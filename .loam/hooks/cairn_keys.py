@@ -70,10 +70,13 @@ def _non_empty(path: Path) -> bool:
         return False
 
 
-def ensure_key(key_file: Path, base_url: str, identity: str, timeout: float) -> KeyStatus:
+def ensure_key(key_file: Path, base_url: str, identity: str, timeout: float, project: str | None = None) -> KeyStatus:
     path = Path(key_file).expanduser()
     if _non_empty(path):
         return KeyStatus("present", identity, "")
+    refused = cairn_client.project_error(cairn_client.env_project() if project is None else project)
+    if refused:  # before reserving: a refused request must not look like an ambiguous claim
+        return KeyStatus("failed", identity, refused)
     try:
         error = _prepare_dir(path.parent)
     except OSError as exc:
@@ -106,7 +109,7 @@ def ensure_key(key_file: Path, base_url: str, identity: str, timeout: float) -> 
 
     progress = {'written': False}
     try:
-        return _claim_and_write(path, fd, discard, progress, base_url, identity, timeout)
+        return _claim_and_write(path, fd, discard, progress, base_url, identity, timeout, project)
     except BaseException:
         # Ctrl-C / SIGTERM / SystemExit must not leave an empty reservation behind,
         # but a completely written key is never discarded.
@@ -140,8 +143,11 @@ def _set_aside_abandoned(path: Path) -> bool:
     return True
 
 
-def _claim_and_write(path: Path, fd: int, discard, progress: dict, base_url: str, identity: str, timeout: float) -> KeyStatus:
-    result = cairn_client.mint_key(base_url, identity, timeout)
+def _claim_and_write(
+    path: Path, fd: int, discard, progress: dict, base_url: str, identity: str, timeout: float, project: str | None
+) -> KeyStatus:
+    # Keys are not bound to projects, but every Cairn request still carries the header.
+    result = cairn_client.mint_key(base_url, identity, timeout, project=project)
     api_key = result.data.get("api_key") if result.ok and isinstance(result.data, dict) else None
     if not isinstance(api_key, str) or not api_key:
         discard()

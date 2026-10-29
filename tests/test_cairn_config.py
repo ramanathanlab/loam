@@ -165,3 +165,29 @@ def test_invalid_or_unreadable_default_file_is_none(monkeypatch, tmp_path):
     assert cairn_config(None) is None
     bad.write_text('{"enabled": true, "entities": {}}')
     assert cairn_config(None) is None
+
+
+BLOCK = {"enabled": True, "entities": {"tool://lammps": {}}}
+
+
+def test_project_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("CAIRN_PROJECT", "loam-exp-12")
+    cfg = cairn_config(BLOCK)
+    assert cfg["project"] == "loam-exp-12" and cfg["project_error"] == ""
+
+
+def test_profile_cannot_choose_the_project(monkeypatch):
+    monkeypatch.setenv("CAIRN_PROJECT", "loam-exp-12")
+    assert cairn_config({**BLOCK, "project": "somewhere-else"})["project"] == "loam-exp-12"
+
+
+@pytest.mark.parametrize("value", ["", "Not_Valid"])
+def test_unset_or_invalid_project_keeps_cairn_on_but_unusable(monkeypatch, capsys, value):
+    import cairn_config as module
+
+    monkeypatch.setattr(module, "_warned", set())
+    monkeypatch.setenv("CAIRN_PROJECT", value)
+    cfg = cairn_config(BLOCK)
+    assert cfg is not None and cfg["project"] == "" and "CAIRN_PROJECT" in cfg["project_error"]
+    cairn_config(BLOCK)
+    assert capsys.readouterr().err.count("WARNING") == 1  # loud once, not on every profile load

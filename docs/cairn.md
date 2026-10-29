@@ -9,6 +9,37 @@ report section, queues one rating event per backed tool, and submits the queue t
 from a detached process. Every Cairn failure is recorded and swallowed; it never changes delegation
 or fails a campaign.
 
+## Project silo: set `CAIRN_PROJECT` before launching Hermes
+
+Every Cairn request (the brief, the flusher, the key mint) carries `X-Cairn-Project: $CAIRN_PROJECT`, so
+the run reads and writes its own private silo instead of production scores. Set it once, in the shell
+that launches Hermes:
+
+```bash
+export CAIRN_PROJECT=<experiment-name>    # ^[a-z0-9][a-z0-9-]{2,62}$; use an unguessable name for sensitive runs
+```
+
+It comes only from the launch environment: profiles cannot set it and agents never see or type it.
+The value is bound when the profile loads and written into every queued rating; a flush sends only
+rows queued under its own project (others are counted as `other_project`).
+
+If `CAIRN_PROJECT` is unset or invalid, Cairn sends **nothing** (a request without the header would
+write to production): Hermes logs `Loam Cairn: CAIRN_PROJECT is not set ...` once, there is no
+reputation brief, ratings are still recorded locally and stay `pending`, and `cairn-status.json`
+shows the error. Every response must echo the header; a missing or different echo logs a warning,
+discards a fetched brief, and sets `project_echo` in `cairn-status.json`. Keys are not bound to
+projects, so the same key works in every silo.
+
+Check a host and the project before a run (one unauthenticated read; mints nothing):
+
+```bash
+CAIRN_PROJECT=<experiment-name> python scripts/cairn_mint_key.py probe
+# project ok: <experiment-name> (echoed); mcp://hpc#run_code composite=0.5 confidence=0.0
+```
+
+Agents are told the scores come from the experiment's silo, so mostly empty scores early in a run
+are expected.
+
 ## Enable (on by default)
 
 Cairn is on by default. The repo ships `.loam/cairn.json` (same shape as the profile block below,
@@ -34,15 +65,8 @@ by Loam's hooks. That host needs outbound HTTPS to `api.cairnscore.ai`:
   Python's `urllib` honours these variables.
 
 Without outbound HTTPS, ratings stay queued (`unsent`, retried on the next flush) and the read side costs
-one timeout of up to 5 s per plan when it fetches the brief. To check a host before a run (an
-unauthenticated read; it mints nothing):
-
-```bash
-python3 -c "import sys; sys.path.insert(0, '.loam/hooks'); import cairn_client as c; \
-print(c.score_batch('https://api.cairnscore.ai', [{'type': 'capability', 'external_id': 'tool://chai-1'}], 10))"
-```
-
-`ok=True` means the host can reach Cairn.
+one timeout of up to 5 s per plan when it fetches the brief. `cairn_mint_key.py probe` (above) checks
+both reachability and the project echo.
 
 To change settings or tools, add a `cairn` block to the Loam profile in `loam.yaml`; it replaces the
 default block entirely. It carries paths and switches only, never secrets.
@@ -85,7 +109,8 @@ process is already minting, or the mint fails, rows stay pending and the next fl
 
 Check `cairn-status.json` in the state dir (`$LOAM_STATE_DIR`): it is rewritten by every flush with
 `updated_at`, `key_file`, `key` (`present`, `minted`, `missing`, `mint_failed`, `mint_busy`),
-`identity`, `base_url`, `counts` and `error`, plus `mint_failed_at` (UTC time of the last failed mint,
+`identity`, `base_url`, `project`, `project_echo` (`ok`, `missing`, `mismatch`, or empty when nothing
+was sent), `counts` and `error`, plus `mint_failed_at` (UTC time of the last failed mint,
 carried through later flushes until a mint succeeds or a key is found). It never contains the key. The flusher is detached and silent, so this file is where mint problems
 appear (loose `~/.cairn/keys` permissions, a read-only `$HOME`, a failed or refused mint). After a
 mint that may have claimed an identity without a reply (`mint_failed`), minting is skipped for 10
@@ -105,7 +130,11 @@ also in `cairn-status.json`).
 ```bash
 python scripts/cairn_mint_key.py mint     # --identity (default agent://anl-loam/loam-<random hex>), --key-file, --base-url, --timeout
 python scripts/cairn_mint_key.py check    # --key-file
+python scripts/cairn_mint_key.py probe    # --project (default $CAIRN_PROJECT), --entity, --base-url
 ```
+
+`mint` also needs a valid `CAIRN_PROJECT` (or `--project`): every request carries the header, although
+the key itself works in any project.
 
 An identity can be claimed once, ever. `mint` first refuses if a key file exists, prepares the key
 directory (created `0700`; an existing directory is never chmod-ed, and one with group/other
@@ -141,7 +170,8 @@ reported (exit 1); run `check` and back the key up.
 Once the campaign has finished, do both steps:
 
 1. Send anything still pending (the last child's detached flusher may not have run, or may have
-   found the network down):
+   found the network down). Use the same `CAIRN_PROJECT` as the run (or pass `--project`); rows
+   queued under another project are never sent:
 
    ```bash
    python .loam/hooks/cairn_flush.py --state-dir "$LOAM_STATE_DIR" \

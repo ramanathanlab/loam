@@ -269,6 +269,8 @@ def record_ratings(payload: Mapping[str, Any]) -> None:
             "run_id": _text(payload.get("loam_run_id")),
             "workflow_id": _text(payload.get("workflow_id")),
             "child_session_id": session,
+            # The silo bound at launch; the flusher only sends rows whose project matches its own.
+            "project": _text(cfg.get("project")),
             "event": event,
             **({"entity": entity[:200]} if entity else {}),
         })

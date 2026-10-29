@@ -602,3 +602,10 @@ def test_other_rows_have_no_entity_field(tmp_path):
     hpc_call(tmp_path, "s1", "lmp")
     record_ratings(stop(tmp_path, "s1", "completed", "### Tool Ratings\n- tool://lammps | score: 9 | origin: none\n"))
     assert all("entity" not in r for r in rows(tmp_path))
+
+
+def test_rows_carry_the_project_bound_at_launch(tmp_path):
+    started(tmp_path, "s1", "code-generator", "p", "h")
+    hpc_call(tmp_path, "s1", "module load lammps; lmp -in in.lj")
+    record_ratings(stop(tmp_path, "s1", "completed", REPORT, cfg={**CFG, "project": "exp-silo-1"}))
+    assert rows(tmp_path) and all(r["project"] == "exp-silo-1" for r in rows(tmp_path))

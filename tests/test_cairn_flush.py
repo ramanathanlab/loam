@@ -40,7 +40,7 @@ def queue(state, n, status="queued", event=None):
             state / cairn_common.QUEUE,
             {"event_id": f"{status}-{i}-{len(cairn_common.read_jsonl(state / cairn_common.QUEUE))}",
              "queued_at": "t", "status": status, "reason": "", "role": "code-generator",
-             "source": "agent", "event": event},
+             "source": "agent", "project": "loam-test-project", "event": event},
         )
 
 
@@ -48,8 +48,9 @@ class Fake:
     def __init__(self, results):
         self.results, self.calls = list(results), []
 
-    def __call__(self, base_url, api_key, events, timeout):
+    def __call__(self, base_url, api_key, events, timeout, project=None):
         self.calls.append(events)
+        self.project = project
         assert api_key == "secret"
         return self.results.pop(0) if len(self.results) > 1 else self.results[0]
 
@@ -330,7 +331,7 @@ def test_counts_without_recorded_rows_keep_their_shape(tmp_path, key, fake_submi
 def fake_mint(monkeypatch, result=None):
     calls = []
 
-    def fake(base_url, identity, timeout):
+    def fake(base_url, identity, timeout, project=None):
         calls.append(identity)
         return result or CairnResult(True, 201, {"api_key": "secret"}, "")
 
@@ -407,7 +408,7 @@ def test_status_file_contents_and_no_key(tmp_path, monkeypatch):
     flush(tmp_path, "https://api.example", tmp_path / "k.key", 5, auto_mint=True)
     raw = (tmp_path / "cairn-status.json").read_text()
     st = json.loads(raw)
-    assert set(st) == {"updated_at", "key_file", "key", "identity", "base_url", "counts", "error"}
+    assert set(st) == {"updated_at", "key_file", "key", "identity", "base_url", "project", "project_echo", "counts", "error"}
     assert st["base_url"] == "https://api.example" and st["counts"] == {"submitted": 1} and st["error"] == ""
     assert st["key_file"] == str(tmp_path / "k.key")
     assert "secret" not in raw and not list(tmp_path.glob("*.tmp"))
@@ -534,3 +535,62 @@ def test_locked_out_flusher_does_not_overwrite_status(tmp_path, monkeypatch):
     with cairn_common.locked(tmp_path / cairn_common.FLUSH_LOCK, blocking=False):
         assert flush(tmp_path, "https://c", tmp_path / "k.key", 5)["locked"] == 1
     assert json.loads((tmp_path / "cairn-status.json").read_text()) == {"sentinel": 1}
+
+
+# --- project silo ---
+
+
+def test_flush_sends_with_the_project_and_records_the_echo(tmp_path, key, monkeypatch):
+    fake = install(monkeypatch, CairnResult(True, 200, {}, "", echo="ok"))
+    queue(tmp_path, 2)
+    assert flush(tmp_path, "https://c", key, 5)["submitted"] == 2
+    assert fake.project == "loam-test-project"
+    st = json.loads((tmp_path / "cairn-status.json").read_text())
+    assert st["project"] == "loam-test-project" and st["project_echo"] == "ok"
+
+
+def test_missing_echo_is_reported_in_status(tmp_path, key, monkeypatch):
+    install(monkeypatch, CairnResult(True, 200, {}, "", echo="missing"))
+    queue(tmp_path, 1)
+    flush(tmp_path, "https://c", key, 5)
+    assert json.loads((tmp_path / "cairn-status.json").read_text())["project_echo"] == "missing"
+
+
+@pytest.mark.parametrize("value", ["", "BAD"])
+def test_no_valid_project_sends_nothing_and_never_mints(tmp_path, monkeypatch, value):
+    fake = install(monkeypatch, OK)
+    monkeypatch.setattr(cairn_flush.cairn_keys, "ensure_key", lambda *a, **k: pytest.fail("minted"))
+    monkeypatch.setenv("CAIRN_PROJECT", value)
+    queue(tmp_path, 2)
+    counts = flush(tmp_path, "https://c", tmp_path / "none.key", 5, auto_mint=True)
+    assert counts == {"pending": 2} and fake.calls == []
+    st = json.loads((tmp_path / "cairn-status.json").read_text())
+    assert "CAIRN_PROJECT" in st["error"] and st["key"] == "missing"
+
+
+def test_rows_from_another_project_are_never_sent(tmp_path, key, monkeypatch):
+    fake = install(monkeypatch, OK)
+    queue(tmp_path, 2)
+    cairn_common.append_jsonl(tmp_path / cairn_common.QUEUE, {
+        "event_id": "unscoped", "status": "queued", "event": valid_event()})
+    counts = flush(tmp_path, "https://c", key, 5, project="other-silo")
+    assert fake.calls == [] and counts["other_project"] == 3
+    counts = flush(tmp_path, "https://c", key, 5)
+    assert counts["submitted"] == 2 and counts["other_project"] == 1
+
+
+def test_spawn_flush_passes_the_bound_project(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cairn_flush.subprocess, "Popen", lambda argv, **kw: seen.setdefault("argv", argv))
+    spawn_flush({"loam_state_dir": str(tmp_path), "loam_cairn": {
+        "enabled": True, "auto_flush": True, "base_url": "https://c", "key_file": "k", "project": "exp-silo-1"}})
+    argv = seen["argv"]
+    assert argv[argv.index("--project") + 1] == "exp-silo-1"
+
+
+def test_echo_survives_a_flush_that_sends_nothing(tmp_path, key, monkeypatch):
+    install(monkeypatch, CairnResult(True, 200, {}, "", echo="missing"))
+    queue(tmp_path, 1)
+    flush(tmp_path, "https://c", key, 5)
+    flush(tmp_path, "https://c", key, 5)  # nothing pending
+    assert json.loads((tmp_path / "cairn-status.json").read_text())["project_echo"] == "missing"

@@ -82,7 +82,8 @@ profiles:
     # Optional Cairn tool-reputation integration (see docs/cairn.md). Cairn is
     # already on by default from .loam/cairn.json; a block here is optional and
     # replaces that default (use `enabled: false` to opt out). Carries paths and switches only, never secrets. read_side
-    # changes agent behaviour; the write-side switches only observe.
+    # changes agent behaviour; the write-side switches only observe. The project silo is
+    # never set here: export CAIRN_PROJECT before launching Hermes, or Cairn sends nothing.
     # cairn:
     #   enabled: true
     #   base_url: https://api.cairnscore.ai

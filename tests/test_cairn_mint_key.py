@@ -35,7 +35,7 @@ def _patch(monkeypatch, result):
 
     state = SimpleNamespace(identity=None, calls=0)
 
-    def fake(base_url, identity, timeout):
+    def fake(base_url, identity, timeout, project=None):
         state.calls += 1
         state.identity = identity
         return result
@@ -180,3 +180,37 @@ def test_no_response_warns_identity_may_be_claimed(script, tmp_path, monkeypatch
 def test_http_refusal_does_not_claim_maybe(script, tmp_path, fake_mint_409, capsys):
     assert script.main(["mint", "--key-file", str(tmp_path / "agent.key")]) == 1
     assert "may already have been claimed" not in capsys.readouterr().err.lower()
+
+
+def _patch_score(monkeypatch, result):
+    import cairn_client
+
+    seen = {}
+
+    def fake(base_url, refs, timeout, project=None):
+        seen["project"] = project
+        return result
+
+    monkeypatch.setattr(cairn_client, "score_batch", fake)
+    return seen
+
+
+def test_probe_ok_when_project_echoed(script, monkeypatch, capsys):
+    import cairn_client
+
+    seen = _patch_score(monkeypatch, cairn_client.CairnResult(
+        True, 200, [{"composite_score": 0.5, "confidence": 0.0}], "", echo="ok"))
+    assert script.main(["probe", "--project", "exp-silo-1"]) == 0
+    assert seen["project"] == "exp-silo-1" and "project ok: exp-silo-1" in capsys.readouterr().out
+
+
+def test_probe_fails_without_echo(script, monkeypatch):
+    import cairn_client
+
+    _patch_score(monkeypatch, cairn_client.CairnResult(True, 200, [], "", echo="missing"))
+    assert script.main(["probe"]) == 1
+
+
+def test_probe_refuses_without_project(script, monkeypatch):
+    monkeypatch.delenv("CAIRN_PROJECT")
+    assert script.main(["probe"]) == 1

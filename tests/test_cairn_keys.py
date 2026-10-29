@@ -23,7 +23,7 @@ ID = "agent://anl-loam/loam-deadbeef"
 def patch_mint(monkeypatch, result):
     state = SimpleNamespace(calls=0, identity=None)
 
-    def fake(base_url, identity, timeout):
+    def fake(base_url, identity, timeout, project=None):
         state.calls += 1
         state.identity = identity
         return result
@@ -166,7 +166,7 @@ def test_stale_recovery_busy_when_lock_held(tmp_path, monkeypatch):
 
 
 def test_keyboard_interrupt_during_mint_removes_reservation(tmp_path, monkeypatch):
-    def boom(base_url, identity, timeout):
+    def boom(base_url, identity, timeout, project=None):
         raise KeyboardInterrupt
 
     monkeypatch.setattr(cairn_client, "mint_key", boom)
@@ -219,3 +219,12 @@ def test_mkdir_race_with_open_dir_fails_without_network(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "mkdir", racing)
     st = ensure_key(tmp_path / "keys" / "k.key", "https://c", ID, 5)
     assert st.state == "failed" and "already exists" not in st.error and mint.calls == 0
+
+
+def test_no_project_fails_before_reserving_or_calling(tmp_path, monkeypatch):
+    state = patch_mint(monkeypatch, None)
+    monkeypatch.delenv("CAIRN_PROJECT")
+    key = tmp_path / "keys" / "agent.key"
+    st = ensure_key(key, "https://c", ID, 5)
+    assert st.state == "failed" and "CAIRN_PROJECT" in st.error
+    assert state.calls == 0 and not key.exists()

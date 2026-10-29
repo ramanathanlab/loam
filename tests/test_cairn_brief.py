@@ -25,6 +25,7 @@ def _cairn(**overrides):
     block = {
         "enabled": True,
         "base_url": "https://cairn.invalid",
+        "project": "loam-test-project",
         "read_side": True,
         "rate_agent_reports": True,
         "rate_roles": ["code-generator", "hypothesis-validator"],
@@ -53,15 +54,16 @@ class Fake:
         self.calls = 0
         self.result = result
 
-    def __call__(self, base_url, refs, timeout):
+    def __call__(self, base_url, refs, timeout, project=None):
         self.calls += 1
         self.refs = refs
+        self.project = project
         return self.result
 
 
 @pytest.fixture
 def fake_score_batch(monkeypatch):
-    fake = Fake(cairn_client.CairnResult(True, 200, SCORES, ""))
+    fake = Fake(cairn_client.CairnResult(True, 200, SCORES, "", echo="ok"))
     monkeypatch.setattr(cairn_client, "score_batch", fake)
     return fake
 
@@ -89,7 +91,7 @@ def test_failed_fetch_is_cached_and_returns_none(payload, fake_score_batch_down)
 
 
 def test_malformed_response_returns_none(payload, monkeypatch):
-    monkeypatch.setattr(cairn_client, "score_batch", Fake(cairn_client.CairnResult(True, 200, [SCORES[0]], "")))
+    monkeypatch.setattr(cairn_client, "score_batch", Fake(cairn_client.CairnResult(True, 200, [SCORES[0]], "", echo="ok")))
     assert reputation(payload, "plan-a") is None
 
 
@@ -229,3 +231,22 @@ def test_decorated_validator_context_keeps_original_before_section(payload, fake
     assert ctx.startswith(original + "\n\n" + SECTION_START)
     assert ctx.index(SECTION_START) >= len(original) and ctx.count(SECTION_START) == 1
     assert ctx.endswith(SECTION_END)
+
+
+def test_brief_reads_the_configured_project_and_notes_the_silo(payload, fake_score_batch):
+    text = appendix(payload, "plan-a", "code-generator")
+    assert fake_score_batch.project == "loam-test-project"
+    assert cairn_brief.SILO_NOTE in text
+
+
+@pytest.mark.parametrize("echo", ["missing", "mismatch"])
+def test_scores_without_a_matching_echo_are_not_shown(payload, monkeypatch, echo):
+    monkeypatch.setattr(cairn_client, "score_batch", Fake(cairn_client.CairnResult(True, 200, SCORES, "", echo=echo)))
+    assert reputation(payload, "plan-a") is None
+    assert "Tool reputation" not in appendix(payload, "plan-b", "code-generator")
+
+
+def test_no_project_means_no_read_but_ratings_still_requested(payload, monkeypatch):
+    monkeypatch.setattr(cairn_client, "_urlopen", lambda *a, **k: pytest.fail("network reached"))
+    text = appendix(payload_with(payload, project=""), "plan-a", "code-generator")
+    assert "Tool reputation" not in text and "Tool ids you may rate" in text

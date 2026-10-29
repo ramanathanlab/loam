@@ -8,8 +8,10 @@ profile still loads).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -29,6 +31,28 @@ ALLOWED_ROLES = {"code-generator", "hypothesis-validator", "reasoner"}
 _ENTITY_PREFIXES = ("mcp://", "tool://")
 _BOOL_KEYS = ("read_side", "rate_agent_reports", "rate_hook_fallback", "auto_flush", "auto_mint")
 _NON_TAG_RE = re.compile(r"[^a-z0-9_]+")
+# Mirrors cairn_client.PROJECT_RE. The project silo comes only from the launch environment, never
+# from a profile or a model, and every Cairn request carries it as X-Cairn-Project.
+PROJECT_ENV = "CAIRN_PROJECT"
+_PROJECT_RE = re.compile(r"[a-z0-9][a-z0-9-]{2,62}")
+_warned: set[str] = set()
+logger = logging.getLogger(__name__)
+
+
+def _project() -> tuple[str, str]:
+    """(project, error) from CAIRN_PROJECT; the project is "" whenever it is unusable."""
+    raw = os.environ.get(PROJECT_ENV, "").strip()
+    if not raw:
+        error = f"{PROJECT_ENV} is not set: Cairn will not read or write (export it before launching Hermes)"
+    elif not _PROJECT_RE.fullmatch(raw):
+        error = f"{PROJECT_ENV}={raw!r} is invalid (^[a-z0-9][a-z0-9-]{{2,62}}$): Cairn will not read or write"
+    else:
+        return raw, ""
+    if error not in _warned:  # loud, but once per process
+        _warned.add(error)
+        logger.warning("Loam Cairn: %s", error)
+        print(f"Loam Cairn: WARNING {error}", file=sys.stderr)
+    return "", error
 
 
 def _snake_tag(value: str) -> str:
@@ -126,6 +150,7 @@ def _parse(value: Any) -> dict[str, Any] | None:
     if entities is None:
         return None
     entities.setdefault(executor, {"patterns": [], "task_tags": ["code_exec"]})
+    project, project_error = _project()
     return {
         "enabled": True,
         "base_url": base_url,
@@ -137,4 +162,6 @@ def _parse(value: Any) -> dict[str, Any] | None:
         "timeout_seconds": min(float(timeout), MAX_TIMEOUT),
         "executor": executor,
         "entities": entities,
+        "project": project,
+        "project_error": project_error,
     }

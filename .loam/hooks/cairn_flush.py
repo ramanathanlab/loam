@@ -6,6 +6,9 @@ none it is pending. ``unsent`` (the request provably never left the host: DNS fa
 connection, unreachable network) is retried automatically on the next flush, never twice in one.
 ``failed`` (an HTTP error response; the batch is atomic so it was not applied) may be resent only
 with ``--resubmit-failed``. ``in_flight`` and ``unknown`` are never resent.
+
+Every request carries ``X-Cairn-Project`` (the experiment's private silo). A flush only sends rows
+queued under its own project, and without a valid project it sends nothing at all.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import cairn_common  # noqa: E402
 import cairn_keys  # noqa: E402
-from cairn_client import submit_batch  # noqa: E402
+from cairn_client import env_project, project_error, submit_batch  # noqa: E402
 
 BATCH_SIZE = 100
 MAX_ROUNDS = 3
@@ -146,14 +149,24 @@ def _counts(state: Path) -> dict[str, Any]:
     return counts
 
 
-def _pending(state: Path, resubmit_failed: bool, attempted: set[str]) -> list[dict[str, Any]]:
+def _pending(state: Path, resubmit_failed: bool, attempted: set[str], project: str) -> list[dict[str, Any]]:
     states = _states(state)
     eligible = {None, "unsent", "failed"} if resubmit_failed else {None, "unsent"}
     return [
         row
         for row in _queued(state)
         if states.get(row["event_id"]) in eligible and row["event_id"] not in attempted
+        and row.get("project") == project
     ]
+
+
+def _other_project(state: Path, project: str) -> int:
+    """Pending rows queued under a different (or no) project: this flush will never send them."""
+    states = _states(state)
+    return sum(
+        1 for row in _queued(state)
+        if states.get(row["event_id"]) in (None, "unsent") and row.get("project") != project
+    )
 
 
 def _transition(state: Path, event_id: str, name: str, error: str = "") -> None:
@@ -175,9 +188,12 @@ def _classify(result: Any) -> tuple[str, str]:
     return "unknown", f"HTTP {status}: {result.error}" if status else (result.error or "no response")
 
 
-def _drain(state: Path, base_url: str, api_key: str, timeout: float, resubmit_failed: bool, attempted: set[str]) -> None:
+def _drain(
+    state: Path, base_url: str, api_key: str, timeout: float, resubmit_failed: bool, attempted: set[str],
+    project: str, echoes: list[str],
+) -> None:
     while True:
-        batch = _pending(state, resubmit_failed, attempted)[:BATCH_SIZE]
+        batch = _pending(state, resubmit_failed, attempted, project)[:BATCH_SIZE]
         if not batch:
             return
         sendable: list[dict[str, Any]] = []
@@ -192,7 +208,9 @@ def _drain(state: Path, base_url: str, api_key: str, timeout: float, resubmit_fa
             continue
         for row in sendable:
             _transition(state, row["event_id"], "in_flight")
-        result = submit_batch(base_url, api_key, [row["event"] for row in sendable], timeout)
+        result = submit_batch(base_url, api_key, [row["event"] for row in sendable], timeout, project=project)
+        if getattr(result, "echo", ""):
+            echoes.append(result.echo)
         name, error = _classify(result)
         for row in sendable:
             _transition(state, row["event_id"], name, error)
@@ -216,7 +234,8 @@ def _recent_mint_failure(state: Path) -> str | None:
 
 
 def _write_status(
-    state: Path, base_url: str, key_file: Path, key: str, error: str, counts: dict[str, Any], mint_failed: bool = False
+    state: Path, base_url: str, key_file: Path, key: str, error: str, counts: dict[str, Any], mint_failed: bool = False,
+    project: str = "", project_echo: str = "",
 ) -> None:
     """Atomically overwrite cairn-status.json (never the key). Failure is swallowed.
 
@@ -237,9 +256,20 @@ def _write_status(
             "key": key,
             "identity": identity,
             "base_url": base_url,
+            "project": project,
+            # ok | missing | mismatch: worst echo of the last flush that sent anything for this project
+            # (anything but ok may have written production); "" if nothing was ever sent
+            "project_echo": project_echo,
             "counts": counts,
             "error": error,
         }
+        if not project_echo:  # nothing sent this time: keep the last echo seen for this project
+            try:
+                previous = json.loads((state / STATUS).read_text())
+                if previous.get("project") == project and isinstance(previous.get("project_echo"), str):
+                    body["project_echo"] = previous["project_echo"]
+            except (OSError, ValueError, AttributeError):
+                pass
         if mint_failed:
             body["mint_failed_at"] = body["updated_at"]
         elif key not in ("minted", "present"):
@@ -270,6 +300,7 @@ def flush(
     auto_mint: bool = False,
     identity: str = "",
     identity_prefix: str = DEFAULT_IDENTITY_PREFIX,
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Submit pending events at most once; return counts by current state (see ``_counts``).
 
@@ -277,6 +308,14 @@ def flush(
     ``failed`` the rows simply stay pending. Every call rewrites ``cairn-status.json``.
     """
     state = Path(state)
+    project = env_project() if project is None else project.strip()
+    refused = project_error(project)
+    if refused:  # never send without the silo header: a request without it writes production
+        print(f"cairn_flush: ERROR {refused}", file=sys.stderr)
+        counts = _counts(state)
+        _write_status(state, base_url, key_file, "present" if _read_key(key_file) else "missing", refused, counts, project=project)
+        return counts
+    echoes: list[str] = []
     attempted: set[str] = set()
     locked_out = False
     key_state, key_error = "", ""
@@ -295,7 +334,7 @@ def flush(
                     key_state, key_error, backed_off = "mint_failed", backoff, True
                 elif auto_mint:
                     minted = cairn_keys.ensure_key(
-                        Path(key_file), base_url, identity or identity_prefix + secrets.token_hex(4), timeout
+                        Path(key_file), base_url, identity or identity_prefix + secrets.token_hex(4), timeout, project
                     )
                     key_state = {"minted": "minted", "present": "present", "busy": "mint_busy"}.get(minted.state, "mint_failed")
                     key_error = minted.error
@@ -305,18 +344,21 @@ def flush(
                     key_state = "missing"
                 if not api_key:
                     break
-                _drain(state, base_url, api_key, timeout, resubmit_failed, attempted)
-            if not _pending(state, resubmit_failed, attempted):
+                _drain(state, base_url, api_key, timeout, resubmit_failed, attempted, project, echoes)
+            if not _pending(state, resubmit_failed, attempted, project):
                 break
     except Exception as exc:  # noqa: BLE001 - fail open; the lock context manager has already released
         print(f"cairn_flush: {type(exc).__name__}: {exc}", file=sys.stderr)
     counts = _counts(state)
     if locked_out:
         counts["locked"] = 1
+    if other := _other_project(state, project):
+        counts["other_project"] = other
+    echo = next((e for e in ("mismatch", "missing", "ok") if e in echoes), "")
     if not key_state:
         key_state = "present" if _read_key(key_file) else "missing"
     if not locked_out and not backed_off:  # a flush that did not run must not overwrite the real one's status
-        _write_status(state, base_url, key_file, key_state, key_error, counts, mint_failed)
+        _write_status(state, base_url, key_file, key_state, key_error, counts, mint_failed, project, echo)
     return counts
 
 
@@ -334,6 +376,7 @@ def spawn_flush(payload: Mapping[str, Any]) -> None:
             "--base-url", str(cfg.get("base_url", "")),
             "--key-file", str(Path(str(cfg.get("key_file", ""))).expanduser()),
             "--timeout", str(cfg.get("timeout_seconds", 5)),
+            "--project", str(cfg.get("project") or ""),
         ]
         if cfg.get("auto_mint"):
             argv += ["--auto-mint", "--identity-prefix", str(cfg.get("identity_prefix") or DEFAULT_IDENTITY_PREFIX)]
@@ -362,6 +405,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--auto-mint", action="store_true", help="mint the key if it is missing (never with --report)")
     parser.add_argument("--identity", default="")
     parser.add_argument("--identity-prefix", default=DEFAULT_IDENTITY_PREFIX)
+    parser.add_argument("--project", default=None, help="Cairn project silo (default: $CAIRN_PROJECT)")
     args = parser.parse_args(argv)
     state = Path(args.state_dir).expanduser()
     if args.report:
@@ -370,6 +414,7 @@ def main(argv: list[str]) -> int:
     flush(
         state, args.base_url, Path(args.key_file), args.timeout, args.resubmit_failed,
         auto_mint=args.auto_mint, identity=args.identity, identity_prefix=args.identity_prefix,
+        project=args.project,
     )
     return 0
 

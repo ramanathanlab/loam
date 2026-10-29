@@ -37,6 +37,8 @@ def isolate_loam_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     # Cairn is on by default and mints keys / calls the network; tests must never do either.
     # Tests that need Cairn on pass an explicit block or monkeypatch.delenv("LOAM_CAIRN").
     monkeypatch.setenv("LOAM_CAIRN", "off")
+    # Every Cairn request needs a project silo; a fixed test name keeps the client's guard satisfied.
+    monkeypatch.setenv("CAIRN_PROJECT", "loam-test-project")
 
 
 @pytest.fixture(autouse=True)

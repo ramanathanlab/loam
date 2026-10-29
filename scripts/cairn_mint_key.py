@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""One-time operator tool: mint Loam's Cairn reviewer key, or check it.
+"""One-time operator tool: mint Loam's Cairn reviewer key, check it, or probe the project silo.
 
 A Cairn reviewer identity can be claimed only once, so `mint` refuses to run
 when the key file already exists and never overwrites. The key is never printed.
+Every request carries X-Cairn-Project from $CAIRN_PROJECT (or --project); `probe`
+makes one unauthenticated read and checks that Cairn echoes the project back.
 
 Exit codes: 0 success, 1 failure, 2 refused because the key file exists.
 """
@@ -18,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".loam" / "hooks"))
 
+import cairn_client  # noqa: E402
 import cairn_keys  # noqa: E402
 
 DEFAULT_IDENTITY_PREFIX = "agent://anl-loam/loam-"
@@ -31,7 +34,7 @@ def _err(message: str) -> None:
 
 def _mint(args: argparse.Namespace) -> int:
     path = Path(args.key_file).expanduser()
-    status = cairn_keys.ensure_key(path, args.base_url, args.identity, args.timeout)
+    status = cairn_keys.ensure_key(path, args.base_url, args.identity, args.timeout, args.project)
     if status.state == "present":
         _err(f"refusing to mint: key file already exists: {path}")
         return 2
@@ -69,6 +72,28 @@ def _check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _probe(args: argparse.Namespace) -> int:
+    project = cairn_client.env_project() if args.project is None else args.project
+    refused = cairn_client.project_error(project)
+    if refused:
+        _err(refused)
+        return 1
+    ref = {"type": "capability", "external_id": args.entity}
+    result = cairn_client.score_batch(args.base_url, [ref], args.timeout, project=project)
+    if not result.ok:
+        _err(f"probe failed: {result.error or result.status}")
+        return 1
+    if result.echo != "ok":
+        _err(f"probe: Cairn did not echo X-Cairn-Project: {project} ({result.echo}); traffic may reach production")
+        return 1
+    row = result.data[0] if isinstance(result.data, list) and result.data else {}
+    print(
+        f"project ok: {project} (echoed); {args.entity} composite={row.get('composite_score')} "
+        f"confidence={row.get('confidence')}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -77,10 +102,17 @@ def main(argv: list[str] | None = None) -> int:
     mint.add_argument("--key-file", default=DEFAULT_KEY_FILE)
     mint.add_argument("--base-url", default=DEFAULT_BASE_URL)
     mint.add_argument("--timeout", type=float, default=10.0)
+    mint.add_argument("--project", default=None, help="default: $CAIRN_PROJECT")
     mint.set_defaults(func=_mint)
     check = sub.add_parser("check", help="verify the key file and its permissions")
     check.add_argument("--key-file", default=DEFAULT_KEY_FILE)
     check.set_defaults(func=_check)
+    probe = sub.add_parser("probe", help="read one score in the project silo and verify the echo")
+    probe.add_argument("--project", default=None, help="default: $CAIRN_PROJECT")
+    probe.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    probe.add_argument("--entity", default="mcp://hpc#run_code")
+    probe.add_argument("--timeout", type=float, default=10.0)
+    probe.set_defaults(func=_probe)
     args = parser.parse_args(argv)
     if getattr(args, "identity", "x") is None:
         args.identity = DEFAULT_IDENTITY_PREFIX + secrets.token_hex(4)
