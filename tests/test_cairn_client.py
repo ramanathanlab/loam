@@ -304,3 +304,16 @@ def test_http_error_echo_is_checked(monkeypatch):
     monkeypatch.setattr(cairn_client, "_urlopen", _Fake(raises=err))
     r = cairn_client.submit_batch("https://c.example", "k", [], 5, project="exp-silo-1")
     assert r.status == 422 and r.echo == "ok"
+
+
+def test_client_uses_shared_proxy_aware_urlopen(monkeypatch):
+    # conftest swaps cairn_client._urlopen to block the network, so load a fresh copy.
+    import importlib.util
+
+    import loam_http
+
+    spec = importlib.util.spec_from_file_location("cairn_client_fresh", HOOKS / "cairn_client.py")
+    fresh = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "cairn_client_fresh", fresh)  # dataclasses look the module up
+    spec.loader.exec_module(fresh)
+    assert fresh._urlopen is loam_http.urlopen

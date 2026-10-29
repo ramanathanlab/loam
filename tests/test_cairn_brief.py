@@ -250,3 +250,44 @@ def test_no_project_means_no_read_but_ratings_still_requested(payload, monkeypat
     monkeypatch.setattr(cairn_client, "_urlopen", lambda *a, **k: pytest.fail("network reached"))
     text = appendix(payload_with(payload, project=""), "plan-a", "code-generator")
     assert "Tool reputation" not in text and "Tool ids you may rate" in text
+
+
+def test_brief_timeout_capped_at_two_seconds():
+    assert cairn_brief._timeout({"timeout_seconds": 5.0}) == 2.0
+    assert cairn_brief._timeout({"timeout_seconds": 1.0}) == 1.0
+    assert cairn_brief._timeout({}) == 2.0
+
+
+def test_brief_is_wall_clock_bounded(payload, monkeypatch):
+    import time
+
+    def _slow(base_url, refs, timeout, project=None):
+        time.sleep(5)
+        return cairn_client.CairnResult(True, 200, SCORES, "", echo="ok")
+
+    monkeypatch.setattr(cairn_client, "score_batch", _slow)
+    start = time.monotonic()
+    assert reputation(payload, "plan-slow") is None
+    assert time.monotonic() - start < 3.0
+
+
+def test_busy_brief_lock_does_not_block(payload, fake_score_batch, tmp_path):
+    import fcntl
+    import threading
+    import time
+
+    lock = open(tmp_path / cairn_brief.common.REPUTATION_LOCK, "a+")
+    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    try:
+        box = {}
+        worker = threading.Thread(target=lambda: box.setdefault("v", reputation(payload, "plan-a")), daemon=True)
+        start = time.monotonic()
+        worker.start()
+        worker.join(3.0)
+        assert not worker.is_alive(), "reputation blocked on a held lock"
+        assert time.monotonic() - start < 1.0
+        assert box["v"]["tool://lammps"]["composite_score"] == 0.62
+        assert not (tmp_path / cairn_brief.common.REPUTATION).exists()
+    finally:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        lock.close()

@@ -11,6 +11,7 @@ from typing import Any
 
 import cairn_client
 import cairn_common as common
+import loam_http
 
 SKILL_PATH = "skills/cairn-tool-review/SKILL.md"
 PLACEMENT = {
@@ -23,6 +24,9 @@ PLACEMENT = {
 # Spec 7: the reputation brief goes only where tools are chosen and judged. The reasoner's synthesis
 # becomes Jnana steering, so it never sees reputation (at most the rating instructions).
 BRIEF_ROLES = frozenset({"code-generator", "hypothesis-validator"})
+# The brief sits on the delegation path: never wait on Cairn longer than this, whatever timeout_seconds
+# says (that setting also governs the off-path flusher).
+BRIEF_CAP_SECONDS = 2.0
 SILO_NOTE = (
     "These Cairn scores come from this experiment's private silo, not global Cairn: early in the run "
     "most tools will have few or no ratings. Rate honestly after each tool use."
@@ -40,9 +44,13 @@ def _entity_ids(cfg: Mapping[str, Any]) -> list[str]:
 
 def _timeout(cfg: Mapping[str, Any]) -> float:
     try:
-        return min(10.0, max(0.1, float(cfg.get("timeout_seconds", 5.0))))
+        return min(BRIEF_CAP_SECONDS, max(0.1, float(cfg.get("timeout_seconds", BRIEF_CAP_SECONDS))))
     except (TypeError, ValueError):
-        return 5.0
+        return BRIEF_CAP_SECONDS
+
+
+def _bounded_fetch(cfg: Mapping[str, Any], ids: list[str]) -> tuple[dict[str, dict[str, float]] | None, str]:
+    return loam_http.bounded(lambda: _fetch(cfg, ids), _timeout(cfg), (None, "timeout"))
 
 
 def _fetch(cfg: Mapping[str, Any], ids: list[str]) -> tuple[dict[str, dict[str, float]] | None, str]:
@@ -80,10 +88,11 @@ def reputation(payload: Mapping[str, Any], plan_id: str) -> dict[str, dict[str, 
             return None
         directory = common.state_dir(payload)
         if directory is None:
-            scores, _ = _fetch(cfg, ids)
+            scores, _ = _bounded_fetch(cfg, ids)
             return scores
         path = directory / common.REPUTATION
-        with common.locked(directory / common.REPUTATION_LOCK) as acquired:
+        # Non-blocking: a busy (or unsupported) lock means fetch uncached rather than wait.
+        with common.locked(directory / common.REPUTATION_LOCK, blocking=False) as acquired:
             if acquired:
                 for row in reversed(common.read_jsonl(path)):
                     if row.get("plan_id") == plan_id:
@@ -91,7 +100,7 @@ def reputation(payload: Mapping[str, Any], plan_id: str) -> dict[str, dict[str, 
                         if row.get("ok") is True and isinstance(cached, dict):
                             return cached
                         return None
-            scores, error = _fetch(cfg, ids)
+            scores, error = _bounded_fetch(cfg, ids)
             if acquired:
                 try:
                     common.append_jsonl(path, {

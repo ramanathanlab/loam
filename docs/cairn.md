@@ -60,12 +60,15 @@ by Loam's hooks. That host needs outbound HTTPS to `api.cairnscore.ai`:
 - a laptop or workstation: usually nothing to do;
 - an Aurora login node (`aurora-uan-*`): outbound access is direct. Do **not** set the proxy variables
   there; ALCF documents that the proxy does not function on login nodes;
-- a compute node, or another ALCF host without direct access: export `https_proxy`/`HTTPS_PROXY`
-  (`http://proxy.alcf.anl.gov:3128`) before launching Hermes. The flusher inherits the environment and
-  Python's `urllib` honours these variables.
+- an Aurora compute node (`x4…c…s…b…n…`): nothing to do. With no `https_proxy`/`HTTPS_PROXY` set,
+  Loam sends its own Cairn (and FALDA) requests through `http://proxy.alcf.anl.gov:3128` without
+  exporting it, so other tools are unaffected (`.loam/hooks/loam_http.py`);
+- another ALCF host without direct access: export `https_proxy`/`HTTPS_PROXY` before launching Hermes;
+  an exported proxy always wins.
 
 Without outbound HTTPS, ratings stay queued (`unsent`, retried on the next flush) and the read side costs
-one timeout of up to 5 s per plan when it fetches the brief. `cairn_mint_key.py probe` (above) checks
+at most 2 s of wall clock per plan when it fetches the brief (`timeout_seconds` is capped at 2 s for the
+brief; the flusher uses it as set). A busy reputation-cache lock never makes a delegation wait. `cairn_mint_key.py probe` (above) checks
 both reachability and the project echo.
 
 To change settings or tools, add a `cairn` block to the Loam profile in `loam.yaml`; it replaces the

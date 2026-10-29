@@ -14,7 +14,10 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-_urlopen = urllib.request.urlopen
+import loam_http
+
+# Forces the ALCF proxy on Aurora compute nodes without exporting it (loam_http).
+_urlopen = loam_http.urlopen
 
 # Every request carries X-Cairn-Project so it reads and writes this experiment's private silo.
 # A request without the header would hit production, so an unset or invalid project is never sent.
