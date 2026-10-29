@@ -15,6 +15,8 @@ It is strictly best effort. A slow, overloaded or unreachable FALDA never fails 
 
 - **Writes** cost the agent nothing. A validator stop appends the memory to `falda-spool.jsonl` in the
   state dir and starts a detached flusher. The flusher sends batches of 10 and stops at the first failure.
+  Each atom carries its spool row's id, so resending a batch FALDA stored after the client timed out
+  updates it instead of adding a copy.
   Rows it could not send wait for the next flush. Past 5,000 unsent rows, the oldest are dropped and
   counted.
 - **Recalls** are capped at 2 s of wall clock (`recall_timeout_seconds`). A recall that fails, times out

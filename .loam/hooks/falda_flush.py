@@ -128,6 +128,19 @@ def _write_status(state: Path, summary: Mapping[str, Any]) -> None:
         pass
 
 
+def _with_id(row: Mapping[str, Any]) -> dict[str, Any]:
+    """The atom with a stable id from its spool row. FALDA's upsert updates an existing id, and it often
+    stores a batch after the client has timed out, so a resend must not create a second copy."""
+
+    atom = dict(row["atom"])
+    if not _text(atom.get("id")):
+        try:
+            atom["id"] = str(uuid.UUID(_text(row.get("id"))))
+        except ValueError:
+            pass
+    return atom
+
+
 def _send(state: Path, cfg: Mapping[str, Any], pending: list[dict[str, Any]], summary: dict[str, Any]) -> None:
     for start in range(0, min(len(pending), BATCH_SIZE * MAX_BATCHES), BATCH_SIZE):
         batch = pending[start : start + BATCH_SIZE]
@@ -140,7 +153,7 @@ def _send(state: Path, cfg: Mapping[str, Any], pending: list[dict[str, Any]], su
         }
         result = falda_memory.upsert(
             payload,
-            [row["atom"] for row in batch],
+            [_with_id(row) for row in batch],
             consumer="validator_outcome",
             plan_id=_text(first.get("plan_id")),
             hypothesis_id=_text(first.get("hypothesis_id")),

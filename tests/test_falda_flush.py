@@ -6,6 +6,7 @@ import fcntl
 import json
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -221,3 +222,18 @@ def test_flush_caps_the_key_mint_timeout(payload, state, cfg, monkeypatch):
     falda_flush.flush(state, {**cfg, "timeout_seconds": 60})
     # well under falda_keys.STALE_LOCK_SECONDS, so a slow mint is never taken for an abandoned one
     assert seen["timeout"] <= 15
+
+
+def test_resent_batch_reuses_atom_ids_so_retries_are_idempotent(payload, state, cfg):
+    # FALDA often stores a batch and answers after the client timed out (Aurora, 2026-10-30); its
+    # upsert updates an existing id, so a retry must carry the same ids.
+    falda_flush.enqueue(payload, _atom(1), plan_id="p", hypothesis_id="h")
+    falda_memory.set_transport(FakeTransport(error=TimeoutError("late")))
+    falda_flush.flush(state, cfg)
+    fake = FakeTransport()
+    falda_memory.set_transport(fake)
+    falda_flush.flush(state, cfg)
+    [first] = _rows(state / falda_flush.SPOOL)
+    [body] = fake.bodies("/atoms/upsert")
+    assert body["atoms"][0]["id"] == str(uuid.UUID(first["id"]))
+    assert body["atoms"][0]["content"] == "atom 1"
