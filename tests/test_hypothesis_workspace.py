@@ -2238,6 +2238,90 @@ class WorkspaceDecisionTests(WorkspacePolicyTests):
             self.assertEqual([p for p in problems if "validator" in p], [])
 
 
+class WorkspaceReasonerTests(_StopHelpers, unittest.TestCase):
+    """G4: the plan-level reasoner record (decisions + trace + synthesis)."""
+
+    REASONER_GOAL = "Synthesize validator results [loam-agent-role=reasoner] [loam-plan-id=plan-1]"
+
+    def _state_db(self, home: Path, session_id: str) -> None:
+        import sqlite3
+
+        home.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(home / "state.db")
+        conn.execute(
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, "
+            "content TEXT, tool_call_id TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL, "
+            "token_count INTEGER, finish_reason TEXT, reasoning TEXT, reasoning_content TEXT)"
+        )
+        for i, (role, content) in enumerate([("user", "Synthesize."), ("assistant", "H-1 leads.")]):
+            conn.execute("INSERT INTO messages (session_id, role, content, timestamp) VALUES (?,?,?,?)",
+                         (session_id, role, content, 1000.0 + i))
+        conn.commit()
+        conn.close()
+
+    def test_reasoner_record_is_created_and_linked_to_its_hypotheses(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            self._hypothesis(orchestration, payload, "h-1", ["Fold."])  # makes plan-1/h-1/experiment.json
+            row = self._start(orchestration, payload, "reasoner-1", self.REASONER_GOAL)
+            reasoner = Path(payload["loam_workspace"]["root"]) / "plan-1" / "reasoner"
+            self.assertEqual(row["workspace"], str(reasoner))
+            record = json.loads((reasoner / "reasoner.json").read_text())
+            self.assertEqual((record["role"], record["state"]), ("reasoner", "open"))
+            self.assertEqual(record["synthesized_from"], ["h-1"])
+
+    def test_reasoner_decision_is_recorded(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._start(orchestration, payload, "reasoner-1", self.REASONER_GOAL)
+            ok = orchestration.workspace_decision({
+                **payload, "session_id": "reasoner-1", "tool_name": "loam_record_decision",
+                "arguments": {"what": "Steer next round toward domain III", "why": "two leads converged there"},
+            })
+            self.assertTrue(ok)  # flips G1's not_recorded for the reasoner
+            reasoner = Path(payload["loam_workspace"]["root"]) / "plan-1" / "reasoner"
+            record = json.loads((reasoner / "reasoner.json").read_text())
+            self.assertEqual(record["decisions"][0]["what"], "Steer next round toward domain III")
+            self.assertEqual(record["decisions"][0]["actor"]["role"], "reasoner")
+
+    def test_reasoner_trace_and_close_at_stop(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._start(orchestration, payload, "reasoner-1", self.REASONER_GOAL)
+            home = Path(tmp) / "home"
+            self._state_db(home, "reasoner-1")
+            payload["hermes_home"] = str(home)
+            self._stop(orchestration, payload, "reasoner-1", summary="H-1 is the lead for next round.")
+
+            reasoner = Path(payload["loam_workspace"]["root"]) / "plan-1" / "reasoner"
+            record = json.loads((reasoner / "reasoner.json").read_text())
+            self.assertEqual(record["state"], "closed")
+            self.assertEqual(record["trace"]["path"], "trace.jsonl")
+            self.assertEqual(record["trace"]["rows"], 2)
+            self.assertTrue((reasoner / "trace.jsonl").is_file())
+            kinds = [json.loads(line)["kind"] for line in (reasoner / "log.jsonl").read_text().splitlines()]
+            self.assertIn("report", kinds)  # synthesis report logged at close
+
+    def test_reasoner_log_chain_stays_intact(self) -> None:
+        workspace = _load("loam_ws_reasoner_chain")
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._start(orchestration, payload, "reasoner-1", self.REASONER_GOAL)
+            orchestration.workspace_decision({
+                **payload, "session_id": "reasoner-1", "tool_name": "loam_record_decision",
+                "arguments": {"what": "x", "why": "y"},
+            })
+            reasoner = Path(payload["loam_workspace"]["root"]) / "plan-1" / "reasoner"
+            self.assertEqual(workspace.verify_log(reasoner), [])
+
+
 class WorkspaceDispatchEdgeTests(_StopHelpers, unittest.TestCase):
     """G3: the validator->child edge, recorded at dispatch on both ends."""
 
