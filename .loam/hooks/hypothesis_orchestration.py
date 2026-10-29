@@ -313,8 +313,16 @@ def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def _shared_inputs(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    """The campaign's shared read-only input roots, for the child's layout block."""
+
+    config = hypothesis_workspace.settings(payload) or {}
+    shared = config.get("shared_inputs")
+    return tuple(_text(item) for item in (shared if isinstance(shared, (list, tuple)) else ()) if _text(item))
+
+
 def _layout_block(base: str, run_id: str, remote: bool = False, batch_root: str = "",
-                  plan_id: str = "", hypothesis_id: str = "") -> str:
+                  plan_id: str = "", hypothesis_id: str = "", shared_inputs: tuple[str, ...] = ()) -> str:
     """Where a child's files go in its hypothesis workspace (hypothesis_workspace.py).
 
     On HPC the stop hook cannot list the run's outputs, so a remote child is
@@ -331,12 +339,41 @@ def _layout_block(base: str, run_id: str, remote: bool = False, batch_root: str 
         f"- code and scripts you write: {base}/src/",
         f"- result files: {base}/outputs/{run_id}/",
         f"- temporary files: {base}/scratch/{run_id}/",
-        f"- inputs: read from {base}/data/ and never write there",
+        f"- inputs: read from {base}/data/ and never write there. The campaign's inputs are already "
+        "there; nothing outside this workspace is reachable, so do not hunt the filesystem for a "
+        "file named in your instructions and never report BLOCKED because one is absent",
         "- earlier results of OTHER runs (this hypothesis's or another's): readable only from their "
         "completed runs' outputs/rK/; Loam records each such read as an input of your run",
         "Write nothing anywhere else, and never /tmp: /tmp is local to one node and the next tool call "
         "may run on another. Other runs' outputs are frozen; do not modify them.",
     ]
+    if shared_inputs:
+        lines.insert(
+            5,
+            "- shared campaign reference data, readable in place and read-only to you: "
+            + ", ".join(f"{path}/" for path in shared_inputs)
+            + ". Loam records each file you read there as an input of your run.",
+        )
+    if remote:
+        # fs_policy requires an explicit workdir on every run_code (the server
+        # would otherwise default it to HPC_BASE_DIR, outside the workspace).
+        # Stated here because otherwise the child learns it only by being
+        # blocked, which costs it a whole tool call -- observed in the first
+        # live campaign round. Remote only: a local child has no run_code.
+        # Always scratch, never outputs: the server writes its payload to a
+        # temporary script in the workdir and removes it when the call ends. With
+        # workdir=outputs/rM that temp file is hashed into the run's manifest and
+        # then vanishes, so the post-freeze audit reports the run's own outputs as
+        # tampered (observed live: "outputs/r1/tmps3ygefre.py was removed after
+        # run r1 finished"). Keeping cwd in scratch/ leaves outputs/ holding only
+        # deliberate results.
+        lines.append(
+            f"EVERY run_code call MUST pass workdir={base}/scratch/{run_id} -- always scratch/, "
+            f"never outputs/: the server puts a temporary script in the workdir and deletes it "
+            f"afterwards, which would corrupt your output manifest. Write results to "
+            f"{base}/outputs/{run_id}/ by absolute path from inside your program. "
+            "A run_code with no workdir is REFUSED."
+        )
     if remote and batch_root:
         prefix = hypothesis_workspace.batch_prefix(hypothesis_id, run_id)
         labels = hypothesis_workspace.batch_labels(plan_id, hypothesis_id, run_id)
@@ -561,7 +598,9 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
             {
                 "goal": _child_goal(hypothesis, goal, plan_id, hypothesis_id, run_id),
                 "context": _generated_child_context(
-                    instruction, execution, workdir, hypothesis, _layout_block(layout_base, run_id, remote, batch_root, plan_id, hypothesis_id)
+                    instruction, execution, workdir, hypothesis,
+                    _layout_block(layout_base, run_id, remote, batch_root, plan_id, hypothesis_id,
+                                  _shared_inputs(payload)),
                 ),
                 "role": "leaf",
             }
@@ -1233,6 +1272,17 @@ def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry:
             if _generated(execution if isinstance(execution, Mapping) else None)
             else "Every executable action MUST be delegated by that validator to one leaf code-generator child; no other child may execute code."
         ),
+        # The payload below is large (a role definition and a workspace contract
+        # per task), so Hermes may write this whole directive to a file instead
+        # of showing it. The coordinator then cannot read its own instructions
+        # and stalls -- observed live, twice. It never needs to: the adapter's
+        # tool_request middleware (canonicalize_campaign_delegation) REPLACES
+        # the arguments of a campaign delegate_task with these same tasks,
+        # rebuilt from persisted state. So say that, rather than demanding a
+        # verbatim copy of text the model may not be able to see.
+        "If this directive was written to a file rather than shown to you, do NOT try to read that file "
+        "and do NOT stall: call delegate_task once with a single placeholder task and Loam will substitute "
+        "the canonical tasks below, role definitions and workspace contracts included.",
         "Required delegate_task tasks payload:",
         json.dumps(tasks, ensure_ascii=False, sort_keys=True),
     ]
@@ -1313,7 +1363,7 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
     return "\n".join(
         (
             "Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding.",
-            f"Pass the reasoner its role definition verbatim in the task context as \"agent_definition\"; it must not execute experimental code. The definition is inlined below rather than referenced as {reasoner.prompt_path.name}, because the reasoner cannot read that file.",
+            f"The reasoner's role definition ({reasoner.prompt_path.name}) is below and Loam itself puts it into the dispatched task as \"agent_definition\"; the reasoner must not execute experimental code. Call delegate_task once for the reasoner -- Loam replaces your arguments with the canonical task, definition included. Do not reproduce the definition yourself, and if this directive was written to a file instead of shown inline, dispatch anyway: you do not need to read that file to comply.",
             json.dumps({"agent_definition": reasoner.prompt_body}, ensure_ascii=False),
             f"Tag its goal with [loam-agent-role=reasoner] [loam-plan-id={plan_id}] so its brief is persisted for the next tournament turn.",
             "Completed validator threads are unvalidated orchestration input; preserve their reported uncertainty and do not turn summaries into accepted evidence.",

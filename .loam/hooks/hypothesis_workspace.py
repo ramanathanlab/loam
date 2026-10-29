@@ -27,6 +27,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -46,11 +47,18 @@ LOG_KINDS = ("plan", "result", "note", "report", "violation")
 VERIFIED_MANIFESTS = ("recorded", "recorded_by_loam")
 # The hash a first log line chains to.
 GENESIS_SHA256 = "0" * 64
+# Default ceiling on one hypothesis's seeded data/ (workspace.max_input_bytes
+# overrides). The seed is copied per hypothesis, so a careless inputs_dir would
+# otherwise multiply a dataset by the number of hypotheses in the campaign.
+DEFAULT_MAX_INPUT_BYTES = 1 << 30
 # A plan or hypothesis id becomes a path segment. Both come from model-written
 # goal tags, so anything that could climb out of the root ("..", "a/b") is
 # refused rather than cleaned up into a different, colliding name.
 _SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 _RUN_ID = re.compile(r"r([1-9][0-9]*)")
+# A relative path inside data/: safe segments only, so a seeded input can
+# never be an absolute path or climb out with "..".
+_SEGMENT_PATH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,63})*")
 
 
 def _text(value: Any) -> str:
@@ -181,6 +189,148 @@ def verify_log(root: Path) -> list[str]:
     return problems
 
 
+def _file_digest(path: Path) -> tuple[str, int]:
+    """(sha256, bytes) of one file, hashed in 1 MB chunks."""
+
+    digest, size = hashlib.sha256(), 0
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def input_cap(payload: Mapping[str, Any]) -> int:
+    """The ceiling on a seeded data/ for this campaign."""
+
+    configured = settings(payload) or {}
+    try:
+        value = int(configured.get("max_input_bytes") or 0)
+    except (TypeError, ValueError):
+        value = 0
+    return value if value > 0 else DEFAULT_MAX_INPUT_BYTES
+
+
+def seed_inputs(root: Path, source: str, cap: int) -> tuple[list[dict[str, Any]], str]:
+    """Copy a campaign inputs directory into this hypothesis's data/. Returns (entries, problem).
+
+    Every hypothesis gets its OWN copy, so the folder stays a self-contained
+    record: a later edit to the campaign's inputs_dir cannot retroactively
+    change what this hypothesis was given. Each copied file is hashed, and the
+    hashes are what make that claim checkable (``record_inputs``).
+
+    Symlinks are resolved and the target copied, so data/ can never point out of
+    the workspace. A file already in data/ is left alone (idempotent, and an
+    operator's correction by hand is not clobbered). Oversize is refused whole
+    rather than copied halfway, because a half-seeded data/ looks complete.
+    """
+
+    folder = Path(source).expanduser()
+    if not folder.is_dir():
+        return [], f"workspace.inputs_dir {source} is not a directory"
+    found: list[tuple[Path, str]] = []
+    total = 0
+    for path in sorted(folder.rglob("*")):
+        real = Path(os.path.realpath(path))
+        if not real.is_file():
+            continue
+        relative = path.relative_to(folder).as_posix()
+        if _SEGMENT_PATH.fullmatch(relative) is None:
+            return [], f"input {relative} is not a safe relative path"
+        found.append((real, relative))
+        total += real.stat().st_size
+    if total > cap:
+        return [], f"workspace.inputs_dir {source} is {total} bytes, over the {cap}-byte limit (workspace.max_input_bytes)"
+    data = root / "data"
+    entries: list[dict[str, Any]] = []
+    for real, relative in found:
+        target = data / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            shutil.copyfile(real, target)
+        sha256, size = _file_digest(target)
+        entries.append({"path": relative, "sha256": sha256, "bytes": size})
+    return entries, ""
+
+
+def record_inputs(root: Path, entries: list[dict[str, Any]], source: str, how: str) -> None:
+    """Record a seeded data/ in experiment.json and the log, so the record names its inputs.
+
+    ``inputs`` on experiment.json is the hypothesis's starting material, as
+    distinct from a run's ``inputs``, which are other runs' outputs it consumed.
+    An entry whose hash differs from one already recorded is a changed input:
+    it replaces the old one and the difference is logged as a violation, since
+    two hypotheses sharing a campaign inputs_dir must not quietly disagree
+    about what was in it.
+    """
+
+    with _locked(root):
+        path = root / EXPERIMENT_FILE
+        experiment = read_json(path)
+        if not experiment:
+            return
+        existing = {str(item.get("path")): item for item in experiment.get("inputs", []) if isinstance(item, Mapping)}
+        changed, added = [], []
+        for entry in entries:
+            previous = existing.get(entry["path"])
+            if previous is None:
+                added.append(entry["path"])
+            elif previous.get("sha256") != entry["sha256"]:
+                changed.append(f"{entry['path']} {previous.get('sha256', '')[:12]} -> {entry['sha256'][:12]}")
+            existing[entry["path"]] = {**entry, "source": source, "how": how}
+        experiment["inputs"] = [existing[key] for key in sorted(existing)]
+        _write_json(path, experiment)
+        if added:
+            _append_log_unlocked(
+                root,
+                "note",
+                {"what": f"seeded {len(added)} input file(s) into data/ from {source} ({how})", "inputs": sorted(added)},
+            )
+        for difference in changed:
+            _append_log_unlocked(
+                root, "violation", {"what": f"campaign input changed after it was recorded: {difference}"}
+            )
+
+
+def seed_program(source: str, data_dir: str, cap: int) -> str:
+    """The program the verifier runs on HPC to copy a staged inputs dir into data/.
+
+    The remote twin of ``seed_inputs``: a hook has no MCP access, so it cannot
+    reach the HPC data/ itself. Prints the same LOAM_MANIFEST block
+    ``remote_manifest`` already parses, with paths relative to data/, so the
+    local side records exactly what landed.
+    """
+
+    return "\n".join((
+        "import hashlib, json, os, shutil",
+        f"source, data, cap = {source!r}, {data_dir!r}, {cap!r}",
+        "total = 0",
+        "found = []",
+        "for folder, _, files in sorted(os.walk(source)):",
+        "    for name in sorted(files):",
+        "        path = os.path.realpath(os.path.join(folder, name))",
+        "        if not os.path.isfile(path):",
+        "            continue",
+        "        found.append((path, os.path.relpath(os.path.join(folder, name), source)))",
+        "        total += os.path.getsize(path)",
+        "if total > cap:",
+        "    raise SystemExit(f'inputs are {total} bytes, over the {cap}-byte limit')",
+        "print('LOAM_MANIFEST')",
+        "for path, relative in found:",
+        "    target = os.path.join(data, relative)",
+        "    os.makedirs(os.path.dirname(target), exist_ok=True)",
+        "    if not os.path.exists(target):",
+        "        shutil.copyfile(path, target)",
+        "    digest = hashlib.sha256()",
+        "    with open(target, 'rb') as handle:",
+        "        for chunk in iter(lambda: handle.read(1 << 20), b''):",
+        "            digest.update(chunk)",
+        "    print(json.dumps({'path': relative, 'sha256': digest.hexdigest(), "
+        "'bytes': os.path.getsize(target)}))",
+        "print('END_LOAM_MANIFEST')",
+    ))
+
+
 def ensure_workspace(
     payload: Mapping[str, Any],
     plan_id: str,
@@ -188,7 +338,13 @@ def ensure_workspace(
     statement: str = "",
     validator_session_id: str = "",
 ) -> Path:
-    """Create the hypothesis folder and its open experiment.json; idempotent."""
+    """Create the hypothesis folder and its open experiment.json; idempotent.
+
+    A configured ``workspace.inputs_dir`` is copied into data/ here, before any
+    child runs, so the hypothesis's starting material is in place and recorded.
+    A ``remote_inputs_dir`` cannot be: it lives on HPC, which a hook cannot
+    reach, so the validator's start launches the verifier's ``seed`` instead.
+    """
 
     root = workspace_root(payload, plan_id, hypothesis_id)
     with _locked(root):
@@ -196,32 +352,60 @@ def ensure_workspace(
             (root / name).mkdir(parents=True, exist_ok=True)
         experiment = root / EXPERIMENT_FILE
         if experiment.is_file():
-            return root
-        _write_json(
-            experiment,
-            {
-                "schema": "loam_experiment_v1",
-                "plan_id": plan_id,
-                "hypothesis_id": hypothesis_id,
-                "workflow_id": _text(payload.get("workflow_id")),
-                "loam_run_id": _text(payload.get("loam_run_id")),
-                "statement": statement,
-                "validator_session_id": validator_session_id,
-                "state": "open",
-                "created_at": _timestamp(),
-                "closed_at": None,
-                "runs": [],
-            },
-        )
-        _append_log_unlocked(
-            root,
-            "note",
-            {
-                "what": "hypothesis-validator dispatched",
-                "actor": {"role": "hypothesis-validator", "session_id": validator_session_id},
-            },
-        )
+            existed = True
+        else:
+            existed = False
+            _write_json(
+                experiment,
+                {
+                    "schema": "loam_experiment_v1",
+                    "plan_id": plan_id,
+                    "hypothesis_id": hypothesis_id,
+                    "workflow_id": _text(payload.get("workflow_id")),
+                    "loam_run_id": _text(payload.get("loam_run_id")),
+                    "statement": statement,
+                    "validator_session_id": validator_session_id,
+                    "state": "open",
+                    "created_at": _timestamp(),
+                    "closed_at": None,
+                    "runs": [],
+                },
+            )
+            _append_log_unlocked(
+                root,
+                "note",
+                {
+                    "what": "hypothesis-validator dispatched",
+                    "actor": {"role": "hypothesis-validator", "session_id": validator_session_id},
+                },
+            )
+    # Outside the lock: seed_inputs copies, record_inputs takes the lock itself,
+    # and _locked is not re-entrant.
+    seed_configured_inputs(payload, root, fresh=not existed)
     return root
+
+
+def seed_configured_inputs(payload: Mapping[str, Any], root: Path, fresh: bool) -> None:
+    """Copy workspace.inputs_dir into data/ and record it, if there is anything to do.
+
+    Skipped once data/ holds files and experiment.json already lists them: the
+    seed is idempotent but hashing is not free, and this runs on every validator
+    start. ``fresh`` (the workspace was just created) always seeds, so a
+    campaign that gains an inputs_dir later still seeds its next hypothesis.
+    """
+
+    source = _text((settings(payload) or {}).get("inputs_dir"))
+    if not source:
+        return
+    recorded = bool(read_json(root / EXPERIMENT_FILE).get("inputs"))
+    if not fresh and recorded and any((root / "data").rglob("*")):
+        return
+    entries, problem = seed_inputs(root, source, input_cap(payload))
+    if problem:
+        append_log(root, "violation", {"what": f"campaign inputs not seeded: {problem}"})
+        return
+    if entries:
+        record_inputs(root, entries, source, "copied_by_hook")
 
 
 def _next_run_id(root: Path) -> str:
@@ -335,6 +519,7 @@ def on_agent_started(
     try:
         if role == "hypothesis-validator":
             root = ensure_workspace(payload, plan_id, hypothesis_id, statement, session_id)
+            _launch_seed(payload, plan_id, hypothesis_id, root)
             return {"workspace": str(root)}
         root = workspace_root(payload, plan_id, hypothesis_id)
         why = f"delegated by the hypothesis-validator for {hypothesis_id}"
@@ -457,6 +642,9 @@ class _Scope:
         # Completed outputs of OTHER runs this call reads (this hypothesis's or
         # another's); capture_code records them as the run's inputs.
         self.reads: list[dict[str, str]] = []
+        # Read-only campaign reference data (workspace.shared_inputs) this call
+        # reads in place rather than from data/; also recorded as inputs.
+        self.shared_reads: list[dict[str, str]] = []
         execution = payload.get("loam_execution")
         execution = execution if isinstance(execution, Mapping) else {}
         aliases = execution.get("workdir_aliases")
@@ -471,6 +659,19 @@ class _Scope:
         self.remote_root = os.path.join(self.remote_base, self.plan_id, self.hypothesis_id) if self.remote_base else ""
         batch_root = batch_root_for(execution)
         self.batch_root = self._canonical(batch_root) if batch_root else ""
+        # Canonicalized here, after the aliases exist, so an HPC spelling of a
+        # shared path matches whichever form a child writes.
+        shared = config.get("shared_inputs")
+        configured_shared = tuple(
+            _text(item).rstrip("/") for item in (shared if isinstance(shared, (list, tuple)) else ())
+            if _text(item).startswith("/")
+        )
+        # Two spellings, because the two branches compare differently: a local
+        # path is matched after os.path.realpath (so a symlinked /var does not
+        # look foreign), an HPC path after alias canonicalization (the hook
+        # cannot resolve a path on another machine).
+        self.shared = tuple(self._canonical(item) for item in configured_shared)
+        self.shared_real = tuple(os.path.realpath(item) for item in configured_shared)
         # This run's own batches, as recorded by capture_code.
         run = read_json(self.root / "runs" / self.run_id / RUN_FILE) if self.run_id else {}
         self.batches = {b for b in run.get("batches", []) if isinstance(b, str)}
@@ -504,8 +705,32 @@ class _Scope:
             foreign = _within(real, self.real_base)
             if foreign is not None:
                 return self._other_run(foreign, raw, writing)
+            problem = self._shared_path(real, raw, writing, self.shared_real)
+            if problem is not None:
+                return problem or None
             return f"{raw} is outside this hypothesis's workspace {self.root}" if writing else None
         return self._own(parts, raw, writing)
+
+    def _shared_path(self, path: str, raw: str, writing: bool, roots: tuple[str, ...] | None = None) -> str | None:
+        """Verdict for a path under a configured shared_inputs root, or None if it is not one.
+
+        Returns "" for an allowed read (distinct from None, "not a shared
+        path"), so a caller can tell the two apart. Shared reference data is
+        read-only to everyone: a write there is refused even in the one
+        direction the layout would otherwise ignore, because it is the single
+        piece of state every hypothesis in the campaign sees.
+        """
+
+        for index, base in enumerate(self.shared if roots is None else roots):
+            if _within(path, base) is None:
+                continue
+            if writing:
+                return f"{raw} is shared campaign input, which is read-only; write into outputs/{self.run_id}/"
+            # Record the configured spelling, not the resolved one, so the
+            # record names the path the campaign declared.
+            self.shared_reads.append({"shared": self.shared[index], "path": raw if os.path.isabs(raw) else path})
+            return ""
+        return None
 
     def _own(self, parts: list[str], raw: str, writing: bool) -> str | None:
         """A path inside this hypothesis's folder; ``parts`` are relative to its root.
@@ -571,6 +796,9 @@ class _Scope:
                 # The HPC folder mirrors the local layout, so the local run.json
                 # says whether that remote run completed.
                 return self._other_run(foreign, raw, writing)
+            problem = self._shared_path(path, raw, writing)
+            if problem is not None:
+                return problem or None
             return f"{label} {raw} is outside this hypothesis's HPC workspace {self.remote_root}" if required else None
         return self._own(parts, raw, writing)
 
@@ -630,6 +858,15 @@ class _Scope:
                     where = "another hypothesis's workspace"
                 if problem:
                     return f"code refers to {where}: {problem}"
+        # Shared reference data named in a program is the normal way a remote
+        # child reads it (there is no path argument to inspect), so it is
+        # collected here for provenance. Reads there are always allowed, so
+        # nothing is returned; a write cannot be told from a read in code.
+        for base in self.shared:
+            for spelling in self._spellings(base):
+                pattern = re.escape(spelling.rstrip("/")) + r"(?:/[^\s'\"(),;\]]*)?"
+                for match in re.finditer(pattern, text):
+                    self._shared_path(self._canonical(match.group(0)), match.group(0), writing=False)
         for base in self._spellings(self.batch_root) if self.batch_root else ():
             pattern = re.escape(base.rstrip("/")) + r"/([A-Za-z0-9._-]+)((?:/[^\s'\"(),;\]]*)?)"
             for match in re.finditer(pattern, text):
@@ -865,7 +1102,7 @@ def capture_code(payload: Mapping[str, Any], start: Mapping[str, Any] | None) ->
     scope = _Scope(payload, start)
     _violation(payload, scope)  # the policy already allowed this call; this collects scope.reads
     entry = _call_entry(payload)
-    if entry is None and not scope.reads:
+    if entry is None and not scope.reads and not scope.shared_reads:
         return
     with _locked(root):
         path = root / "runs" / run_id / RUN_FILE
@@ -901,6 +1138,23 @@ def capture_code(payload: Mapping[str, Any], start: Mapping[str, Any] | None) ->
                     "actor": {"role": "code-generator", "session_id": _text(start.get("child_session_id"))},
                 },
             )
+        for read in scope.shared_reads:
+            key = (None, None, None, read["path"])
+            if key in known:
+                continue
+            known.add(key)
+            item = {**read, **_local_input_hash(read["path"])}
+            inputs.append(item)
+            _append_log_unlocked(
+                root,
+                "note",
+                {
+                    "run": run_id,
+                    "what": f"reads shared campaign input {read['path']}",
+                    "input": item,
+                    "actor": {"role": "code-generator", "session_id": _text(start.get("child_session_id"))},
+                },
+            )
         run["inputs"] = inputs
         _write_json(path, run)
 
@@ -930,6 +1184,25 @@ def _call_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
     else:
         return None
     return entry
+
+
+def _local_input_hash(path: str) -> dict[str, Any]:
+    """Hash a shared input the hook can see; a remote-only one is recorded unhashed.
+
+    A shared path may be on HPC, where the hook has no access, so the hash is
+    best effort. ``hashed: false`` says the record names the file but does not
+    pin its bytes -- weaker provenance than a copied data/ input, which is the
+    trade shared_inputs makes for not duplicating large reference data.
+    """
+
+    file = Path(path)
+    try:
+        if file.is_file():
+            sha256, size = _file_digest(file)
+            return {"sha256": sha256, "bytes": size, "hashed": True}
+    except OSError:
+        pass
+    return {"hashed": False}
 
 
 def _source_hash(base: Path, read: Mapping[str, str]) -> dict[str, str]:
@@ -1032,13 +1305,17 @@ def harvest_program(batch_root: str, outputs_dir: str) -> str:
     ))
 
 
-def remote_manifest(summary: str, run_id: str) -> tuple[list[dict[str, Any]], str]:
-    """Parse the child's LAST ``LOAM_MANIFEST`` block from its report: (entries, status).
+def remote_manifest(summary: str, run_id: str, prefix: str = "") -> tuple[list[dict[str, Any]], str]:
+    """Parse the LAST ``LOAM_MANIFEST`` block out of text: (entries, status).
 
     On HPC the hook cannot list the run's files, so the child is told (see
     hypothesis_orchestration._layout_block) to print this block. Status is
     ``recorded``, ``missing`` (no block) or ``invalid`` (a malformed entry, or a
-    path that leaves outputs/rM). Nothing is guessed.
+    path that leaves the folder it describes). Nothing is guessed.
+
+    ``prefix`` is what the printed paths are relative to, as the record spells
+    it: ``outputs/<run_id>`` for a run's outputs (the default, from ``run_id``),
+    and empty for a seeded data/, whose entries are recorded relative to data/.
     """
 
     blocks = _MANIFEST_BLOCK.findall(summary)
@@ -1056,7 +1333,8 @@ def remote_manifest(summary: str, run_id: str) -> tuple[list[dict[str, Any]], st
             return [], "invalid"
         if os.path.isabs(relative) or relative.split(os.sep)[0] == os.pardir or not _SHA256.fullmatch(digest):
             return [], "invalid"
-        entries.append({"path": f"outputs/{run_id}/{relative}", "sha256": digest, "bytes": size})
+        where = prefix if prefix else (f"outputs/{run_id}" if run_id else "")
+        entries.append({"path": f"{where}/{relative}" if where else relative, "sha256": digest, "bytes": size})
     return entries, "recorded"
 
 
@@ -1251,6 +1529,31 @@ def _launch_verifier(payload: Mapping[str, Any], start: Mapping[str, Any], root:
             command, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True, close_fds=True
         )
     append_log(root, "note", {"what": f"verifier launched: {' '.join(args)}"})
+
+
+def _launch_seed(payload: Mapping[str, Any], plan_id: str, hypothesis_id: str, root: Path) -> None:
+    """Launch the verifier's ``seed`` for a staged HPC inputs directory, once per hypothesis.
+
+    Only for remote execution: with a local workdir the hook copies the inputs
+    itself in ensure_workspace. Skipped once experiment.json records a remote
+    seed, so a validator restarting on an existing workspace does not re-copy.
+    """
+
+    config = settings(payload) or {}
+    source = _text(config.get("remote_inputs_dir"))
+    execution = payload.get("loam_execution")
+    execution = execution if isinstance(execution, Mapping) else {}
+    if not source or _text(execution.get("mode")) != "remote_mcp":
+        return
+    recorded = read_json(root / EXPERIMENT_FILE).get("inputs", [])
+    if any(isinstance(item, Mapping) and item.get("how") == "copied_on_hpc" for item in recorded):
+        return
+    _launch_verifier(
+        payload,
+        {"plan_id": plan_id, "hypothesis_id": hypothesis_id},
+        root,
+        ["seed", "--source", source, "--max-bytes", str(input_cap(payload))],
+    )
 
 
 # --- verifier side (called from .loam/reconcile/verify_workspace.py) ---------------

@@ -64,6 +64,16 @@ profiles:
       # Hashes remote outputs a child didn't report; needs fastmcp.
       verifier_python: /ABS/PATH/TO/.loam-venv-312/bin/python
       verifier_mcp_url: http://127.0.0.1:8000/mcp
+      # Campaign inputs. inputs_dir is copied into every hypothesis's data/ and
+      # hashed into experiment.json; remote_inputs_dir is the same thing already
+      # staged on HPC, which the verifier copies (a hook cannot reach HPC).
+      # inputs_dir: /ABS/PATH/TO/campaign/inputs
+      # remote_inputs_dir: /flare/PROJECT/USER/campaign-inputs
+      # Read-only reference data too big to copy per hypothesis: children read
+      # it in place and every file read is recorded as an input.
+      # shared_inputs:
+      #   - /flare/PROJECT/shared/pdb
+      # max_input_bytes: 1073741824
 
     execution:
       mode: remote_mcp                    # or: local (for CAMPAIGN_TEST.md)

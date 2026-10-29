@@ -839,7 +839,7 @@ class WorkspaceStopTests(_StopHelpers, unittest.TestCase):
             orchestration.workspace_capture(call)
             orchestration.workspace_capture(call)  # recorded once
 
-            inputs = self._run(root, "r1")["inputs"]
+            inputs = self._run(root, "r1").get("inputs", [])
             self.assertEqual(len(inputs), 1)
             self.assertEqual(
                 {k: inputs[0][k] for k in ("plan_id", "hypothesis_id", "run", "path")},
@@ -888,7 +888,7 @@ class WorkspaceStopTests(_StopHelpers, unittest.TestCase):
                     "arguments": {"payload": code, "workdir": f"{self.REMOTE}/h-1/scratch/r1"}}
             self.assertIsNone(orchestration.workspace_policy(call))
             orchestration.workspace_capture(call)
-            inputs = self._run(root, "r1")["inputs"]
+            inputs = self._run(root, "r1").get("inputs", [])
             self.assertEqual((inputs[0]["plan_id"], inputs[0]["hypothesis_id"], inputs[0]["sha256"]), ("plan-0", "h-0", "b" * 64))
             blocked = {**call, "arguments": {**call["arguments"], "payload": "open('/lus/campaign/work/plan-0/h-0/scratch/r1/t')"}}
             self.assertIn("only outputs/rK/", orchestration.workspace_policy(blocked)["message"])
@@ -1343,6 +1343,419 @@ class WorkspaceBatchTests(_StopHelpers, unittest.TestCase):
                                       "--remote-root", f"{self.REMOTE}/h-1", "--mcp-url", "http://x/mcp"])
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(out.getvalue())["unfinished"], [])
+
+
+
+MANIFEST_HOOK = HOOKS / "run_manifest.py"
+
+
+class WorkspaceLiveCampaignFixTests(_StopHelpers, unittest.TestCase):
+    """Fixes found by the first live Aurora campaign round."""
+
+    def test_run_manifest_records_the_workspace(self) -> None:
+        """FINDING-1: an auditor must be able to see the workspace was enforced."""
+
+        manifest = _load("loam_run_manifest_ws", MANIFEST_HOOK)
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            payload["event"] = "subagent_start"
+            path = manifest.ensure(payload)
+            campaign = json.loads(Path(path).read_text())["campaign"]
+            self.assertTrue(campaign["workspace_enabled"])
+            self.assertTrue(campaign["workspace_strict"])
+            self.assertEqual(campaign["workspace_root"], payload["loam_workspace"]["root"])
+            self.assertFalse(campaign["workspace_verifier"])  # none configured here
+
+    def test_run_manifest_says_so_when_the_workspace_is_off(self) -> None:
+        manifest = _load("loam_run_manifest_no_ws", MANIFEST_HOOK)
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), workspace=False)
+            payload["event"] = "subagent_start"
+            campaign = json.loads(Path(manifest.ensure(payload)).read_text())["campaign"]
+            self.assertEqual(campaign["workspace_enabled"], False)
+            self.assertNotIn("workspace_root", campaign)
+
+    def test_child_is_told_run_code_needs_a_workdir(self) -> None:
+        """FINDING-2: the rule fs_policy enforces must be stated, not discovered by being blocked."""
+
+        orchestration = self._orchestration()
+        block = orchestration._layout_block("/hpc/plan-1/h-1", "r2", remote=True)
+        self.assertIn("EVERY run_code call MUST pass workdir=/hpc/plan-1/h-1/scratch/r2", block)
+        self.assertIn("REFUSED", block)
+        # Results still go to outputs/rM, but by absolute path from inside the
+        # program -- outputs/ must NOT be offered as a run_code workdir, or the
+        # server's temp payload script lands there and corrupts the manifest.
+        self.assertIn("/hpc/plan-1/h-1/outputs/r2", block)
+        self.assertIn("never outputs/", block)
+        self.assertNotIn("workdir=/hpc/plan-1/h-1/outputs/r2", block)
+        # Local mode needs it too: fs_policy only requires workdir for run_code,
+        # so a local child must not be given the remote-only wording.
+        self.assertNotIn("MUST pass workdir", orchestration._layout_block("/w/plan-1/h-1", "r2"))
+
+    def test_recheck_fills_an_unverified_run_instead_of_skipping_it(self) -> None:
+        """FINDING-4: recheck must not depend on a detached fill having already landed."""
+
+        orchestration = self._orchestration()
+        verifier = _load("loam_verify_selfheal", VERIFIER)
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Fold."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            self._stop(orchestration, payload, "child-1", summary="no manifest printed")
+            self.assertEqual(self._run(root, "r1")["manifest_status"], "missing")
+
+            outputs = Path(tmp) / "hpc" / "plan-1" / "h-1" / "outputs" / "r1"
+            outputs.mkdir(parents=True)
+            (outputs / "fold.cif").write_text("data_x\n")
+            run_code, _ = self._fake_hpc(Path(tmp) / "hpc")
+
+            # recheck alone, with no prior fill: it must verify the run anyway.
+            problems = verifier.recheck(root, "/lus/campaign/work/plan-1/h-1", run_code)
+            self.assertEqual(problems, [])
+            run = self._run(root, "r1")
+            self.assertEqual(run["manifest_status"], "recorded_by_loam")
+            self.assertEqual([m["path"] for m in run["manifest"]], ["outputs/r1/fold.cif"])
+            # Now a real post-freeze change is detected on the next recheck.
+            (outputs / "fold.cif").write_text("tampered")
+            self.assertEqual(
+                verifier.recheck(root, "/lus/campaign/work/plan-1/h-1", run_code),
+                ["outputs/r1/fold.cif changed after run r1 finished"],
+            )
+
+    def _fake_hpc(self, remote_base: Path):
+        import subprocess
+
+        def run_code(program: str, workdir: str) -> str:
+            program = program.replace("/lus/campaign/work", str(remote_base))
+            return subprocess.run([sys.executable, "-c", program], text=True, capture_output=True, check=True).stdout
+
+        return run_code, []
+
+
+class WorkspaceInputTests(_StopHelpers, unittest.TestCase):
+    """Group 7: campaign inputs copied into data/, and shared read-only reference data."""
+
+    def _policy(self, orchestration, base: dict, session: str, tool_name: str, /, **arguments):
+        return orchestration.workspace_policy({**base, "session_id": session, "tool_name": tool_name, "arguments": arguments})
+
+    def _fake_hpc(self, remote_base: Path):
+        """A run_code that runs the program locally, with /lus/campaign mapped to ``remote_base``."""
+
+        import subprocess
+
+        calls = []
+
+        def run_code(program: str, workdir: str) -> str:
+            calls.append(workdir)
+            program = program.replace("/lus/campaign/work", str(remote_base / "work"))
+            program = program.replace(str(remote_base / "staged"), str(remote_base / "staged"))
+            return subprocess.run([sys.executable, "-c", program], text=True, capture_output=True, check=True).stdout
+
+        return run_code, calls
+
+    def _inputs_dir(self, tmp: Path) -> Path:
+        source = tmp / "campaign-inputs"
+        (source / "targets").mkdir(parents=True)
+        (source / "README.md").write_text("read me")
+        (source / "targets" / "egfr.fasta").write_text(">t\nMKV\n")
+        return source
+
+    # config -------------------------------------------------------------------------
+    def test_input_settings_reach_the_payload_only_when_set(self) -> None:
+        config = _load("loam_config_inputs", CONFIG)
+        with tempfile.TemporaryDirectory() as tmp:
+            bare = _profile_yaml(Path(tmp), {"enabled": True})
+            with patch.dict(os.environ, {"LOAM_CONFIG_PATH": str(bare)}, clear=False):
+                values = config.payload_values(config.load_profile())["loam_workspace"]
+            for key in ("inputs_dir", "remote_inputs_dir", "shared_inputs", "max_input_bytes"):
+                self.assertNotIn(key, values)
+
+            second = Path(tmp) / "b"
+            second.mkdir()
+            full = _profile_yaml(second, {
+                "enabled": True, "inputs_dir": "~/campaign/inputs", "remote_inputs_dir": "/lus/staged",
+                "shared_inputs": ["/lus/ref/pdb/", "relative/dropped", "/lus/ref/pdb", "~/local-ref"],
+                "max_input_bytes": 4096,
+            })
+            with patch.dict(os.environ, {"LOAM_CONFIG_PATH": str(full)}, clear=False):
+                values = config.payload_values(config.load_profile())["loam_workspace"]
+            self.assertEqual(values["inputs_dir"], str(Path("~/campaign/inputs").expanduser()))
+            self.assertEqual(values["remote_inputs_dir"], "/lus/staged")
+            self.assertEqual(values["max_input_bytes"], 4096)
+            # Relative paths dropped, duplicates collapsed, trailing slash stripped, ~ expanded.
+            self.assertEqual(values["shared_inputs"], ["/lus/ref/pdb", str(Path("~/local-ref").expanduser())])
+
+    # seeding data/ ------------------------------------------------------------------
+    def test_validator_start_copies_inputs_into_data_and_records_hashes(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._inputs_dir(Path(tmp))
+            payload = self._payload(Path(tmp))
+            payload["loam_workspace"]["inputs_dir"] = str(source)
+            self._start(orchestration, payload, "validator-1", VALIDATOR_GOAL)
+
+            root = Path(tmp) / "hypotheses" / "plan-1" / "h-1"
+            self.assertEqual((root / "data" / "README.md").read_text(), "read me")
+            self.assertEqual((root / "data" / "targets" / "egfr.fasta").read_text(">t\nMKV\n".__class__()) if False else
+                             (root / "data" / "targets" / "egfr.fasta").read_text(), ">t\nMKV\n")
+            inputs = json.loads((root / "experiment.json").read_text())["inputs"]
+            self.assertEqual([i["path"] for i in inputs], ["README.md", "targets/egfr.fasta"])
+            self.assertEqual(
+                inputs[0]["sha256"], hashlib.sha256(b"read me").hexdigest()
+            )
+            self.assertEqual((inputs[0]["bytes"], inputs[0]["how"], inputs[0]["source"]), (7, "copied_by_hook", str(source)))
+            self.assertTrue(any("seeded 2 input file(s)" in str(e.get("what")) for e in self._log(root)))
+
+    def test_seeding_is_idempotent_and_does_not_rehash_every_start(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._inputs_dir(Path(tmp))
+            payload = self._payload(Path(tmp))
+            payload["loam_workspace"]["inputs_dir"] = str(source)
+            self._start(orchestration, payload, "validator-1", VALIDATOR_GOAL)
+            root = Path(tmp) / "hypotheses" / "plan-1" / "h-1"
+            # An operator correction in data/ survives a second validator start.
+            (root / "data" / "README.md").write_text("corrected by hand")
+            self._start(orchestration, payload, "validator-2", VALIDATOR_GOAL)
+            self.assertEqual((root / "data" / "README.md").read_text(), "corrected by hand")
+            seeded = [e for e in self._log(root) if "seeded" in str(e.get("what"))]
+            self.assertEqual(len(seeded), 1)
+
+    def test_changed_campaign_input_is_recorded_as_a_violation(self) -> None:
+        workspace = _load("loam_ws_input_change")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "h"
+            (root / "data").mkdir(parents=True)
+            workspace._write_json(root / "experiment.json", {"schema": "loam_experiment_v1", "runs": []})
+            first = [{"path": "a.fasta", "sha256": "a" * 64, "bytes": 3}]
+            workspace.record_inputs(root, first, "/lus/staged", "copied_on_hpc")
+            second = [{"path": "a.fasta", "sha256": "b" * 64, "bytes": 4}]
+            workspace.record_inputs(root, second, "/lus/staged", "copied_on_hpc")
+
+            inputs = workspace.read_json(root / "experiment.json")["inputs"]
+            self.assertEqual(inputs[0]["sha256"], "b" * 64)  # newest wins
+            violations = [e for e in self._log(root) if e["kind"] == "violation"]
+            self.assertEqual(len(violations), 1)
+            self.assertIn("campaign input changed after it was recorded", violations[0]["what"])
+            self.assertIn("aaaaaaaaaaaa -> bbbbbbbbbbbb", violations[0]["what"])
+
+    def test_oversize_inputs_are_refused_whole(self) -> None:
+        workspace = _load("loam_ws_input_cap")
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._inputs_dir(Path(tmp))
+            root = Path(tmp) / "h"
+            (root / "data").mkdir(parents=True)
+            entries, problem = workspace.seed_inputs(root, str(source), cap=5)
+            self.assertEqual(entries, [])
+            self.assertIn("over the 5-byte limit", problem)
+            # Nothing copied: a half-seeded data/ would look complete.
+            self.assertEqual(list((root / "data").rglob("*")), [])
+
+    def test_missing_inputs_dir_is_a_violation_not_a_crash(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            payload["loam_workspace"]["inputs_dir"] = str(Path(tmp) / "nope")
+            row = self._start(orchestration, payload, "validator-1", VALIDATOR_GOAL)
+            root = Path(tmp) / "hypotheses" / "plan-1" / "h-1"
+            self.assertNotIn("workspace_error", row)
+            violations = [e for e in self._log(root) if e["kind"] == "violation"]
+            self.assertIn("campaign inputs not seeded", violations[0]["what"])
+
+    def test_symlinked_input_is_copied_not_linked(self) -> None:
+        workspace = _load("loam_ws_input_symlink")
+        with tempfile.TemporaryDirectory() as tmp:
+            outside = Path(tmp) / "outside.txt"
+            outside.write_text("secret")
+            source = Path(tmp) / "inputs"
+            source.mkdir()
+            (source / "link.txt").symlink_to(outside)
+            root = Path(tmp) / "h"
+            (root / "data").mkdir(parents=True)
+            entries, problem = workspace.seed_inputs(root, str(source), cap=1 << 20)
+            self.assertEqual(problem, "")
+            self.assertEqual([e["path"] for e in entries], ["link.txt"])
+            self.assertFalse((root / "data" / "link.txt").is_symlink())
+            self.assertEqual((root / "data" / "link.txt").read_text(), "secret")
+
+    # remote seeding ------------------------------------------------------------------
+    def test_remote_inputs_dir_launches_the_verifier_seed_once(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            payload["loam_workspace"].update(
+                remote_inputs_dir="/lus/staged/egfr", verifier_python=sys.executable,
+                verifier_mcp_url="http://127.0.0.1:8000/mcp",
+            )
+            import subprocess
+
+            launched: list[list[str]] = []
+            with patch.object(subprocess, "Popen", lambda cmd, **kw: launched.append(cmd)):
+                self._start(orchestration, payload, "validator-1", VALIDATOR_GOAL)
+            self.assertEqual(len(launched), 1)
+            self.assertEqual(launched[0][2:5], ["seed", "--source", "/lus/staged/egfr"])
+            self.assertIn("--max-bytes", launched[0])
+
+            # Once a remote seed is recorded, a later validator start does not re-copy.
+            root = Path(tmp) / "hypotheses" / "plan-1" / "h-1"
+            workspace = _load("loam_ws_seed_recorded")
+            workspace.record_inputs(root, [{"path": "a", "sha256": "c" * 64, "bytes": 1}], "/lus/staged/egfr", "copied_on_hpc")
+            launched.clear()
+            with patch.object(subprocess, "Popen", lambda cmd, **kw: launched.append(cmd)):
+                self._start(orchestration, payload, "validator-2", VALIDATOR_GOAL)
+            self.assertEqual(launched, [])
+
+    def test_local_mode_does_not_launch_a_remote_seed(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp), mode="local")
+            payload["loam_workspace"].update(
+                remote_inputs_dir="/lus/staged/egfr", verifier_python=sys.executable,
+                verifier_mcp_url="http://127.0.0.1:8000/mcp",
+            )
+            import subprocess
+
+            launched: list[list[str]] = []
+            with patch.object(subprocess, "Popen", lambda cmd, **kw: launched.append(cmd)):
+                self._start(orchestration, payload, "validator-1", VALIDATOR_GOAL)
+            self.assertEqual(launched, [])
+
+    def test_verifier_seed_copies_on_hpc_and_records_locally(self) -> None:
+        verifier = _load("loam_verifier_seed", ROOT / ".loam" / "reconcile" / "verify_workspace.py")
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            root, _ = self._hypothesis(orchestration, payload, "h-1", ["Make results."])
+            remote_base = Path(tmp) / "remote"
+            staged = remote_base / "staged"
+            staged.mkdir(parents=True)
+            (staged / "egfr.fasta").write_text(">t\nMKV\n")
+            (remote_base / "work" / "plan-1" / "h-1" / "data").mkdir(parents=True)
+            run_code, calls = self._fake_hpc(remote_base)
+
+            result = verifier.seed(root, str(staged), "/lus/campaign/work/plan-1/h-1", 1 << 20, run_code)
+
+            self.assertEqual(result, "recorded")
+            copied = remote_base / "work" / "plan-1" / "h-1" / "data" / "egfr.fasta"
+            self.assertEqual(copied.read_text(), ">t\nMKV\n")
+            inputs = json.loads((root / "experiment.json").read_text())["inputs"]
+            self.assertEqual([i["path"] for i in inputs], ["egfr.fasta"])
+            self.assertEqual(inputs[0]["sha256"], hashlib.sha256(b">t\nMKV\n").hexdigest())
+            self.assertEqual(inputs[0]["how"], "copied_on_hpc")
+
+    def test_verifier_seed_over_the_cap_logs_a_violation(self) -> None:
+        verifier = _load("loam_verifier_seed_cap", ROOT / ".loam" / "reconcile" / "verify_workspace.py")
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            root, _ = self._hypothesis(orchestration, payload, "h-1", ["Make results."])
+            remote_base = Path(tmp) / "remote"
+            staged = remote_base / "staged"
+            staged.mkdir(parents=True)
+            (staged / "big.bin").write_text("x" * 100)
+            (remote_base / "work" / "plan-1" / "h-1" / "data").mkdir(parents=True)
+
+            import subprocess
+
+            def run_code(program: str, workdir: str) -> str:
+                program = program.replace("/lus/campaign/work", str(remote_base))
+                done = subprocess.run([sys.executable, "-c", program], text=True, capture_output=True)
+                if done.returncode:
+                    raise RuntimeError(done.stderr.strip().splitlines()[-1])
+                return done.stdout
+
+            self.assertEqual(verifier.seed(root, str(staged), "/lus/campaign/work/plan-1/h-1", 10, run_code), "failed")
+            violations = [e for e in self._log(root) if e["kind"] == "violation"]
+            self.assertIn("could not seed inputs", violations[0]["what"])
+            self.assertIn("over the 10-byte limit", violations[0]["what"])
+            self.assertEqual(list((remote_base / "work" / "plan-1" / "h-1" / "data").rglob("*")), [])
+
+    # shared_inputs -------------------------------------------------------------------
+    def test_shared_inputs_are_readable_in_place_and_recorded_as_run_inputs(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            shared = Path(tmp) / "ref"
+            shared.mkdir()
+            reference = shared / "pdb" / "6aru.cif"
+            reference.parent.mkdir()
+            reference.write_text("structure")
+            payload = self._payload(Path(tmp))
+            payload["loam_workspace"]["shared_inputs"] = [str(shared)]
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Make results."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+
+            # A read is allowed, and the child is told about it in its instructions.
+            self.assertIsNone(self._policy(orchestration, payload, "child-1", "read_file", path=str(reference)))
+            self.assertIn("shared campaign reference data, readable in place", tasks[0]["context"])
+            self.assertIn(f"{shared}/", tasks[0]["context"])
+
+            orchestration.workspace_capture(
+                {**payload, "session_id": "child-1", "tool_name": "read_file", "arguments": {"path": str(reference)}}
+            )
+            inputs = self._run(root, "r1").get("inputs", [])
+            self.assertEqual(len(inputs), 1)
+            self.assertEqual(inputs[0]["shared"], str(shared))
+            self.assertEqual(inputs[0]["path"], str(reference))
+            self.assertEqual(inputs[0]["sha256"], hashlib.sha256(b"structure").hexdigest())
+            self.assertTrue(inputs[0]["hashed"])
+            self.assertTrue(any("reads shared campaign input" in str(e.get("what")) for e in self._log(root)))
+
+    def test_writing_to_shared_inputs_is_blocked(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            shared = Path(tmp) / "ref"
+            shared.mkdir()
+            payload = self._payload(Path(tmp))
+            payload["loam_workspace"]["shared_inputs"] = [str(shared)]
+            _, tasks = self._hypothesis(orchestration, payload, "h-1", ["Make results."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+
+            blocked = self._policy(
+                orchestration, payload, "child-1", "write_file", path=str(shared / "new.txt"), content="x"
+            )
+            assert blocked is not None
+            self.assertIn("read-only", blocked["message"])
+
+    def test_without_shared_inputs_an_outside_path_is_still_not_an_input(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            elsewhere = Path(tmp) / "ref" / "x.cif"
+            elsewhere.parent.mkdir()
+            elsewhere.write_text("structure")
+            payload = self._payload(Path(tmp))  # no shared_inputs configured
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Make results."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            self.assertNotIn("shared campaign reference data", tasks[0]["context"])
+
+            # Reading an unrelated local path was always tolerated; it is simply
+            # not provenance, so it must not appear among the run's inputs.
+            orchestration.workspace_capture(
+                {**payload, "session_id": "child-1", "tool_name": "read_file", "arguments": {"path": str(elsewhere)}}
+            )
+            self.assertEqual(self._run(root, "r1").get("inputs", []), [])
+
+    def test_remote_shared_input_is_recorded_unhashed(self) -> None:
+        orchestration = self._orchestration()
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            payload["loam_workspace"]["shared_inputs"] = ["/lus/ref"]
+            root, tasks = self._hypothesis(orchestration, payload, "h-1", ["Make results."])
+            self._start(orchestration, payload, "child-1", tasks[0]["goal"])
+            remote_file = "/lus/ref/pdb/6aru.cif"
+
+            self.assertIsNone(
+                self._policy(orchestration, payload, "child-1", "mcp_hpc_inspect_filesystem",
+                             operation="cat", path=remote_file)
+            )
+            orchestration.workspace_capture({
+                **payload, "session_id": "child-1", "tool_name": "mcp_hpc_run_code",
+                "arguments": {"payload": f"print(open({remote_file!r}).read())",
+                              "workdir": "/lus/campaign/work/plan-1/h-1/scratch/r1"},
+            })
+            inputs = self._run(root, "r1").get("inputs", [])
+            self.assertEqual(inputs[0]["path"], remote_file)
+            self.assertFalse(inputs[0]["hashed"])
+            self.assertNotIn("sha256", inputs[0])
 
 
 if __name__ == "__main__":

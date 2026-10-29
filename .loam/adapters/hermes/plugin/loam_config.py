@@ -102,6 +102,20 @@ class WorkspaceConfig:
     # no verifier is launched and a missing remote manifest stays missing.
     verifier_python: str = ""
     verifier_mcp_url: str = ""
+    # Campaign inputs every hypothesis starts with, COPIED into its own data/
+    # so the record is self-contained: `inputs_dir` is a local directory copied
+    # by the hook, `remote_inputs_dir` an HPC directory the operator staged once
+    # and the verifier copies (a hook cannot reach HPC). Either may be set.
+    inputs_dir: str = ""
+    remote_inputs_dir: str = ""
+    # Read-only reference data too large to copy per hypothesis. Children may
+    # READ these absolute paths in place; each read is recorded as an input.
+    # Nothing is ever written there, and it is opt-in: unset, the only readable
+    # inputs are the hypothesis's own data/.
+    shared_inputs: tuple[str, ...] = ()
+    # Refuse a seed bigger than this rather than silently copying a dataset
+    # into every hypothesis. 0 keeps the hook's default.
+    max_input_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -198,7 +212,29 @@ def _workspace_config(value: Any) -> WorkspaceConfig | None:
         strict=raw.get("strict") is not False,
         verifier_python=_clean_text(raw.get("verifier_python")),
         verifier_mcp_url=_clean_text(raw.get("verifier_mcp_url")),
+        inputs_dir=_clean_text(raw.get("inputs_dir")),
+        remote_inputs_dir=_clean_text(raw.get("remote_inputs_dir")),
+        shared_inputs=_shared_inputs(raw.get("shared_inputs")),
+        max_input_bytes=_positive_int(raw.get("max_input_bytes"), 0),
     )
+
+
+def _shared_inputs(value: Any) -> tuple[str, ...]:
+    """`shared_inputs: [/abs/path, ...]` -- absolute paths only, deduplicated.
+
+    A relative path is dropped rather than resolved: these are matched against
+    paths a child names, and the hook's working directory is not the child's.
+    """
+
+    items = value if isinstance(value, (list, tuple)) else [value] if value else []
+    paths = []
+    for item in items:
+        text = _clean_text(item).rstrip("/")
+        if text.startswith("~"):
+            text = str(Path(text).expanduser()).rstrip("/")
+        if text.startswith("/") and text not in paths:
+            paths.append(text)
+    return tuple(paths)
 
 
 def _aliases(value: Any) -> tuple[tuple[str, str], ...]:
@@ -423,9 +459,13 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "root": str(Path(workspace.root).expanduser() if workspace.root else profile.state_dir / "hypotheses"),
             "strict": workspace.strict,
         }
-        for key in ("verifier_python", "verifier_mcp_url"):
+        for key in ("verifier_python", "verifier_mcp_url", "remote_inputs_dir", "max_input_bytes"):
             if getattr(workspace, key):
                 values["loam_workspace"][key] = getattr(workspace, key)
+        if workspace.inputs_dir:
+            values["loam_workspace"]["inputs_dir"] = str(Path(workspace.inputs_dir).expanduser())
+        if workspace.shared_inputs:
+            values["loam_workspace"]["shared_inputs"] = list(workspace.shared_inputs)
     run_id = _clean_text(os.environ.get("LOAM_RUN_ID"))
     if run_id:
         values["loam_run_id"] = run_id

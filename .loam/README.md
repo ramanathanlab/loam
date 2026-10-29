@@ -157,7 +157,7 @@ $LOAM_STATE_DIR/hypotheses/<plan_id>/<hypothesis_id>/
 ├─ runs/rM/run.json  per child: goal, state, code hashes, inputs, manifest   hooks only
 ├─ outputs/rM/       that run's result files; frozen when the run ends
 ├─ scratch/rM/       that run's temporary files; never hashed
-└─ data/             inputs supplied up front; read-only to agents
+└─ data/             campaign inputs, seeded before any child runs; read-only to agents
 ```
 
 On HPC the same layout lives under `<execution.workdir_root>/<plan_id>/<hypothesis_id>/`.
@@ -187,6 +187,23 @@ On HPC the same layout lives under `<execution.workdir_root>/<plan_id>/<hypothes
   batch-folder reads are limited to the run's own batches. The child is given a
   program that copies a finished batch into `outputs/rM/<batch_id>/`, so batch
   results are hashed, frozen and shareable like any other output.
+- **Campaign inputs.** `workspace.inputs_dir` is copied into every hypothesis's
+  `data/` before its children run, and each file is hashed into `experiment.json`
+  `inputs`. Each hypothesis gets its own copy on purpose: editing the campaign's
+  inputs afterwards cannot retroactively change what an earlier hypothesis was
+  given, and a file whose hash no longer matches what was recorded is logged as a
+  violation rather than silently replaced. Symlinks are resolved, so `data/` can
+  never point out of the workspace, and a seed over `max_input_bytes` (default
+  1 GiB) is refused whole rather than copied halfway. For remote execution the
+  hook cannot write to HPC, so stage the inputs there once and set
+  `remote_inputs_dir`: the validator's start launches the verifier's `seed`,
+  which copies them where they are and records the hashes locally.
+  `shared_inputs` is the other half of the trade: absolute paths of read-only
+  reference data too large to copy per hypothesis. Children may read them in
+  place and nothing may write there; each file read is recorded in the run's
+  `inputs`, with a hash when the hook can see the file and `hashed: false` when
+  it is HPC-side. That is weaker provenance than a copied `data/`, which is why
+  it is opt-in and per-path.
 - **HPC verifier.** The hooks can't reach HPC files. When configured,
   `.loam/reconcile/verify_workspace.py` is launched detached: `fill` hashes a
   remote run whose child reported no manifest (`recorded_by_loam`), and `recheck`
@@ -201,6 +218,10 @@ On HPC the same layout lives under `<execution.workdir_root>/<plan_id>/<hypothes
       strict: true           # false: violations are logged, not blocked
       verifier_python: /abs/path/to/venv/bin/python   # needs fastmcp
       verifier_mcp_url: http://127.0.0.1:8000/mcp     # the HPC MCP server
+      inputs_dir: ""         # local dir copied into every hypothesis's data/
+      remote_inputs_dir: ""  # dir already staged on HPC; the verifier copies it
+      shared_inputs: []      # absolute paths children may read in place, read-only
+      max_input_bytes: 0     # 0: 1 GiB; refuses an oversize seed whole
     execution:
       workdir_root: /flare/<PROJECT>/<USER>/hpc-run/work
       batch_root: ""         # default: <workdir_root>/../batches (the server's HPC_BATCH_ROOT)

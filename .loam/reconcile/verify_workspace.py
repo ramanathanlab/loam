@@ -59,14 +59,27 @@ def fill(root: Path, run_id: str, remote_root: str, run_code: RunCode) -> str:
 
 
 def recheck(root: Path, remote_root: str, run_code: RunCode) -> list[str]:
-    """Re-hash every completed, verified run on HPC; log and return what changed since."""
+    """Re-hash every completed run on HPC; log and return what changed since it finished.
+
+    A completed run whose manifest is not verified yet is filled first rather
+    than skipped. The two verifier invocations are detached and independent, so
+    a validator that finishes before a child's ``fill`` lands would otherwise
+    leave exactly the run that needs checking unchecked (observed live: the
+    "recheck" launch preceded r2's fill). Filling here makes recheck
+    self-healing and order-independent.
+    """
 
     experiment = workspace.read_json(root / workspace.EXPERIMENT_FILE)
     problems: list[str] = []
     for run_id in experiment.get("runs", []):
         run = workspace.read_json(root / "runs" / run_id / workspace.RUN_FILE)
-        if run.get("state") != "completed" or run.get("manifest_status") not in workspace.VERIFIED_MANIFESTS:
+        if run.get("state") != "completed":
             continue
+        if run.get("manifest_status") not in workspace.VERIFIED_MANIFESTS:
+            fill(root, run_id, remote_root, run_code)
+            run = workspace.read_json(root / "runs" / run_id / workspace.RUN_FILE)
+            if run.get("manifest_status") not in workspace.VERIFIED_MANIFESTS:
+                continue  # fill failed and already logged why
         try:
             printed = run_code(workspace.manifest_program(f"{remote_root}/outputs/{run_id}"), remote_root)
         except Exception as exc:
@@ -99,6 +112,29 @@ def batches(root: Path, run_id: str, status: BatchStatus) -> list[str]:
             unfinished.append(batch_id)
     workspace.record_batch_check(root, run_id, unfinished)
     return unfinished
+
+
+def seed(root: Path, source: str, remote_root: str, cap: int, run_code: RunCode) -> str:
+    """Copy a staged HPC inputs directory into this hypothesis's remote data/, and record it.
+
+    The remote half of workspace.inputs_dir: a hook cannot reach HPC, so the
+    stop/start hook launches this. The copy happens where the files are, and
+    only the resulting hashes come back, which is what lets the LOCAL
+    experiment.json state what the hypothesis was given.
+    """
+
+    program = workspace.seed_program(source, f"{remote_root}/data", cap)
+    try:
+        printed = run_code(program, f"{remote_root}/scratch")
+    except Exception as exc:
+        workspace.log_violations(root, [f"verifier could not seed inputs from {source}: {type(exc).__name__}: {exc}"])
+        return "failed"
+    entries, status = workspace.remote_manifest(printed, "")
+    if status != "recorded":
+        workspace.log_violations(root, [f"verifier got no usable input manifest from {source} ({status})"])
+        return "failed"
+    workspace.record_inputs(root, entries, source, "copied_on_hpc")
+    return "recorded" if entries else "empty"
 
 
 def mcp_call(url: str, tool: str, arguments: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -138,21 +174,29 @@ def mcp_batch_status(url: str, tool: str = "batch_status") -> BatchStatus:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    parser.add_argument("command", choices=("fill", "recheck", "batches"))
+    parser.add_argument("command", choices=("fill", "recheck", "batches", "seed"))
     parser.add_argument("--workspace", type=Path, required=True, help="local hypothesis folder")
     parser.add_argument("--remote-root", required=True, help="the same hypothesis's folder on HPC")
     parser.add_argument("--mcp-url", required=True, help="HPC MCP server, e.g. http://127.0.0.1:8000/mcp")
     parser.add_argument("--tool", default="run_code", help="the server's run_code tool name")
     parser.add_argument("--run", help="run id, for fill and batches")
+    parser.add_argument("--source", help="staged HPC inputs directory, for seed")
+    parser.add_argument("--max-bytes", type=int, default=workspace.DEFAULT_MAX_INPUT_BYTES,
+                        help="refuse a seed larger than this")
     args = parser.parse_args(argv)
     if args.command in {"fill", "batches"} and not args.run:
         parser.error(f"{args.command} needs --run")
+    if args.command == "seed" and not args.source:
+        parser.error("seed needs --source")
     if args.command == "batches":
         unfinished = batches(args.workspace, args.run, mcp_batch_status(args.mcp_url))
         print(json.dumps({"command": "batches", "workspace": str(args.workspace), "run": args.run, "unfinished": unfinished}))
         return 0
     run_code = mcp_run_code(args.mcp_url, args.tool)
-    if args.command == "fill":
+    if args.command == "seed":
+        print(json.dumps({"command": "seed", "workspace": str(args.workspace), "source": args.source,
+                          "result": seed(args.workspace, args.source, args.remote_root, args.max_bytes, run_code)}))
+    elif args.command == "fill":
         print(json.dumps({"command": "fill", "workspace": str(args.workspace), "run": args.run,
                           "result": fill(args.workspace, args.run, args.remote_root, run_code)}))
     else:
