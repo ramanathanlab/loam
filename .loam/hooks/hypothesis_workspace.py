@@ -2045,18 +2045,34 @@ def capture_trace(payload: Mapping[str, Any], start: Mapping[str, Any]) -> bool:
     root = Path(_text(start.get("workspace")))
     role = _text(start.get("role"))
     full = (settings(payload) or {}).get("trace_full") is True
-    if role == "code-generator":
-        run_id = _text(start.get("run"))
-        if not _RUN_ID.fullmatch(run_id or ""):
-            return False
-        dest, where, log_extra = root / "runs" / run_id, root / "runs" / run_id / RUN_FILE, {"run": run_id}
-    elif role == "hypothesis-validator":
-        dest, where, log_extra = root / "validator", root / EXPERIMENT_FILE, {}
-    elif role == "reasoner":
-        # root IS the reasoner dir; its trace sits in it, pointer on reasoner.json.
-        dest, where, log_extra = root, root / REASONER_FILE, {}
-    else:
+    spec = _trace_destination(root, role, _text(start.get("run")))
+    if spec is None:
         return False
+    dest, where, log_extra = spec
+    return _persist_trace(root, dest, where, log_extra, session_id, db_path, full)
+
+
+def _trace_destination(root: Path, role: str, run_id: str) -> tuple[Path, Path, dict[str, Any]] | None:
+    """(trace dir, hub file, log fields) for a role, or None when it has no record."""
+
+    if role == "code-generator":
+        if not _RUN_ID.fullmatch(run_id or ""):
+            return None
+        return root / "runs" / run_id, root / "runs" / run_id / RUN_FILE, {"run": run_id}
+    if role == "hypothesis-validator":
+        return root / "validator", root / EXPERIMENT_FILE, {}
+    if role == "reasoner":
+        # root IS the reasoner dir; its trace sits in it, pointer on reasoner.json.
+        return root, root / REASONER_FILE, {}
+    return None
+
+
+def _persist_trace(
+    root: Path, dest: Path, where: Path, log_extra: dict[str, Any],
+    session_id: str, db_path: Path, full: bool,
+) -> bool:
+    """Read a session's trace, write trace.jsonl, and link its pointer into the hub record."""
+
     pointer = write_trace(dest, read_trace(db_path, session_id, full))
     if pointer is None:
         return False
@@ -2069,6 +2085,45 @@ def capture_trace(payload: Mapping[str, Any], start: Mapping[str, Any]) -> bool:
         _write_json(where, record)
         _append_log_unlocked(root, "trace", {**log_extra, "trace": pointer})
     return True
+
+
+def backfill_traces(root: Path, db_path: Path, full: bool) -> list[str]:
+    """Fill any MISSING trace in one hypothesis workspace, for the validator and each run.
+
+    The stop-time capture (capture_trace) covers an agent that stopped cleanly;
+    an agent whose subagent_stop never fired -- a crash, an Argo drop -- leaves
+    its trace uncaptured though its turns are still in state.db. This re-reads
+    them from the session ids the records already hold. Returns what it filled.
+    """
+
+    filled: list[str] = []
+    experiment = read_json(root / EXPERIMENT_FILE)
+    if experiment and not experiment.get("trace"):
+        session_id = _text(experiment.get("validator_session_id"))
+        if session_id and _persist_trace(root, root / "validator", root / EXPERIMENT_FILE, {}, session_id, db_path, full):
+            filled.append("validator")
+    runs_dir = root / "runs"
+    for run_path in sorted(runs_dir.iterdir()) if runs_dir.is_dir() else []:
+        run_id = run_path.name
+        if not _RUN_ID.fullmatch(run_id):
+            continue
+        run = read_json(run_path / RUN_FILE)
+        if not run or run.get("trace"):
+            continue
+        session_id = _text(run.get("child_session_id"))
+        if session_id and _persist_trace(root, run_path, run_path / RUN_FILE, {"run": run_id}, session_id, db_path, full):
+            filled.append(run_id)
+    return filled
+
+
+def backfill_reasoner_trace(reasoner_dir: Path, db_path: Path, full: bool) -> bool:
+    """Fill a missing reasoner trace from the session id its record holds."""
+
+    record = read_json(reasoner_dir / REASONER_FILE)
+    if not record or record.get("trace"):
+        return False
+    session_id = _text(record.get("session_id"))
+    return bool(session_id and _persist_trace(reasoner_dir, reasoner_dir, reasoner_dir / REASONER_FILE, {}, session_id, db_path, full))
 
 
 def on_agent_stopped(
