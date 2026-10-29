@@ -93,3 +93,12 @@ def test_hermes_configs_declare_the_falda_mcp_server(path):
     assert server["url"] == "https://falda.cairnscore.ai/mcp"
     assert server["headers"] == {"Authorization": "Bearer ${FALDA_TOKEN}", "X-Falda-Pool": "${FALDA_POOL}"}
     assert server["timeout"] <= 5 and server["connect_timeout"] <= 5
+
+
+@pytest.mark.parametrize("path", [ROOT / "examples" / "hermes-config.yaml.example", ROOT / ".hermes" / ".loam-home" / "config.yaml"])
+def test_hermes_configs_keep_mcp_tools_eager(path):
+    # Hermes defers MCP tools behind tool_search once there are enough of them (FALDA adds eight), and
+    # Loam's role policies block tool_search for the code-generator, which then cannot reach run_code
+    # (Aurora probe, 2026-10-30).
+    yaml = pytest.importorskip("yaml")
+    assert yaml.safe_load(path.read_text())["tools"]["tool_search"]["enabled"] is False

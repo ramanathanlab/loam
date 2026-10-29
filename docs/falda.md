@@ -132,5 +132,6 @@ all eight `mcp__falda__*` tools; each run sent both validator outcomes to FALDA 
 submitted four Cairn ratings.
 
 Hermes defers MCP tools behind `tool_search` unless `tools.tool_search.enabled: off`, and Loam's role
-policies block `tool_search` for the code-generator. The Aurora kits therefore turn it off; without
-that, the code-generator cannot reach `mcp__hpc_aurora__run_code` at all.
+policies block `tool_search` for the code-generator. The shipped Hermes configs
+(`.hermes/.loam-home/config.yaml`, `examples/hermes-config.yaml.example`) therefore turn it off; a Hermes
+home without that setting can leave the code-generator unable to reach its HPC `run_code` tool.
