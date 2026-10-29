@@ -52,16 +52,16 @@ def _profile(config, campaign: object | None) -> object | None:
 class CampaignConfigTests(unittest.TestCase):
     def test_goal_and_rules_reach_the_hook_payload(self) -> None:
         config = _load("loam_config_campaign", CONFIG)
-        profile = _profile(config, {"goal": "alkbh1-binders", "rules": ["design-integrity", "hpc-budget"]})
+        profile = _profile(config, {"goal": "alkbh1-binders", "rules": ["evidence-integrity", "hpc-budget"]})
 
         assert profile is not None
         assert profile.campaign is not None
         self.assertEqual(profile.campaign.goal, "alkbh1-binders")
-        self.assertEqual(profile.campaign.rules, ("design-integrity", "hpc-budget"))
+        self.assertEqual(profile.campaign.rules, ("evidence-integrity", "hpc-budget"))
         values = config.payload_values(profile)
         self.assertEqual(
             values["loam_campaign"],
-            {"goal": "alkbh1-binders", "rules": ["design-integrity", "hpc-budget"]},
+            {"goal": "alkbh1-binders", "rules": ["evidence-integrity", "hpc-budget"]},
         )
 
     def test_rules_are_optional(self) -> None:
@@ -92,7 +92,7 @@ class CampaignConfigTests(unittest.TestCase):
     def test_goal_is_required_when_the_block_exists(self) -> None:
         config = _load("loam_config_campaign_rules_only", CONFIG)
         with self.assertRaises(ValueError):
-            _profile(config, {"rules": ["design-integrity"]})
+            _profile(config, {"rules": ["evidence-integrity"]})
 
     def test_a_name_may_not_carry_a_path(self) -> None:
         """A name becomes a file name under `.loam/`; a path would escape it."""
@@ -107,7 +107,7 @@ class CampaignConfigTests(unittest.TestCase):
     def test_malformed_rules_raise_rather_than_degrade(self) -> None:
         config = _load("loam_config_campaign_bad_rules", CONFIG)
         with self.assertRaises(ValueError):
-            _profile(config, {"goal": "ok", "rules": "design-integrity"})
+            _profile(config, {"goal": "ok", "rules": "evidence-integrity"})
         with self.assertRaises(ValueError):
             _profile(config, {"goal": "ok", "rules": ["dup", "dup"]})
 

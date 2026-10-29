@@ -355,7 +355,7 @@ def _base_rule_names(payload: Mapping[str, Any]) -> list[str]:
     full like any other, so a malformed invariant rule still fails loudly.
 
     Sorted by name, which is also general-to-specific for the current pair
-    (design-integrity before experiment-discipline). Base rules precede the
+    (evidence-integrity before experiment-discipline). Base rules precede the
     profile's own, so a campaign's assay rule is the most specific thing a child
     reads.
     """

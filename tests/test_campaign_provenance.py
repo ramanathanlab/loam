@@ -29,7 +29,7 @@ def _load(name: str, filename: str):
     return module
 
 
-CAMPAIGN = {"goal": "egfr-binders", "rules": ["design-integrity", "experiment-discipline", "binder-cofold"]}
+CAMPAIGN = {"goal": "egfr-binders", "rules": ["evidence-integrity", "experiment-discipline", "binder-cofold"]}
 
 
 def _payload(state_dir: Path, campaign: dict | None = None) -> dict:
@@ -51,9 +51,9 @@ class CampaignProvenanceTests(unittest.TestCase):
         provenance = orchestration.campaign_provenance({"repo_root": str(ROOT), "loam_campaign": CAMPAIGN})
 
         self.assertEqual(provenance["goal"], "egfr-binders")
-        self.assertEqual(provenance["rules"], ["design-integrity", "experiment-discipline", "binder-cofold"])
+        self.assertEqual(provenance["rules"], ["evidence-integrity", "experiment-discipline", "binder-cofold"])
         self.assertEqual(
-            set(provenance["digests"]), {"egfr-binders", "design-integrity", "experiment-discipline", "binder-cofold"}
+            set(provenance["digests"]), {"egfr-binders", "evidence-integrity", "experiment-discipline", "binder-cofold"}
         )
         self.assertEqual(len(provenance["policy_sha256"]), 64)
 
@@ -64,7 +64,7 @@ class CampaignProvenanceTests(unittest.TestCase):
         provenance = orchestration.campaign_provenance({"repo_root": str(ROOT)})
 
         self.assertEqual(provenance["goal"], "")
-        self.assertEqual(provenance["rules"], ["design-integrity", "experiment-discipline"])
+        self.assertEqual(provenance["rules"], ["evidence-integrity", "experiment-discipline"])
         self.assertEqual(len(provenance["policy_sha256"]), 64)
 
     def test_no_policy_at_all_records_nothing(self) -> None:
@@ -95,9 +95,9 @@ class CampaignProvenanceTests(unittest.TestCase):
             manifest.ensure(_payload(state_dir, {"goal": "egfr-binders"}))
             second = json.loads(path.read_text(encoding="utf-8"))["campaign"]
 
-        self.assertEqual(first["policy"]["rules"], ["design-integrity", "experiment-discipline", "binder-cofold"])
+        self.assertEqual(first["policy"]["rules"], ["evidence-integrity", "experiment-discipline", "binder-cofold"])
         # The named assay rule is gone; the invariant ones cannot be dropped.
-        self.assertEqual(second["policy"]["rules"], ["design-integrity", "experiment-discipline"])
+        self.assertEqual(second["policy"]["rules"], ["evidence-integrity", "experiment-discipline"])
         self.assertNotEqual(first["policy"]["policy_sha256"], second["policy"]["policy_sha256"])
 
     def test_policy_is_not_part_of_deployment_identity(self) -> None:
@@ -108,7 +108,7 @@ class CampaignProvenanceTests(unittest.TestCase):
             state_dir = Path(temporary)
             manifest.ensure(_payload(state_dir, CAMPAIGN))
             # No raise: the policy changed, the deployment did not.
-            manifest.ensure(_payload(state_dir, {"goal": "egfr-binders", "rules": ["design-integrity"]}))
+            manifest.ensure(_payload(state_dir, {"goal": "egfr-binders", "rules": ["evidence-integrity"]}))
             manifest.ensure(_payload(state_dir, None))
 
 

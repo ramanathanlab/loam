@@ -60,7 +60,7 @@ class CampaignContextTests(unittest.TestCase):
 
         assert context is not None
         self.assertEqual(context.goal_name, "")
-        self.assertEqual([rule.name for rule in context.rules], ["design-integrity", "experiment-discipline"])
+        self.assertEqual([rule.name for rule in context.rules], ["evidence-integrity", "experiment-discipline"])
         self.assertTrue(all(rule.always for rule in context.rules))
 
     def test_an_empty_rules_directory_loads_nothing(self) -> None:
@@ -138,8 +138,8 @@ class CampaignContextTests(unittest.TestCase):
         orchestration = _load("loam_campaign_load")
         with tempfile.TemporaryDirectory() as temporary:
             payload = {
-                **_repo(Path(temporary), goal=GOAL, rules={"design-integrity": _rule("design-integrity", "all")}),
-                "loam_campaign": {"goal": "fixture-goal", "rules": ["design-integrity"]},
+                **_repo(Path(temporary), goal=GOAL, rules={"evidence-integrity": _rule("evidence-integrity", "all")}),
+                "loam_campaign": {"goal": "fixture-goal", "rules": ["evidence-integrity"]},
             }
             context = orchestration.campaign_context(payload)
 
@@ -161,7 +161,7 @@ class CampaignContextTests(unittest.TestCase):
         assert context is not None
         self.assertIn("EGFR", context.goal)
         # The invariant rules come along; the assay rule does not, being named.
-        self.assertEqual([rule.name for rule in context.rules], ["design-integrity", "experiment-discipline"])
+        self.assertEqual([rule.name for rule in context.rules], ["evidence-integrity", "experiment-discipline"])
 
     def test_scope_selects_the_tiers_a_rule_reaches(self) -> None:
         orchestration = _load("loam_campaign_scope")
@@ -316,7 +316,7 @@ def _orchestration_payload(root: Path, campaign: dict | None = None) -> dict:
     return payload
 
 
-CAMPAIGN = {"goal": "egfr-binders", "rules": ["design-integrity", "experiment-discipline", "binder-cofold"]}
+CAMPAIGN = {"goal": "egfr-binders", "rules": ["evidence-integrity", "experiment-discipline", "binder-cofold"]}
 
 
 def _validator_context(directive: str) -> str:
@@ -352,8 +352,8 @@ class CampaignInjectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directive = orchestration.context_for(_orchestration_payload(Path(temporary), CAMPAIGN))
 
-        self.assertIn("authoritative source", directive)  # design-integrity, scope: all
-        self.assertNotIn("ONE decisive measurement", directive)  # experiment-discipline, code-generator
+        self.assertIn("authoritative source", directive)  # evidence-integrity, scope: all
+        self.assertNotIn("smallest action", directive)  # experiment-discipline, code-generator
         self.assertNotIn("complex co-fold", directive)  # binder-cofold, code-generator
 
     def test_no_campaign_block_still_carries_the_invariant_rules(self) -> None:
@@ -371,7 +371,7 @@ class CampaignInjectionTests(unittest.TestCase):
 
         self.assertIn("Loam orchestration directive", directive)
         self.assertIn('"campaign"', context)
-        self.assertIn("authoritative source", context)  # design-integrity
+        self.assertIn("authoritative source", context)  # evidence-integrity
         # No profile named a goal, so none is claimed.
         self.assertNotIn('"goal"', context)
         self.assertNotIn('"goal_name"', context)
@@ -388,7 +388,7 @@ class CampaignInjectionTests(unittest.TestCase):
         assert tasks is not None
         context = tasks["tasks"][0]["context"]
         self.assertIn("CAMPAIGN GOAL", context)
-        self.assertIn("ONE decisive measurement", context)  # discipline layer
+        self.assertIn("smallest action", context)  # discipline layer
         self.assertIn("complex co-fold", context)  # assay layer
         self.assertLess(context.index("CAMPAIGN RULES"), context.index("Instruction from validator"))
 
@@ -411,7 +411,7 @@ class CampaignInjectionTests(unittest.TestCase):
         # "agent_definition" before it appears as a key.
         block = next(line for line in directive.splitlines() if '"agent_definition"' in line and line.startswith("{"))
         self.assertLess(block.index('"campaign"'), block.index('"agent_definition"'))
-        self.assertNotIn("ONE decisive measurement", directive)  # code-generator scope only
+        self.assertNotIn("smallest action", directive)  # code-generator scope only
 
 
 class HypothesisBlockExtractionTests(unittest.TestCase):
@@ -424,7 +424,7 @@ class HypothesisBlockExtractionTests(unittest.TestCase):
         self.assertIn("NEVER run, score, or reuse", block)
         self.assertIn("complete assignment", block)
         # Moved to the assay rules under .loam/rules/.
-        self.assertNotIn("ONE decisive measurement", block)
+        self.assertNotIn("smallest action", block)
         self.assertNotIn("ipTM", block)
         self.assertNotIn("co-fold", block)
 
@@ -439,23 +439,38 @@ class RuleLayeringTests(unittest.TestCase):
     rewrite the invariant rules to say anything at all. See .loam/rules/README.md.
     """
 
-    # Tool and metric names: checkable, and exactly what leaked last time. A
-    # domain example in prose is allowed; a named instrument or number is not.
+    # Instruments and metrics: checkable, and what leaked the first time.
     DOMAIN_TERMS = (
         "co-fold", "cofold", "iptm", "ipsae", "pdockq", "plddt", "chai",
         "fasta", ".cif", ".pdb", "proteinmpnn", "batch_status",
+        "protein", "uniprot", "residue", "binder", "enzyme", "molecule",
     )
+    # Campaign shape: the stricter bar. An always-on rule may not assume the
+    # campaign designs anything, since one testing an existing claim does not.
+    SHAPE_TERMS = ("design", "candidate", "sequence", "variant", "target")
 
-    def _assert_domain_neutral(self, name: str) -> None:
-        body = (ROOT / ".loam" / "rules" / f"{name}.md").read_text(encoding="utf-8").lower()
+    def _assert_invariant(self, name: str) -> None:
+        body = (ROOT / ".loam" / "rules" / f"{name}.md").read_text(encoding="utf-8")
+        body = body.split("---", 2)[2].lower()  # front matter may name enforcement machinery
         for term in self.DOMAIN_TERMS:
-            self.assertNotIn(term, body, f"{name}.md names {term!r}; that belongs in an assay rule")
+            self.assertNotIn(term, body, f"{name}.md names {term!r}; that belongs in a protocol rule")
+        for term in self.SHAPE_TERMS:
+            self.assertNotIn(term, body, f"{name}.md assumes a campaign shape via {term!r}")
 
-    def test_the_integrity_rule_is_domain_neutral(self) -> None:
-        self._assert_domain_neutral("design-integrity")
+    def test_the_integrity_rule_is_invariant(self) -> None:
+        self._assert_invariant("evidence-integrity")
 
-    def test_the_discipline_rule_is_domain_neutral(self) -> None:
-        self._assert_domain_neutral("experiment-discipline")
+    def test_the_discipline_rule_is_invariant(self) -> None:
+        self._assert_invariant("experiment-discipline")
+
+    def test_every_always_on_rule_is_invariant(self) -> None:
+        """Catches a rule added later, which is when this bar gets forgotten."""
+
+        orchestration = _load("loam_rule_layering_all")
+        names = orchestration._base_rule_names({"repo_root": str(ROOT)})
+        self.assertTrue(names)
+        for name in names:
+            self._assert_invariant(name)
 
     def test_the_hook_itself_is_domain_neutral(self) -> None:
         """Inline text reaches every child of every campaign, configured or not."""
@@ -465,12 +480,17 @@ class RuleLayeringTests(unittest.TestCase):
         for term in self.DOMAIN_TERMS:
             self.assertNotIn(term, block, f"_hypothesis_block names {term!r}; it must serve any domain")
 
-    def test_the_assay_rule_is_where_the_domain_lives(self) -> None:
+    def test_the_named_rules_are_where_the_specifics_live(self) -> None:
         """The negative tests above are only meaningful if something carries it."""
 
-        body = (ROOT / ".loam" / "rules" / "binder-cofold.md").read_text(encoding="utf-8")
-        self.assertIn("co-fold", body)
-        self.assertIn("ipSAE", body)
+        protocol = (ROOT / ".loam" / "rules" / "binder-cofold.md").read_text(encoding="utf-8")
+        self.assertIn("co-fold", protocol)
+        self.assertIn("ipSAE", protocol)
+        # Paste-what-was-designed is campaign shape, not an invariant: a campaign
+        # testing an existing claim designs nothing.
+        shape = (ROOT / ".loam" / "rules" / "design-provenance.md").read_text(encoding="utf-8")
+        self.assertIn("Paste what was designed", shape)
+        self.assertNotIn("applies:", shape)  # named, not always-on
 
 
 if __name__ == "__main__":
