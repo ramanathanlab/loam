@@ -192,13 +192,23 @@ On HPC the same layout lives under `<execution.workdir_root>/<plan_id>/<hypothes
 - **Start.** A validator's start creates the folder. Delegating children reserves
   one run each (`[loam-run-id=rM]` in the child's goal, so its instructions can
   name `outputs/rM/`); a child's start moves its run to `started` and logs a `plan`.
+  Reserving is idempotent in the children's goals, because it happens inside
+  request middleware that may run again for one dispatch. A child whose tag was
+  replayed, re-dispatched or lost still gets a run: the same one for a replayed
+  start, otherwise the run reserved for its own goal, and only failing that a new
+  one. Every substitution is logged, so the record shows which run the child was
+  told about and which it got — a child must never end up with no run, because
+  that would refuse the writes its own instructions asked for.
 - **Every tool call.** After `tool_policy` (what a role may call),
   `workspace_policy` decides where a code-generator may write: only `src/` and its
   own `outputs/rM/` and `scratch/rM/`. Record files, `data/`, other runs, other
   hypotheses, stray names and anything outside are blocked, with the legal place in
   the message. Other runs' results, this hypothesis's or another's, may be read only
   from `outputs/rK/` of a `completed` run with a verified manifest; each such read is
-  recorded in the reading run's `inputs` with the source file's hash.
+  recorded in the reading run's `inputs` with the source file's hash. Reads are
+  read-only calls and stay allowed whatever state the run is in — including
+  `skill_view` and `skills_list`, so a child whose run is frozen or whose workspace
+  failed can still re-read the campaign's recipe.
 - **Stop.** A child's stop records the run's state, hashes `outputs/rM/` (a remote
   child prints a `LOAM_MANIFEST` block it is given the program for), logs a
   `result` and freezes the run. A validator's stop drops unfinished runs, closes

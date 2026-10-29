@@ -705,6 +705,9 @@ def _layout_block(base: str, run_id: str, remote: bool = False, batch_root: str 
 
     if not run_id:
         return ""
+    # Built in order rather than inserted at an index: the shared-inputs bullet
+    # belongs with the other "where things live" bullets, and an index would
+    # move it silently the next time a bullet is added above it.
     lines = [
         f"WORKSPACE LAYOUT (enforced by Loam; your run is {run_id}):",
         f"- code and scripts you write: {base}/src/",
@@ -713,18 +716,19 @@ def _layout_block(base: str, run_id: str, remote: bool = False, batch_root: str 
         f"- inputs: read from {base}/data/ and never write there. The campaign's inputs are already "
         "there; nothing outside this workspace is reachable, so do not hunt the filesystem for a "
         "file named in your instructions and never report BLOCKED because one is absent",
+    ]
+    if shared_inputs:
+        lines.append(
+            "- shared campaign reference data, readable in place and read-only to you: "
+            + ", ".join(f"{path}/" for path in shared_inputs)
+            + ". Loam records each file you read there as an input of your run."
+        )
+    lines += [
         "- earlier results of OTHER runs (this hypothesis's or another's): readable only from their "
         "completed runs' outputs/rK/; Loam records each such read as an input of your run",
         "Write nothing anywhere else, and never /tmp: /tmp is local to one node and the next tool call "
         "may run on another. Other runs' outputs are frozen; do not modify them.",
     ]
-    if shared_inputs:
-        lines.insert(
-            5,
-            "- shared campaign reference data, readable in place and read-only to you: "
-            + ", ".join(f"{path}/" for path in shared_inputs)
-            + ". Loam records each file you read there as an input of your run.",
-        )
     if remote:
         # fs_policy requires an explicit workdir on every run_code (the server
         # would otherwise default it to HPC_BASE_DIR, outside the workspace).
@@ -986,8 +990,11 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
         instruction = "\n\n".join(part for part in (clean, _neutralize_fs_recovery(_strip_tags(_text(task.get("context"))))) if part)
         parsed.append((goal, instruction))
     # Reserve only once every task is known to be valid, so a rejected batch
-    # leaves no reserved runs behind.
-    run_ids, layout_base = _reserve_child_runs(payload, execution, workdir, plan_id, hypothesis_id, len(parsed))
+    # leaves no reserved runs behind. The reservation key is the child's goal as
+    # record_start will see it: _child_goal with its tags stripped again, which
+    # is independent of the run id the tags will carry.
+    keys = [_strip_tags(_child_goal(hypothesis, goal, plan_id, hypothesis_id)) for goal, _ in parsed]
+    run_ids, layout_base = _reserve_child_runs(payload, execution, workdir, plan_id, hypothesis_id, keys)
     remote = isinstance(execution, Mapping) and _text(execution.get("mode")) == "remote_mcp"
     batch_root = hypothesis_workspace.batch_root_for(execution if isinstance(execution, Mapping) else None) if remote else ""
     out = []
@@ -1012,20 +1019,29 @@ def _reserve_child_runs(
     workdir: str,
     plan_id: str,
     hypothesis_id: str,
-    count: int,
+    goals: list[str],
 ) -> tuple[list[str], str]:
     """Reserve one workspace run per child, and the folder the child should write under.
 
     Returns empty run ids when the workspace is off or reservation fails; the
-    children are then delegated exactly as before, and record_start allocates
-    a run for each when it starts. A workspace problem never blocks delegation.
+    children are then delegated exactly as before, and record_start adopts or
+    allocates a run for each when it starts. A workspace problem never blocks
+    delegation.
+
+    ``goals`` are the children's goals with Loam's tags stripped -- the same
+    form record_start sees. They make reservation idempotent, because this runs
+    inside `canonical_delegation_args`, which is request middleware and may run
+    again for one dispatch (a validator delegating twice, a retried call). The
+    goals also let `hypothesis_workspace.adopt_run` put a child whose run-id tag
+    did not survive into the run its own instructions name.
     """
 
+    count = len(goals)
     if hypothesis_workspace.settings(payload) is None:
         return [""] * count, ""
     try:
         root = hypothesis_workspace.workspace_root(payload, plan_id, hypothesis_id)
-        run_ids = hypothesis_workspace.reserve_runs(root, count)
+        run_ids = hypothesis_workspace.reserve_runs(root, count, goals)
     except Exception as exc:
         print(f"loam workspace: could not reserve runs: {type(exc).__name__}: {exc}", file=sys.stderr)
         return [""] * count, ""
@@ -1294,20 +1310,40 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     return None
 
 
+_START_ROW_CACHE: dict[tuple[str, str, int, int], Mapping[str, Any] | None] = {}
+
+
 def _session_start(payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    """The calling session's latest agent_started row, as tool_policy finds it."""
+    """The calling session's latest agent_started row, as tool_policy finds it.
+
+    Cached for the life of the process, keyed on the state file's size and
+    mtime, because one pre-tool run asks for this twice (workspace_policy and
+    workspace_capture) and the file is the whole campaign's history. A changed
+    file is a different key, so the cache can never serve a stale row.
+    """
 
     session_id = _text(payload.get("session_id")) or _text(payload.get("parent_session_id"))
     if not session_id:
         return None
-    return next(
+    path = _state_path(payload)
+    try:
+        stat = path.stat()
+        key: tuple[str, str, int, int] | None = (session_id, str(path), stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        key = None
+    if key is not None and key in _START_ROW_CACHE:
+        return _START_ROW_CACHE[key]
+    row = next(
         (
-            row
-            for row in reversed(_read_rows(_state_path(payload)))
-            if row.get("event") == "agent_started" and _text(row.get("child_session_id")) == session_id
+            item
+            for item in reversed(_read_rows(path))
+            if item.get("event") == "agent_started" and _text(item.get("child_session_id")) == session_id
         ),
         None,
     )
+    if key is not None:
+        _START_ROW_CACHE[key] = row
+    return row
 
 
 def workspace_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
@@ -1735,7 +1771,6 @@ def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry:
             if _generated(execution if isinstance(execution, Mapping) else None)
             else "Every executable action MUST be delegated by that validator to one leaf code-generator child; no other child may execute code."
         ),
-
     ]
     return "\n".join(lines)
 

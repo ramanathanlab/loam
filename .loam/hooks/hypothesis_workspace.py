@@ -60,9 +60,6 @@ DEFAULT_MAX_INPUT_BYTES = 1 << 30
 # refused rather than cleaned up into a different, colliding name.
 _SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 _RUN_ID = re.compile(r"r([1-9][0-9]*)")
-# A relative path inside data/: safe segments only, so a seeded input can
-# never be an absolute path or climb out with "..".
-_SEGMENT_PATH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,63})*")
 
 
 def _text(value: Any) -> str:
@@ -204,6 +201,23 @@ def _file_digest(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
+def safe_relative(relative: str) -> bool:
+    """Whether a seeded input's path may be written inside data/.
+
+    A real inputs directory holds names a tidy identifier pattern rejects --
+    spaces, parentheses, "+", names longer than 64 characters. Refusing those
+    refused the WHOLE seed, so one oddly named file left data/ empty, and the
+    HPC twin (``seed_program``) applied no such rule, so the same directory
+    seeded differently on the two sides. What actually has to be excluded is
+    escaping data/: an absolute path, a traversal, or an empty segment. The two
+    sides now share this rule; ``seed_program`` enforces the same one remotely.
+    """
+
+    if not relative or relative.startswith("/") or "\x00" in relative:
+        return False
+    return all(part and part not in {os.curdir, os.pardir} for part in relative.split("/"))
+
+
 def input_cap(payload: Mapping[str, Any]) -> int:
     """The ceiling on a seeded data/ for this campaign."""
 
@@ -239,7 +253,7 @@ def seed_inputs(root: Path, source: str, cap: int) -> tuple[list[dict[str, Any]]
         if not real.is_file():
             continue
         relative = path.relative_to(folder).as_posix()
-        if _SEGMENT_PATH.fullmatch(relative) is None:
+        if not safe_relative(relative):
             return [], f"input {relative} is not a safe relative path"
         found.append((real, relative))
         total += real.stat().st_size
@@ -308,6 +322,11 @@ def seed_program(source: str, data_dir: str, cap: int) -> str:
     return "\n".join((
         "import hashlib, json, os, shutil",
         f"source, data, cap = {source!r}, {data_dir!r}, {cap!r}",
+        "",
+        "def unsafe(relative):",
+        "    parts = relative.replace(os.sep, '/').split('/')",
+        "    return relative.startswith('/') or any(p in ('', os.curdir, os.pardir) for p in parts)",
+        "",
         "total = 0",
         "found = []",
         "for folder, _, files in sorted(os.walk(source)):",
@@ -315,7 +334,12 @@ def seed_program(source: str, data_dir: str, cap: int) -> str:
         "        path = os.path.realpath(os.path.join(folder, name))",
         "        if not os.path.isfile(path):",
         "            continue",
-        "        found.append((path, os.path.relpath(os.path.join(folder, name), source)))",
+        "        relative = os.path.relpath(os.path.join(folder, name), source)",
+        # The same rule as the local seed (safe_relative), so one inputs
+        # directory cannot seed differently on the two sides.
+        "        if unsafe(relative):",
+        "            raise SystemExit('input %s is not a safe relative path' % relative)",
+        "        found.append((path, relative))",
         "        total += os.path.getsize(path)",
         "if total > cap:",
         "    raise SystemExit(f'inputs are {total} bytes, over the {cap}-byte limit')",
@@ -425,7 +449,7 @@ def _next_run_id(root: Path) -> str:
     return f"r{max(numbers, default=0) + 1}"
 
 
-def _reserve_run_unlocked(root: Path) -> str:
+def _reserve_run_unlocked(root: Path, goal: str = "") -> str:
     experiment = read_json(root / EXPERIMENT_FILE)
     if experiment.get("state") != "open":
         raise ValueError(f"workspace {root} is not open")
@@ -440,7 +464,10 @@ def _reserve_run_unlocked(root: Path) -> str:
             "schema": "loam_run_v1",
             "run": run_id,
             "child_session_id": "",
-            "goal": "",
+            # The goal the run was reserved FOR, which is how a child that
+            # arrived without its [loam-run-id] tag is matched back to the run
+            # its instructions describe (``_match_reserved_unlocked``).
+            "goal": goal,
             "state": "reserved",
             "reserved_at": _timestamp(),
             "started_at": None,
@@ -476,18 +503,68 @@ def _start_run_unlocked(root: Path, run_id: str, child_session_id: str, goal: st
     return run_id
 
 
-def reserve_runs(root: Path, count: int) -> list[str]:
+def _reserved_runs_unlocked(root: Path) -> list[tuple[str, str]]:
+    """(run_id, reserved goal) for every run still ``reserved``, lowest id first."""
+
+    runs = root / "runs"
+    found: list[tuple[int, str, str]] = []
+    for path in runs.iterdir() if runs.is_dir() else []:
+        match = _RUN_ID.fullmatch(path.name) if path.is_dir() else None
+        if match is None:
+            continue
+        run = read_json(path / RUN_FILE)
+        if run.get("state") == "reserved":
+            found.append((int(match.group(1)), path.name, _text(run.get("goal"))))
+    return [(run_id, goal) for _, run_id, goal in sorted(found)]
+
+
+def _match_reserved_unlocked(root: Path, goal: str) -> str:
+    """The reserved run a child with this goal belongs to, or "" if none is left.
+
+    Prefers the run reserved for that exact goal, so a batch of children that
+    all lost their tags still lands in the folders their instructions name.
+    Falls back to the lowest reserved run, which is still better than a brand
+    new one: a reserved run is at least a folder some child was told about.
+    """
+
+    reserved = _reserved_runs_unlocked(root)
+    if goal:
+        for run_id, reserved_goal in reserved:
+            if reserved_goal == goal:
+                return run_id
+    return reserved[0][0] if reserved else ""
+
+
+def reserve_runs(root: Path, count: int, goals: tuple[str, ...] | list[str] = ()) -> list[str]:
     """Reserve run ids for children about to be delegated.
 
     A child's instructions are written when its validator calls delegate_task,
     before the child exists, yet they must name its outputs/rM folder. So the
     ids are reserved here and travel in a Loam-forced [loam-run-id=rM] goal tag;
-    start_run moves each one to "started" once the child really begins. A run
-    that never starts stays "reserved" and is closed as dropped later.
+    ``adopt_run`` moves each one to "started" once the child really begins. A
+    run that never starts stays "reserved" and is closed as dropped later.
+
+    ``goals`` records what each run was reserved for. Reserving is idempotent in
+    those goals: a run already reserved for a goal is handed back rather than
+    duplicated, because the reservation happens inside request middleware that
+    may run more than once for one dispatch (hypothesis_orchestration.
+    _reserve_child_runs).
     """
 
     with _locked(root):
-        return [_reserve_run_unlocked(root) for _ in range(count)]
+        if not goals:
+            return [_reserve_run_unlocked(root) for _ in range(count)]
+        free = dict(_reserved_runs_unlocked(root))
+        taken: set[str] = set()
+        run_ids: list[str] = []
+        for goal in list(goals)[:count]:
+            reuse = next((run for run, g in free.items() if g == goal and run not in taken), "")
+            if reuse:
+                taken.add(reuse)
+                run_ids.append(reuse)
+            else:
+                run_ids.append(_reserve_run_unlocked(root, goal))
+        return run_ids
 
 
 def start_run(root: Path, run_id: str, child_session_id: str, goal: str, why: str = "") -> str:
@@ -501,8 +578,55 @@ def allocate_run(root: Path, child_session_id: str, goal: str, why: str = "") ->
     """Reserve and start the next run in one step, for a child that arrived without a reserved id."""
 
     with _locked(root):
-        run_id = _reserve_run_unlocked(root)
+        run_id = _reserve_run_unlocked(root, goal)
         return _start_run_unlocked(root, run_id, child_session_id, goal, why)
+
+
+def adopt_run(root: Path, run_id: str, child_session_id: str, goal: str, why: str = "") -> str:
+    """Give a starting child a run, whatever state its reserved id is in.
+
+    The id travels in a goal tag through a model and a dispatch rewrite, and the
+    child may be dispatched more than once, so three things can arrive:
+
+    * the reserved id, still reserved -- the normal case; start it.
+    * the reserved id, already started BY THIS SESSION -- the same start
+      replayed (Hermes re-emitted the callback); hand back the same run instead
+      of failing, which used to leave the child with no run at all and so with
+      every write and every skill read blocked.
+    * an id that is taken or missing -- a re-dispatch of the same task, or a
+      tag that did not survive. Adopt the run reserved for this goal, so the
+      child lands in the folder its own instructions name; only when nothing is
+      reserved is a new run created. Either way the substitution is logged, so
+      the record shows which run the child was told about and which it got.
+    """
+
+    with _locked(root):
+        if run_id:
+            if not _RUN_ID.fullmatch(run_id):
+                raise ValueError(f"not a run id: {run_id!r}")
+            run = read_json(root / "runs" / run_id / RUN_FILE)
+            state = _text(run.get("state"))
+            if state == "reserved":
+                return _start_run_unlocked(root, run_id, child_session_id, goal, why)
+            if state == "started" and _text(run.get("child_session_id")) == child_session_id:
+                return run_id
+            instead = f"run {run_id} is {state or 'missing'}, not reserved"
+        else:
+            instead = "the child's goal carried no [loam-run-id] tag"
+        adopted = _match_reserved_unlocked(root, goal)
+        what = f"adopted reserved run {adopted}" if adopted else "no run was reserved, so one was created"
+        if not adopted:
+            adopted = _reserve_run_unlocked(root, goal)
+        _append_log_unlocked(
+            root,
+            "note",
+            {
+                "run": adopted,
+                "what": f"{what}: {instead}",
+                "actor": {"role": "code-generator", "session_id": child_session_id},
+            },
+        )
+        return _start_run_unlocked(root, adopted, child_session_id, goal, why)
 
 
 def on_agent_started(
@@ -531,10 +655,7 @@ def on_agent_started(
             return {"workspace": str(root)}
         root = workspace_root(payload, plan_id, hypothesis_id)
         why = f"delegated by the hypothesis-validator for {hypothesis_id}"
-        if run_id:
-            run = start_run(root, run_id, session_id, goal, why)
-        else:
-            run = allocate_run(root, session_id, goal, why)
+        run = adopt_run(root, run_id, session_id, goal, why)
         return {"workspace": str(root), "run": run}
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"
@@ -1048,7 +1169,10 @@ def fs_policy(payload: Mapping[str, Any], start: Mapping[str, Any] | None) -> di
     if config is None or not isinstance(start, Mapping) or _text(start.get("role")) != "code-generator":
         return None
     tool = _text(payload.get("tool_name"))
-    reading_only = tool in _READ_TOOLS or _hpc_function(tool) in _HPC_STATUS
+    # A skill read is read-only, and it is the one call a child in trouble most
+    # needs: a frozen run or a failed workspace must not be what stops it from
+    # re-reading the campaign's recipe.
+    reading_only = tool in _READ_TOOLS or tool in SKILL_READ_TOOLS or _hpc_function(tool) in _HPC_STATUS
     if not _text(start.get("workspace")) or not _text(start.get("run")):
         if reading_only:
             return None
@@ -1120,7 +1244,15 @@ def capture_code(payload: Mapping[str, Any], start: Mapping[str, Any] | None) ->
         if entry is not None:
             code = entry.pop("code", "")
             if code:
-                number = sum(1 for _ in (root / "src").glob(f"{run_id}_*.py")) + 1
+                # Numbered from the highest existing index, not the count: with
+                # a count, removing one captured program makes the next capture
+                # overwrite a program that was kept.
+                used = [
+                    int(match.group(1))
+                    for path in (root / "src").glob(f"{run_id}_*.py")
+                    if (match := re.fullmatch(rf"{re.escape(run_id)}_(\d+)\.py", path.name))
+                ]
+                number = max(used, default=0) + 1
                 source = root / "src" / f"{run_id}_{number:02d}.py"
                 source.write_text(code + ("" if code.endswith("\n") else "\n"), encoding="utf-8")
                 entry["src"] = f"src/{source.name}"
@@ -1363,6 +1495,10 @@ def harvest_program(batch_root: str, outputs_dir: str) -> str:
     attempt_*/, and lease.json / done are bookkeeping, so those are skipped.
     The child sets ``batch_id`` and runs it with run_code after batch_status
     reports the batch complete. Lands in <outputs_dir>/<batch_id>/run_<id>/.
+
+    Re-runnable: copying a directory tolerates one already being there, because
+    the retry after a partial harvest is a documented step and copytree's
+    default would make it raise FileExistsError instead.
     """
 
     return "\n".join((
@@ -1378,7 +1514,10 @@ def harvest_program(batch_root: str, outputs_dir: str) -> str:
         "            continue",
         "        src, dst = os.path.join(source, row, name), os.path.join(target, row, name)",
         "        os.makedirs(os.path.dirname(dst), exist_ok=True)",
-        "        (shutil.copytree if os.path.isdir(src) else shutil.copy2)(src, dst)",
+        "        if os.path.isdir(src):",
+        "            shutil.copytree(src, dst, dirs_exist_ok=True)",
+        "        else:",
+        "            shutil.copy2(src, dst)",
         "print('harvested', batch_id, 'into', target)",
     ))
 
@@ -1677,6 +1816,14 @@ def record_batch_check(root: Path, run_id: str, unfinished: list[str]) -> None:
     with _locked(root):
         path = root / "runs" / run_id / RUN_FILE
         run = read_json(path)
+        if not run:
+            # Writing here would create a run.json holding nothing but the
+            # batch fields, which reads like a run that never existed.
+            _append_log_unlocked(
+                root, "violation",
+                {"run": run_id, "what": f"batch check found no record for run {run_id}", "blocked": False},
+            )
+            return
         run.update(batches_unfinished=unfinished, batches_checked_at=_timestamp())
         _write_json(path, run)
         for batch_id in unfinished:

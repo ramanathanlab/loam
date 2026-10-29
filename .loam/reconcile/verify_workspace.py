@@ -176,7 +176,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("command", choices=("fill", "recheck", "batches", "seed"))
     parser.add_argument("--workspace", type=Path, required=True, help="local hypothesis folder")
-    parser.add_argument("--remote-root", required=True, help="the same hypothesis's folder on HPC")
+    # Not required for "batches", which only asks the server about batch ids.
+    parser.add_argument("--remote-root", default="", help="the same hypothesis's folder on HPC")
     parser.add_argument("--mcp-url", required=True, help="HPC MCP server, e.g. http://127.0.0.1:8000/mcp")
     parser.add_argument("--tool", default="run_code", help="the server's run_code tool name")
     parser.add_argument("--run", help="run id, for fill and batches")
@@ -188,6 +189,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"{args.command} needs --run")
     if args.command == "seed" and not args.source:
         parser.error("seed needs --source")
+    if args.command != "batches" and not args.remote_root:
+        parser.error(f"{args.command} needs --remote-root")
     if args.command == "batches":
         unfinished = batches(args.workspace, args.run, mcp_batch_status(args.mcp_url))
         print(json.dumps({"command": "batches", "workspace": str(args.workspace), "run": args.run, "unfinished": unfinished}))

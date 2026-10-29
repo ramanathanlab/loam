@@ -483,13 +483,123 @@ class WorkspacePolicyTests(_OrchestrationHelpers, unittest.TestCase):
             self.assertIsNone(self._call(orchestration, payload, "write_file", session="someone-else", path=outside, content="x"))
 
     def test_child_without_workspace_may_only_read(self) -> None:
+        workspace = _load("loam_workspace_policy_norun")
         with tempfile.TemporaryDirectory() as tmp:
             orchestration, payload, root = self._child(Path(tmp))
-            goal = "Check [loam-agent-role=code-generator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1] [loam-run-id=r7]"
-            self._start(orchestration, payload, "child-2", goal)
+            # A closed workspace is the case that really leaves a child runless:
+            # no run can be reserved in it, so nothing can be adopted either.
+            workspace.close_workspace(root, {"status": "completed"}, remote=False)
+            goal = "Check [loam-agent-role=code-generator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1] [loam-run-id=r9]"
+            row = self._start(orchestration, payload, "child-2", goal)
+            self.assertIn("workspace_error", row)
             verdict = self._call(orchestration, payload, "write_file", session="child-2", path=str(root / "src" / "x"), content="x")
             self.assertBlocked(verdict, "no workspace run")
             self.assertIsNone(self._call(orchestration, payload, "read_file", session="child-2", path=str(root / "log.jsonl")))
+            # Reading a skill is read-only, and it is what a child in this state
+            # most needs: it must not be blocked with the writes.
+            self.assertIsNone(self._call(orchestration, payload, "skill_view", session="child-2", name="aurora-chai-fold"))
+
+    def test_a_skill_read_survives_a_frozen_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            path = root / "runs" / "r1" / "run.json"
+            path.write_text(json.dumps({**json.loads(path.read_text()), "state": "completed"}))
+            self.assertBlocked(
+                self._call(orchestration, payload, "write_file", path=str(root / "outputs" / "r1" / "x"), content="x"),
+                "frozen",
+            )
+            self.assertIsNone(self._call(orchestration, payload, "skill_view", name="aurora-chai-fold"))
+            self.assertIsNone(self._call(orchestration, payload, "skills_list", category="protein-design"))
+
+    def test_a_stale_run_id_tag_still_gets_the_child_a_run(self) -> None:
+        """A tag naming a run that was never reserved must not brick the child.
+
+        It used to: _start_run_unlocked raised, on_agent_started turned that into
+        workspace_error, and fs_policy then refused every write the child made.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            goal = "Check [loam-agent-role=code-generator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1] [loam-run-id=r7]"
+            row = self._start(orchestration, payload, "child-2", goal)
+            self.assertNotIn("workspace_error", row)
+            self.assertEqual(row["run"], "r2")
+            self.assertIsNone(
+                self._call(orchestration, payload, "write_file", session="child-2",
+                           path=str(root / "outputs" / "r2" / "x"), content="x")
+            )
+            history = [json.loads(line) for line in (root / "log.jsonl").read_text().splitlines()]
+            self.assertTrue(
+                any("r7 is missing, not reserved" in entry.get("what", "") for entry in history),
+                "the substituted run must be visible in the history",
+            )
+
+    def test_a_lost_run_id_tag_lands_on_the_run_its_goal_reserved(self) -> None:
+        """Without the tag, the child must still get the folder its instructions name.
+
+        Allocating the next free id instead put the child in outputs/r3 while its
+        own instructions said outputs/r2, so every write it made was refused.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration = _load("loam_orch_ws_lost_tag", ORCHESTRATION)
+            payload = self._payload(Path(tmp), mode="local")
+            payload["loam_hypothesis_orchestration"] = True
+            self._start(orchestration, payload, "validator-1", VALIDATOR_GOAL)
+            tasks = self._delegate(orchestration, payload, ["Fold B with T.", "Dock B."])["tasks"]
+            self.assertEqual([orchestration._marker(t["goal"], "loam-run-id") for t in tasks], ["r1", "r2"])
+
+            # The second child arrives with its run-id tag gone.
+            untagged = tasks[1]["goal"].replace(" [loam-run-id=r2]", "")
+            self.assertEqual(orchestration._marker(untagged, "loam-run-id"), "")
+            row = self._start(orchestration, payload, "child-2", untagged)
+            self.assertEqual(row["run"], "r2")
+
+            root = Path(tmp) / "hypotheses" / "plan-1" / "h-1"
+            self.assertIsNone(
+                self._call(orchestration, payload, "write_file", session="child-2",
+                           path=str(root / "outputs" / "r2" / "scores.csv"), content="1")
+            )
+            self.assertEqual(json.loads((root / "runs" / "r1" / "run.json").read_text())["state"], "reserved")
+
+    def test_a_redispatched_child_keeps_working(self) -> None:
+        """The same reserved run arriving twice: once replayed, once re-dispatched."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            tagged = "Fold B with T. [loam-agent-role=code-generator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1] [loam-run-id=r1]"
+            # Same session, same run: the callback replayed. Idempotent.
+            self.assertEqual(self._start(orchestration, payload, "child-1", tagged)["run"], "r1")
+            # A different session on a run that is already started: the task was
+            # re-dispatched, so it gets a run of its own instead of nothing.
+            row = self._start(orchestration, payload, "child-1b", tagged)
+            self.assertNotIn("workspace_error", row)
+            self.assertEqual(row["run"], "r2")
+            self.assertIsNone(
+                self._call(orchestration, payload, "write_file", session="child-1b",
+                           path=str(root / "outputs" / "r2" / "x"), content="x")
+            )
+
+    def test_delegating_twice_reuses_the_reserved_runs(self) -> None:
+        """Reservation lives in request middleware, so it must be idempotent."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration = _load("loam_orch_ws_reserve_twice", ORCHESTRATION)
+            payload = self._payload(Path(tmp), mode="local")
+            payload["loam_hypothesis_orchestration"] = True
+            self._start(orchestration, payload, "validator-1", VALIDATOR_GOAL)
+            first = self._delegate(orchestration, payload, ["Fold B with T.", "Dock B."])
+            second = self._delegate(orchestration, payload, ["Fold B with T.", "Dock B."])
+            runs = [orchestration._marker(task["goal"], "loam-run-id") for task in first["tasks"]]
+            self.assertEqual(runs, ["r1", "r2"])
+            self.assertEqual([orchestration._marker(t["goal"], "loam-run-id") for t in second["tasks"]], runs)
+            root = Path(tmp) / "hypotheses" / "plan-1" / "h-1"
+            self.assertEqual(sorted(p.name for p in (root / "runs").iterdir()), ["r1", "r2"])
+            # A third, different goal still gets a run of its own.
+            third = self._delegate(orchestration, payload, ["Fold B with T.", "Score it."])
+            self.assertEqual(
+                [orchestration._marker(t["goal"], "loam-run-id") for t in third["tasks"]], ["r1", "r3"]
+            )
 
     def test_violations_are_logged_and_non_strict_allows_them(self) -> None:
         workspace = _load("loam_workspace_policy_log")
@@ -582,6 +692,16 @@ class WorkspacePolicyTests(_OrchestrationHelpers, unittest.TestCase):
             self.assertEqual([c.get("src") for c in calls], ["src/r1_01.py", "src/r1_02.py", None])
             self.assertEqual(calls[2]["script_path"], f"{self.REMOTE}/src/fold.py")
             self.assertEqual(len(calls[0]["sha256"]), 64)
+
+            # Numbering continues past a removed capture rather than reusing its
+            # number, which would overwrite a program that was kept.
+            (root / "src" / "r1_01.py").unlink()
+            orchestration.workspace_capture(
+                {**payload, "session_id": "child-1", "tool_name": "mcp_hpc_run_code",
+                 "arguments": {"payload": "print('third')", "workdir": f"{self.REMOTE}/scratch/r1"}}
+            )
+            self.assertEqual((root / "src" / "r1_03.py").read_text(), "print('third')\n")
+            self.assertEqual((root / "src" / "r1_02.py").read_text(), "print('score')\n")
 
     # end to end through the real pre-tool.py script -------------------------------------
     def _pre_tool(self, payload: dict) -> str:
@@ -1290,6 +1410,14 @@ class WorkspaceBatchTests(_StopHelpers, unittest.TestCase):
                               for name in ("model/fold.cif", "scores.csv", "stdout.txt", "status.json", "input.json"))
             self.assertEqual(copied, expected)
 
+            # Re-running the harvest is the documented retry after a partial
+            # copy, so copying a directory that is already there must not raise.
+            again = subprocess.run([sys.executable, "-c", program], capture_output=True, text=True)
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertEqual(
+                sorted(p.relative_to(outputs).as_posix() for p in outputs.rglob("*") if p.is_file()), expected
+            )
+
     # unfinished batches ------------------------------------------------------------
     def test_child_stop_with_batches_launches_the_batch_check(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1669,6 +1797,43 @@ class WorkspaceInputTests(_StopHelpers, unittest.TestCase):
             self.assertIn("could not seed inputs", violations[0]["what"])
             self.assertIn("over the 10-byte limit", violations[0]["what"])
             self.assertEqual(list((remote_base / "work" / "plan-1" / "h-1" / "data").rglob("*")), [])
+
+    def test_awkward_filenames_seed_the_same_way_on_both_sides(self) -> None:
+        """A real inputs directory has spaces and brackets; only escaping data/ is refused."""
+
+        workspace = _load("loam_workspace_awkward")
+        verifier = _load("loam_verifier_awkward", ROOT / ".loam" / "reconcile" / "verify_workspace.py")
+        orchestration = self._orchestration()
+        awkward = ["EGFR (human) target.fasta", "chai-1_v0.5+notes.md", "a" * 80 + ".txt"]
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = self._payload(Path(tmp))
+            root, _ = self._hypothesis(orchestration, payload, "h-1", ["Make results."])
+            remote_base = Path(tmp) / "remote"
+            staged = remote_base / "staged"
+            staged.mkdir(parents=True)
+            for name in awkward:
+                (staged / name).write_text(name)
+            (remote_base / "work" / "plan-1" / "h-1" / "data").mkdir(parents=True)
+            run_code, _ = self._fake_hpc(remote_base)
+
+            # The remote half copies all three and reports their hashes.
+            self.assertEqual(verifier.seed(root, str(staged), "/lus/campaign/work/plan-1/h-1", 1 << 20, run_code), "recorded")
+            recorded = [i["path"] for i in json.loads((root / "experiment.json").read_text())["inputs"]]
+            self.assertEqual(sorted(recorded), sorted(awkward))
+
+            # The local half agrees, file for file and hash for hash.
+            entries, problem = workspace.seed_inputs(root, str(staged), 1 << 20)
+            self.assertEqual(problem, "")
+            self.assertEqual(sorted(e["path"] for e in entries), sorted(awkward))
+            for entry in entries:
+                self.assertEqual(entry["sha256"], hashlib.sha256(entry["path"].encode()).hexdigest())
+
+    def test_a_path_that_escapes_data_is_still_refused(self) -> None:
+        workspace = _load("loam_workspace_escape")
+        for relative in ("/etc/passwd", f"{os.pardir}/escape", f"a/{os.pardir}/b", "", "a//b"):
+            self.assertFalse(workspace.safe_relative(relative), relative)
+        for relative in ("EGFR (human).fasta", "targets/egfr.fasta", "a" * 90, "weird name.v2+x"):
+            self.assertTrue(workspace.safe_relative(relative), relative)
 
     # shared_inputs -------------------------------------------------------------------
     def test_shared_inputs_are_readable_in_place_and_recorded_as_run_inputs(self) -> None:
