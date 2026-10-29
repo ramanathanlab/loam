@@ -41,10 +41,13 @@ def test_compute_node_gets_key_pool_and_proxy_with_local_bypass(tmp_path):
     env = _launch(tmp_path, "x4102c5s3b0n0")
     assert env["FALDA_TOKEN"] == KEY
     assert env["FALDA_POOL"] == POOL
-    for name in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
+    for name in ("https_proxy", "HTTPS_PROXY"):
         assert env[name] == "http://proxy.alcf.anl.gov:3128"
+    # FALDA and Cairn are HTTPS: plain-HTTP tools are left alone.
+    assert "http_proxy" not in env and "HTTP_PROXY" not in env
     for name in ("no_proxy", "NO_PROXY"):
-        assert {"localhost", "127.0.0.1", "::1"} <= set(env[name].split(","))
+        assert {"localhost", "127.0.0.1", "::1", "x4102c5s3b0n0", ".alcf.anl.gov"} <= set(env[name].split(","))
+    assert env.get("LOAM_FALDA_MCP") != "0"
 
 
 def test_existing_no_proxy_is_kept(tmp_path):
@@ -58,16 +61,24 @@ def test_login_node_gets_no_proxy(tmp_path):
     assert not any(name in env for name in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"))
 
 
-def test_existing_proxy_is_left_alone(tmp_path):
-    env = _launch(tmp_path, "x4102c5s3b0n0", extra={"https_proxy": "http://mine:1"})
+def test_existing_proxy_is_left_alone_but_local_services_bypass_it(tmp_path):
+    env = _launch(tmp_path, "x4102c5s3b0n0", extra={"https_proxy": "http://mine:1", "no_proxy": "corp.example"})
     assert env["https_proxy"] == "http://mine:1"
-    assert "HTTP_PROXY" not in env
+    assert "HTTPS_PROXY" not in env and "HTTP_PROXY" not in env
+    assert {"localhost", "127.0.0.1", "::1", "corp.example"} <= set(env["no_proxy"].split(","))
 
 
-def test_no_key_still_launches(tmp_path):
-    env = _launch(tmp_path, "aurora-uan-0010", key=False)
+def test_no_key_still_launches_and_disables_reasoner_tools(tmp_path):
+    # Budget 0: no launch-time mint (keeps the test off the network).
+    env = _launch(tmp_path, "aurora-uan-0010", key=False, extra={"LOAM_FALDA_LAUNCH_BUDGET": "0"})
     assert env.get("FALDA_TOKEN", "") == ""
     assert env["FALDA_POOL"] == POOL
+    assert env["LOAM_FALDA_MCP"] == "0"
+
+
+def test_falda_off_exports_nothing(tmp_path):
+    env = _launch(tmp_path, "aurora-uan-0010", extra={"LOAM_FALDA": "0"})
+    assert env.get("FALDA_TOKEN", "") == "" and env.get("FALDA_POOL", "") == ""
 
 
 def test_explicit_token_wins(tmp_path):

@@ -53,8 +53,12 @@ falda:
 
 ## Keys: nothing to do
 
-Loam gets its own key. The first flush that has something to send calls `POST /auth/machine` with the
-pool and a `loam-<host>-<user>` label, and caches the key at `~/.falda/keys/loam-<pool>.json` (0600). A key
+Loam gets its own key. `run-hermes` gets it at launch (Hermes's FALDA MCP server takes its key only
+at start): the cached key if there is one, else it calls `POST /auth/machine` with the pool and a
+`loam-<host>-<user>` label and caches the key at `~/.falda/keys/loam-<pool>.json` (0600). This takes
+at most `LOAM_FALDA_LAUNCH_BUDGET` seconds (default 6; `0` means cached key only). If no key comes
+back, Hermes starts anyway with `LOAM_FALDA_MCP=0`, so the reasoner is not offered FALDA tools; the
+flusher mints the same way on its first send, so hook writes still go through. A key
 reaches only the pool it enrolled in, so keys are cached per pool. `$HOME` is shared across Aurora nodes,
 so every runner reuses one key.
 
@@ -62,7 +66,8 @@ Only one process mints at a time, across nodes: it holds `loam-<pool>.json.lock`
 (a lock older than 10 minutes is treated as abandoned). The others skip minting and keep their rows for a
 later flush. After a failed mint Loam waits 10 minutes before trying again, or an hour after a
 `rate_limited` answer (FALDA allows 50 mints/hour per IP, and all compute nodes share the proxy's IP).
-Recalls never mint: until a key exists they return nothing.
+Recalls never mint: until a key exists they return nothing. To mint ahead of a launch (optional):
+`python .loam/hooks/falda_keys.py --launch-key --config-json "$(…same as below…)"`.
 
 `FALDA_TOKEN` in the environment overrides the cached key. To retire a key, delete the cached file; the
 next flush mints a new one.
@@ -80,9 +85,13 @@ All FALDA traffic comes from the host running Hermes. On an Aurora compute node 
 `http://proxy.alcf.anl.gov:3128` without exporting it (`.loam/hooks/loam_http.py`). On a login node or a
 laptop it connects directly. An exported proxy always wins.
 
-`run-hermes` exports `FALDA_TOKEN` (from the cached key) and `FALDA_POOL` for Hermes's FALDA MCP server.
-On a compute node with no proxy set, it also exports the ALCF proxy, with `localhost,127.0.0.1,::1` added
-to `NO_PROXY` so local services stay direct.
+`run-hermes` exports `FALDA_TOKEN` and `FALDA_POOL` for Hermes's FALDA MCP server. On a compute node
+with no proxy set it also exports `https_proxy`/`HTTPS_PROXY` (the ALCF proxy; plain-HTTP variables
+are left alone), and whenever a proxy is in force there it puts `localhost,127.0.0.1,::1`, the node's
+own name and `.alcf.anl.gov` in `no_proxy`/`NO_PROXY`, so local and ALCF-internal services stay direct.
+
+Keep `LOAM_STATE_DIR` on node-local disk or a filesystem that supports `flock`: the flushers take a
+non-blocking `flock` there and, if it is unsupported, skip sending.
 
 ## Checking a run
 
