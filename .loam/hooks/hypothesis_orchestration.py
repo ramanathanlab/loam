@@ -1361,6 +1361,19 @@ def workspace_capture(payload: Mapping[str, Any]) -> None:
         hypothesis_workspace.capture_code(payload, _session_start(payload))
 
 
+def workspace_decision(payload: Mapping[str, Any]) -> bool:
+    """Record one declared decision in the caller's workspace record (any campaign role).
+
+    Called from the loam_record_decision tool handler, which carries the calling
+    agent's session_id. Returns whether a decision was stored, so the tool can
+    tell the agent plainly rather than claim a record it did not make.
+    """
+
+    if hypothesis_workspace.settings(payload) is None:
+        return False
+    return hypothesis_workspace.record_decision(payload, _session_start(payload))
+
+
 def workspace_stop(payload: Mapping[str, Any]) -> None:
     """Close a stopped child's workspace run, or its validator's workspace.
 

@@ -2151,5 +2151,83 @@ else:
             self.assertEqual(workspace.verify_log(root), [])
 
 
+class WorkspaceDecisionTests(WorkspacePolicyTests):
+    """G1: loam_record_decision writes inline into the Pando record, per role."""
+
+    def _decide(self, orchestration, payload, session, **args):
+        return orchestration.workspace_decision(
+            {**payload, "session_id": session, "tool_name": "loam_record_decision", "arguments": args}
+        )
+
+    def test_code_generator_decision_lands_in_run_json_and_chains_the_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            ok = self._decide(
+                orchestration, payload, "child-1",
+                what="Generate with RFdiffusion3, then fold with Chai-1",
+                why="a binder must be model-generated and structurally scored",
+                alternatives=["hand-authored sequence (forbidden by the campaign)"],
+                expected="ipTM > 0.6 on both ortholog folds",
+                confidence=0.4,
+            )
+            self.assertTrue(ok)
+            run = json.loads((root / "runs" / "r1" / "run.json").read_text())
+            self.assertEqual(len(run["decisions"]), 1)
+            d = run["decisions"][0]
+            self.assertEqual(d["what"], "Generate with RFdiffusion3, then fold with Chai-1")
+            self.assertEqual(d["actor"], {"role": "code-generator", "session_id": "child-1"})
+            self.assertEqual(d["alternatives"], ["hand-authored sequence (forbidden by the campaign)"])
+            self.assertEqual(d["confidence"], 0.4)
+            self.assertIn("ts", d)
+            last = json.loads((root / "log.jsonl").read_text().splitlines()[-1])
+            self.assertEqual((last["kind"], last["run"], last["what"]), ("decision", "r1", d["what"]))
+            # The decision is in the chain, not beside it.
+            workspace = _load("loam_ws_decision_chain")
+            self.assertEqual(workspace.verify_log(root), [])
+
+    def test_validator_decision_lands_in_experiment_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            ok = self._decide(
+                orchestration, payload, "validator-1",
+                what="Promote two hypotheses to a design tier", why="debug-queue budget is ~100 folds",
+                confidence=0.7,
+            )
+            self.assertTrue(ok)
+            experiment = json.loads((root / "experiment.json").read_text())
+            self.assertEqual(experiment["decisions"][0]["what"], "Promote two hypotheses to a design tier")
+            self.assertEqual(experiment["decisions"][0]["actor"]["role"], "hypothesis-validator")
+            self.assertNotIn("alternatives", experiment["decisions"][0])  # omitted, not stored empty
+
+    def test_empty_what_records_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            self.assertFalse(self._decide(orchestration, payload, "child-1", what="   ", why="x"))
+            run = json.loads((root / "runs" / "r1" / "run.json").read_text())
+            self.assertEqual(run.get("decisions", []), [])
+
+    def test_a_frozen_run_refuses_a_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            path = root / "runs" / "r1" / "run.json"
+            path.write_text(json.dumps({**json.loads(path.read_text()), "state": "completed"}))
+            self.assertFalse(self._decide(orchestration, payload, "child-1", what="too late", why="x"))
+
+    def test_a_long_field_is_capped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            self.assertTrue(self._decide(orchestration, payload, "child-1", what="x" * 5000, why="y"))
+            d = json.loads((root / "runs" / "r1" / "run.json").read_text())["decisions"][0]
+            self.assertEqual(len(d["what"]), 2000)
+
+    def test_validator_layout_dir_exists_and_is_not_a_stray(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            self.assertTrue((root / "validator").is_dir())
+            workspace = _load("loam_ws_decision_audit")
+            problems = workspace.close_workspace(root, {"status": "completed"}, remote=False)
+            self.assertEqual([p for p in problems if "validator" in p], [])
+
+
 if __name__ == "__main__":
     unittest.main()
