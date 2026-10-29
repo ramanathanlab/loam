@@ -78,8 +78,11 @@ leaves open:
 
 1. What the decisive measurement is, concretely enough to write code for.
 2. Which numbers it reports, and which one is the headline.
-3. Where the procedure comes from — the `ENVIRONMENT SETUP` recipe, or a named
-   skill once the code-generator can read skills (see `todo.md`).
+3. Where the procedure comes from — a skill named in `campaign.skills`, or the
+   `ENVIRONMENT SETUP` recipe. Prefer the skill: a code-generator can read it
+   with `skill_view`, and a rule that says "use the folding skill, it is
+   authoritative" stays shorter and truer than a rule restating the recipe,
+   which drifts from it.
 4. What the measurement does **not** establish, so a child does not overclaim.
 
 ## Front matter

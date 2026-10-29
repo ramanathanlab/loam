@@ -79,6 +79,12 @@ class CampaignConfig:
     goal: str
     rules: tuple[str, ...] = ()
     dir: str = ""
+    # Skills a code-generator should consult before writing code. Names only:
+    # these are resolved by the harness's own skill system, not by Loam, so
+    # unlike `rules` they name nothing this repo or `dir` contains. Named rather
+    # than left open because `skills_list` returns every skill installed in the
+    # Hermes home, and a child with three children of budget should not browse.
+    skills: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -185,7 +191,15 @@ def _campaign_config(value: Any) -> CampaignConfig | None:
     names = tuple(_campaign_name(item, "rules") for item in rules)
     if len(set(names)) != len(names):
         raise ValueError(f"campaign.rules must not repeat a name: {list(names)!r}")
-    return CampaignConfig(goal=goal, rules=names, dir=_campaign_dir(raw.get("dir")))
+    raw_skills = raw.get("skills", [])
+    if not isinstance(raw_skills, list):
+        raise ValueError(f"campaign.skills must be a list of names: {raw_skills!r}")
+    skills = tuple(_campaign_name(item, "skills") for item in raw_skills)
+    if len(set(skills)) != len(skills):
+        raise ValueError(f"campaign.skills must not repeat a name: {list(skills)!r}")
+    return CampaignConfig(
+        goal=goal, rules=names, dir=_campaign_dir(raw.get("dir")), skills=skills
+    )
 
 
 def _campaign_dir(value: Any) -> str:
@@ -447,6 +461,7 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "goal": campaign.goal,
             "rules": list(campaign.rules),
             "dir": campaign.dir,
+            "skills": list(campaign.skills),
         }
     execution = profile.execution
     if execution is not None:
