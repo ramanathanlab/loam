@@ -1,0 +1,103 @@
+# Loam profile for one campaign. Copy to ~/.hermes/loam.yaml and replace every
+# <PLACEHOLDER>. This file lives OUTSIDE the campaign directory and outside the
+# repo; one active profile drives one campaign.
+#
+# Fuller annotation of every key: examples/loam.yaml.example.
+
+enabled: true
+active_profile: my_campaign
+
+profiles:
+  my_campaign:
+    enabled: true
+    workflow_id: my_campaign
+
+    # Absolute. run-campaign overrides this with the campaign directory's
+    # state/, so it only matters for a bare `run-hermes` launch.
+    state_dir: <ABS_PATH_TO_CAMPAIGN_DIR>/state
+    pre_llm_every: 1
+    duplicate_policy: allow_and_audit
+
+    # Makes the harness act as the campaign orchestrator. Without it the hooks
+    # still fire but no round is dispatched.
+    hypothesis_orchestration:
+      enabled: true
+
+    hypothesis_tournament:
+      enabled: true
+      jnana_root: <ABS_PATH_TO_JNANA_CHECKOUT>
+      provider: openai
+
+      # These defaults are the ranking JUDGE. `generation:` overrides only that
+      # role and inherits the rest.
+      inference_endpoint: http://127.0.0.1:51911/v1    # ALCF proxy
+      model: <RANKING_MODEL>                            # e.g. gpt-oss-120b
+
+      generation:
+        inference_endpoint: http://127.0.0.1:51900/v1   # Argo tunnel
+        model: <GENERATION_MODEL>                        # e.g. argo:gpt-5.6-luna
+        # Argo reasoning models reject temperature != 1 with HTTP 400, and Jnana
+        # swallows the per-worker error -- it looks like "generated_hypotheses: 0"
+        # with status completed. Leave this on for an Argo model.
+        omit_temperature: true
+
+      # A reasoning model spends thousands of hidden tokens before any JSON. Too
+      # small truncates the ranking JSON and every match fails to parse.
+      json_max_tokens: 16384
+
+      knowledge:
+        enabled: false        # optional OKN knowledge-graph pre-pass
+
+      state_file: <ABS_PATH_TO_CAMPAIGN_DIR>/state/jnana-memory.json
+      reports_dir: <ABS_PATH_TO_CAMPAIGN_DIR>/state/tournament-reports
+      initial_hypotheses: 50
+      matches_per_run: 5      # pairwise ranking matches per round
+      top_k: 3                # hypotheses handed to validators per round
+      timeout_seconds: 600
+
+    campaign:
+      # The directory holding campaigns/ and rules/ -- i.e. the copy of
+      # examples/campaign-starter you are working in. Absolute; `~` is expanded.
+      dir: <ABS_PATH_TO_CAMPAIGN_DIR>
+
+      # <dir>/campaigns/<goal>.md. Rename the shipped file and match it here.
+      # Named-but-missing raises at startup and lists every directory searched.
+      goal: example-campaign
+
+      # <dir>/rules/<name>.md, each. Delete what you do not want rather than
+      # leaving it unnamed -- an unnamed file in rules/ is simply not loaded.
+      # Omit the key entirely to run on the repo's invariant rules alone.
+      rules: [example-protocol, example-constraint]
+
+      # Skills a code-generator must consult before writing code. These are
+      # names from the Hermes skill library, NOT paths. run-campaign registers
+      # the repo's skills/ tree for you; `hermes skills list` shows what
+      # resolves. A name that resolves to nothing fails inside the child, not
+      # here, so check it.
+      # Replace with your campaign's own. These two are real and resolve after
+      # run-campaign registers the repo's skills; a <PLACEHOLDER> here does not
+      # -- the loader requires bare names and rejects one with angle brackets.
+      skills: [chai, proteinmpnn]
+
+    execution:
+      mode: remote_mcp                  # `local` for the CAMPAIGN_TEST.md run
+      tool_name: mcp__hpc__run_code
+      function_name: run_code
+      endpoint: hpc-deployment
+      input_schema: '{"payload": "str", "workdir": "str|None", "timeout": "float", "venv_path": "str|None"}'
+      runtime: <RUNTIME_DESCRIPTION>    # e.g. Aurora frameworks python 3.12 via EL
+      workdir_root: <ABS_PATH_ON_HPC>   # e.g. /flare/<PROJECT>/<USER>/hpc-run/work
+
+      # Handed VERBATIM to every code-generator child. The child runs on the HPC
+      # node and cannot see your laptop, so every activation and command must be
+      # self-contained here. Smoke-test each line to rc=0 before trusting a
+      # campaign result that depends on it.
+      setup: |
+        Run every tool by activating its venv in a bash command inside run_code
+        (subprocess.run(["bash","-lc", CMD])), never by importing it as a Python
+        library. Absolute paths only; the working directory is not the project root.
+
+        <One block per tool: the exact activation and CLI invocation, e.g. the
+        fold command and its venv, the inverse-folding activation. Prefer naming
+        the campaign's skills above and letting the child read the recipe there
+        over pasting a long recipe into this field.>
