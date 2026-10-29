@@ -112,3 +112,25 @@ is the run's `loam_falda` block; the defaults are enough when you use `.loam/fal
 python .loam/hooks/falda_flush.py --state-dir "$LOAM_STATE_DIR" \
   --config-json "$(python -c 'import json,sys; sys.path.insert(0,".loam/adapters/hermes/plugin"); from falda_config import falda_config; print(json.dumps(falda_config(None)[0]))')"
 ```
+
+## Measured on Aurora (2026-10-30)
+
+Hook code on compute node `x4601c7s0b0n0` (ALCF proxy chosen automatically), via Globus Compute:
+
+- 12 parallel tasks sharing one `$HOME` key dir: exactly one `POST /auth/machine`; every task had a key
+  in ≤ 0.43 s.
+- One flusher (the normal case: one per state dir): 3 atoms in 3–4 s; recalls of a new query
+  0.9–1.6 s, repeated queries ~0.2 s. Cairn: rating submitted, project echo `ok`; brief ~0.1 s.
+- 12 concurrent flushers: FALDA stored every atom but answered after 10 s and even 60 s, so atoms carry
+  their spool id and a resend updates rather than duplicates. Under that load a new-query recall takes
+  ~2.7 s, so most recalls hit the 2 s cap and the agent proceeds without memory.
+- A blackholed FALDA costs exactly 2.0 s per recall; a validator-outcome write costs ~0.1 ms.
+
+Full Hermes probes (Hermes and hooks on a laptop, code on Aurora through `mcp__hpc_aurora__run_code`,
+launched through `run-hermes` with no FALDA credentials set): the launch-time key let Hermes register
+all eight `mcp__falda__*` tools; each run sent both validator outcomes to FALDA (none left pending) and
+submitted four Cairn ratings.
+
+Hermes defers MCP tools behind `tool_search` unless `tools.tool_search.enabled: off`, and Loam's role
+policies block `tool_search` for the code-generator. The Aurora kits therefore turn it off; without
+that, the code-generator cannot reach `mcp__hpc_aurora__run_code` at all.
