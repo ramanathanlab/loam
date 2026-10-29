@@ -128,6 +128,3 @@ the profile-parsing tests fail.
 | `scripts/campaign_preflight.py` | The fail-closed readiness gate |
 | `examples/` | Config templates to copy outside the repo |
 | `~/.hermes/loam.yaml` | Your profile (never tracked here) |
-
-`experiments/codon_usage_gc_survey.py` is a standalone survey unrelated to the
-campaign path; see the header in that file.
