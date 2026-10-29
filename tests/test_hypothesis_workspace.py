@@ -2064,5 +2064,92 @@ class WorkspaceSkillProvenanceTests(_StopHelpers, unittest.TestCase):
             self.assertEqual(experiment["declared_skills"], [])
 
 
+class WorkspaceConcurrencyTests(unittest.TestCase):
+    """The flock, exercised the way it is actually used: separate processes.
+
+    A validator's children run in PARALLEL and share one log.jsonl, one
+    experiment.json and one run-id counter, so ``_locked`` is what keeps the
+    hash chain intact and two children out of one output folder. Threads would
+    not test it -- flock is per OPEN FILE, so only real processes contend --
+    and every other test in this file is single-process and sequential.
+    """
+
+    WORKER = '''
+import importlib.util, json, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("ws_worker", sys.argv[1])
+ws = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ws)
+root, mode, tag, count = Path(sys.argv[2]), sys.argv[3], sys.argv[4], int(sys.argv[5])
+if mode == "append":
+    for i in range(count):
+        ws.append_log(root, "note", {"what": f"{tag}-{i}"})
+    print("ok")
+else:
+    print(json.dumps(ws.reserve_runs(root, count, [f"{tag}-goal-{i}" for i in range(count)])))
+'''
+
+    def _run_workers(self, root: Path, mode: str, workers: int, count: int) -> list[str]:
+        import subprocess
+
+        script = root.parent / "worker.py"
+        script.write_text(self.WORKER)
+        procs = [
+            subprocess.Popen(
+                [sys.executable, str(script), str(WORKSPACE), str(root), mode, f"w{n}", str(count)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            for n in range(workers)
+        ]
+        out = []
+        for proc in procs:
+            stdout, stderr = proc.communicate(timeout=120)
+            self.assertEqual(proc.returncode, 0, f"worker failed: {stderr}")
+            out.append(stdout.strip())
+        return out
+
+    def _workspace(self, tmp: Path):
+        workspace = _load(f"loam_workspace_conc_{self.id().rsplit('.', 1)[-1]}")
+        payload = {"loam_workspace": {"enabled": True, "root": str(tmp / "hypotheses"), "strict": True}}
+        return workspace, workspace.ensure_workspace(payload, "plan-1", "h-1", "claim", "validator-1")
+
+    def test_parallel_appends_keep_the_hash_chain_intact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, root = self._workspace(Path(tmp))
+            before = len((root / "log.jsonl").read_text().splitlines())
+            self._run_workers(root, "append", workers=4, count=12)
+
+            lines = (root / "log.jsonl").read_text().splitlines()
+            self.assertEqual(len(lines), before + 48, "an append was lost or duplicated")
+            # The chain is the whole point: one broken link means two writers
+            # read the same tip and one overwrote the other's position.
+            self.assertEqual(workspace.verify_log(root), [])
+            entries = [json.loads(line) for line in lines]
+            self.assertEqual(sorted(e["seq"] for e in entries), list(range(1, len(lines) + 1)))
+            self.assertEqual(
+                sorted(e["what"] for e in entries if e["what"].startswith("w")),
+                sorted(f"w{n}-{i}" for n in range(4) for i in range(12)),
+            )
+
+    def test_parallel_reservation_never_shares_a_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, root = self._workspace(Path(tmp))
+            printed = self._run_workers(root, "reserve", workers=4, count=3)
+
+            reserved = [run for line in printed for run in json.loads(line)]
+            self.assertEqual(len(reserved), 12)
+            self.assertEqual(len(set(reserved)), 12, f"two workers were handed the same run: {reserved}")
+            # Each id must exist exactly once on disk and once in the index, or
+            # two children would write into one outputs/ folder.
+            on_disk = sorted(p.name for p in (root / "runs").iterdir() if p.is_dir())
+            self.assertEqual(on_disk, sorted(reserved))
+            for name in reserved:
+                self.assertTrue((root / "outputs" / name).is_dir())
+                self.assertTrue((root / "scratch" / name).is_dir())
+            indexed = json.loads((root / "experiment.json").read_text())["runs"]
+            self.assertEqual(sorted(indexed), sorted(reserved), "experiment.json lost a reservation")
+            self.assertEqual(workspace.verify_log(root), [])
+
+
 if __name__ == "__main__":
     unittest.main()
