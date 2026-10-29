@@ -141,6 +141,11 @@ class FaldaToolGuardTests(unittest.TestCase):
                 result = self._call("rs-1", REMEMBER, GOOD, loam_falda=falda)
                 self.assertIn("not enabled", result["message"])
 
+    def test_tools_blocked_when_hermes_started_without_a_key(self) -> None:
+        with patch.dict(os.environ, {"LOAM_FALDA_MCP": "0"}):
+            result = self._call("rs-1", REMEMBER, GOOD)
+        self.assertIn("not enabled", result["message"])
+
     def test_reasoner_keeps_no_other_tool(self) -> None:
         result = self._call("rs-1", "terminal", {"command": "ls"})
         self.assertEqual(result["message"], "reasoner has no tool capability; return the synthesis to the harness")

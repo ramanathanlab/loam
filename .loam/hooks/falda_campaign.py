@@ -8,6 +8,7 @@ and never carry high confidence.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -291,7 +292,7 @@ def reasoner_memory_block(payload: Mapping[str, Any], plan_id: str, completions:
 
     cfg = falda_memory.config(payload)
     recall_on = cfg is not None and cfg.get("recall_reasoner") is True
-    tools_on = cfg is not None and cfg.get("reasoner_tools") is True
+    tools_on = tools_available(cfg)
     if not recall_on and not tools_on:
         return ""
     try:
@@ -352,9 +353,16 @@ _RESERVED_PREFIXES = ("run:", "plan:", "hypothesis:")  # written by Loam's hooks
 _ALLOWED_FALDA_TOOLS = frozenset({"falda_remember", "falda_recall", "falda_mark_used"})
 
 
+def tools_available(cfg: Mapping[str, Any] | None) -> bool:
+    """Reasoner tools are on, and Hermes's FALDA MCP server got a key at launch (run-hermes sets
+    LOAM_FALDA_MCP=0 when it had none, so the reasoner is not told about tools that do not exist)."""
+
+    return cfg is not None and cfg.get("reasoner_tools") is True and os.environ.get("LOAM_FALDA_MCP") != "0"
+
+
 def _falda_block_message(payload: Mapping[str, Any], tool_name: str, arguments: Any, role: str) -> str | None:
     cfg = falda_memory.config(payload)
-    if cfg is None or cfg.get("reasoner_tools") is not True:
+    if not tools_available(cfg):
         return "FALDA tools are not enabled for this Loam campaign; continue without them."
     if role != "reasoner":
         return (

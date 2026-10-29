@@ -29,7 +29,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import loam_http  # noqa: E402
 
-STALE_LOCK_SECONDS = 600  # a mint takes seconds; an older reservation was abandoned
+# A mint takes seconds (its timeout is at most ~10 s); an older reservation was abandoned, e.g. by a
+# launch-time mint whose process exited mid-request.
+STALE_LOCK_SECONDS = 60
 MINT_COOLDOWN_SECONDS = 600
 RATE_LIMIT_COOLDOWN_SECONDS = 3600
 
@@ -199,16 +201,42 @@ def ensure_key(cfg: Mapping[str, Any], timeout: float) -> tuple[str, str]:
         return "", f"mint_failed:client:{type(exc).__name__}"
 
 
+def launch_key(cfg: Mapping[str, Any], budget: float) -> str:
+    """The key for a Hermes launch: cached, else minted, else one another process is minting.
+
+    Hermes's FALDA MCP server takes its key only at start, so the launcher gets one here rather than
+    waiting for the first flush. Bounded by ``budget`` seconds of wall clock; "" when there is none.
+    """
+
+    def _get() -> str:
+        deadline = time.monotonic() + budget
+        key, status = ensure_key(cfg, max(0.5, budget))
+        while not key and status == "minting_elsewhere" and time.monotonic() < deadline:
+            time.sleep(0.2)
+            key = resolve_key(cfg)
+        return key
+
+    return loam_http.bounded(_get, budget, "")
+
+
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="Print the cached FALDA key for a Loam falda block (no network).")
-    parser.add_argument("--print-key", action="store_true", required=True)
+    parser = argparse.ArgumentParser(description="Print the FALDA key for a Loam falda block.")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--print-key", action="store_true", help="the cached key only (no network)")
+    mode.add_argument("--launch-key", action="store_true", help="cached, else mint (bounded by --budget)")
+    parser.add_argument("--budget", type=float, default=6.0)
     parser.add_argument("--config-json", required=True, help="the falda block as JSON")
     args = parser.parse_args(argv)
     try:
         cfg = json.loads(args.config_json)
     except ValueError:
         return 2
-    print(resolve_key(cfg) if isinstance(cfg, Mapping) else "")
+    if not isinstance(cfg, Mapping):
+        print("")
+    elif args.launch_key:
+        print(launch_key(cfg, args.budget))
+    else:
+        print(resolve_key(cfg))
     return 0
 
 

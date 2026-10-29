@@ -192,3 +192,48 @@ def test_concurrent_mints_one_request(cfg, tmp_path):
     assert statuses.count("minted") == 1
     assert set(statuses) <= {"minted", "minting_elsewhere", "cached"}
     assert falda_keys.resolve_key(cfg) == KEY
+
+
+def test_launch_key_uses_cache_without_minting(cfg, monkeypatch):
+    _write_key(cfg)
+    mint = Mint()
+    monkeypatch.setattr(falda_keys, "_transport", mint)
+    assert falda_keys.launch_key(cfg, 3) == KEY
+    assert mint.requests == []
+
+
+def test_launch_key_mints_when_missing(cfg, monkeypatch):
+    monkeypatch.setattr(falda_keys, "_transport", Mint())
+    assert falda_keys.launch_key(cfg, 3) == KEY
+    assert falda_keys.resolve_key(cfg) == KEY
+
+
+def test_launch_key_waits_briefly_for_another_minter(cfg, monkeypatch):
+    lock = Path(str(falda_keys.key_path(cfg)) + ".lock")
+    lock.parent.mkdir(parents=True)
+    lock.write_text("")
+    import threading
+
+    threading.Timer(0.4, lambda: _write_key(cfg)).start()
+    start = time.monotonic()
+    assert falda_keys.launch_key(cfg, 3) == KEY
+    assert time.monotonic() - start < 2.0
+
+
+def test_launch_key_is_bounded_when_falda_hangs(cfg, monkeypatch):
+    monkeypatch.setattr(falda_keys, "_transport", Mint(delay=10))
+    start = time.monotonic()
+    assert falda_keys.launch_key(cfg, 1.0) == ""
+    assert time.monotonic() - start < 2.0
+
+
+def test_launch_key_respects_auto_mint_off(cfg, monkeypatch):
+    mint = Mint()
+    monkeypatch.setattr(falda_keys, "_transport", mint)
+    assert falda_keys.launch_key({**cfg, "auto_mint": False}, 3) == ""
+    assert mint.requests == []
+
+
+def test_stale_lock_threshold_is_short():
+    # a mint takes seconds; an abandoned launch-time mint must not block minting for long
+    assert falda_keys.STALE_LOCK_SECONDS <= 60

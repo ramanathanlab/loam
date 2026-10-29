@@ -202,6 +202,15 @@ class ReasonerMemoryTests(unittest.TestCase):
         self.assertNotIn("[m1]", directive)
         self.assertNotIn("Recalled campaign memory", directive)
 
+    def test_no_mcp_key_at_launch_means_no_tool_lines(self) -> None:
+        falda_memory.set_transport(FakeTransport())
+        payload = self._payload()
+        self._complete_validators(payload)
+        with patch.dict(os.environ, {"LOAM_FALDA_MCP": "0"}):
+            directive = self.orchestration.context_for(payload)
+        self.assertNotIn("You may write", directive)
+        self.assertNotIn("Memory interface:\n- Shared FALDA pool", directive)
+
     def test_cairn_delegation_decoration_keeps_the_falda_block(self) -> None:
         import cairn_brief
 
