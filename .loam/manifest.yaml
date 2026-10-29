@@ -34,6 +34,33 @@ hooks:
 # do to a running campaign, and a rewrite is the most consequential thing it
 # does. Leaving it undeclared made the four `observe`/`may_block` entries above
 # read as the whole contract, which understated Loam considerably.
+# Tools the adapter registers into the harness. Declared for the same reason as
+# the middleware: a tool Loam adds is part of what Loam does to a campaign.
+tools:
+  loam_dispatch_round:
+    toolset: delegation
+    handler: dispatch_round
+    arguments: none
+    why: |
+      Launches the round the hook has already planned -- one hypothesis-validator
+      per selected hypothesis, or the reasoner once every validator has reported.
+      The coordinator calls this instead of composing a `delegate_task` batch,
+      which removes the transcription step rather than repairing it afterwards.
+      The directive that used to print the ready-to-run array for the model to
+      copy now announces what is pending in a few hundred characters; the task
+      objects travel in the dispatch.
+    dispatch: |
+      The handler calls `ctx.dispatch_tool("delegate_task", ...)`, the documented
+      plugin path with the parent agent resolved. That reaches the tool registry
+      directly, so neither `pre_tool_call` nor the `tool_request` middleware
+      fires on the call it makes: no double rewrite, and `tool_policy` cannot
+      veto Loam's own dispatch.
+    toolset_note: |
+      Registered into the existing `delegation` toolset, not a new `loam` one. A
+      plugin's own toolset is configurable and OFF until toggled on per
+      platform, so a `loam` toolset would leave this invisible to the
+      coordinator until someone edited config.
+
 middleware:
   tool_request:
     adapter_callback: canonicalize_campaign_delegation

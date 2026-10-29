@@ -399,17 +399,19 @@ def _campaign(root: Path) -> dict:
     return {"dir": str(policy), "goal": "fixture-goal", "rules": ["fixture-protocol"]}
 
 
-def _validator_context(directive: str) -> str:
+def _validator_context(orchestration, payload: dict) -> str:
     """The first validator task's context, as the child will receive it.
 
-    `_validator_directive` ends with the ready-to-run task array, and each task's
-    context is itself a JSON string, so the keys appear escaped in the directive
-    text. Ordering must be asserted inside this payload, not against the
-    surrounding prose -- which mentions the same key names.
+    Read from the arguments the dispatch tool hands to delegate_task, which is
+    where the payload now travels. It used to be parsed off the end of the
+    directive, because the directive printed the task array for the coordinator
+    to copy; it no longer does, and asserting against prose was always a proxy
+    for asserting against the arguments.
     """
 
-    tasks = json.loads(directive.rsplit("\n", 1)[1])
-    return tasks[0]["context"]
+    arguments = orchestration.canonical_delegation_args(payload)
+    assert arguments is not None, "no delegation pending for this payload"
+    return arguments["tasks"][0]["context"]
 
 
 class CampaignInjectionTests(unittest.TestCase):
@@ -418,9 +420,9 @@ class CampaignInjectionTests(unittest.TestCase):
 
         orchestration = _load("loam_campaign_validator_inject")
         with tempfile.TemporaryDirectory() as temporary:
-            directive = orchestration.context_for(_orchestration_payload(Path(temporary), _campaign(Path(temporary))))
-
-        context = _validator_context(directive)
+            payload = _orchestration_payload(Path(temporary), _campaign(Path(temporary)))
+            orchestration.context_for(dict(payload))
+            context = _validator_context(orchestration, payload)
         self.assertIn("FIXTURE SUBJECT", context)
         self.assertLess(context.index('"campaign"'), context.index('"validator_instructions"'))
         self.assertLess(context.index('"campaign"'), context.index('"agent_definition"'))
@@ -430,24 +432,29 @@ class CampaignInjectionTests(unittest.TestCase):
     def test_validator_payload_omits_a_child_scoped_rule(self) -> None:
         orchestration = _load("loam_campaign_validator_scope")
         with tempfile.TemporaryDirectory() as temporary:
-            directive = orchestration.context_for(_orchestration_payload(Path(temporary), _campaign(Path(temporary))))
+            payload = _orchestration_payload(Path(temporary), _campaign(Path(temporary)))
+            orchestration.context_for(dict(payload))
+            context = _validator_context(orchestration, payload)
 
-        self.assertIn("authoritative source", directive)  # evidence-integrity, scope: all
-        self.assertNotIn("smallest action", directive)  # experiment-discipline, code-generator
-        self.assertNotIn("FIXTURE MEASUREMENT", directive)  # fixture-protocol, code-generator
+        # Scope is asserted against what the validator actually receives. The
+        # directive itself no longer carries any of it.
+        self.assertIn("authoritative source", context)  # evidence-integrity, scope: all
+        self.assertNotIn("smallest action", context)  # experiment-discipline, code-generator
+        self.assertNotIn("FIXTURE MEASUREMENT", context)  # fixture-protocol, code-generator
 
     def test_no_campaign_block_still_carries_the_invariant_rules(self) -> None:
-        """Asserted inside the task context, which is an escaped JSON string.
+        """Asserted against the dispatch arguments, not the directive.
 
-        The earlier version of this test looked for `"campaign"` in the whole
-        directive and so could only ever pass: inside the context the key reads
-        `\\"campaign\\"`. It is the same trap `_validator_context` documents.
+        An earlier version looked for `"campaign"` in the whole directive and so
+        could only ever pass -- inside the task context the key was escaped as
+        `\\"campaign\\"`. Reading the arguments removes the trap entirely.
         """
 
         orchestration = _load("loam_campaign_validator_absent")
         with tempfile.TemporaryDirectory() as temporary:
-            directive = orchestration.context_for(_orchestration_payload(Path(temporary)))
-        context = _validator_context(directive)
+            payload = _orchestration_payload(Path(temporary))
+            directive = orchestration.context_for(dict(payload))
+            context = _validator_context(orchestration, payload)
 
         self.assertIn("Loam orchestration directive", directive)
         self.assertIn('"campaign"', context)

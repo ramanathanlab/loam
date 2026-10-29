@@ -47,6 +47,12 @@ HPC_TOOLS = ("run_code", "run_batch", "batch_status", "list_batches", "register_
 # submission. A hypothesis-validator may call these itself (see
 # `_observation_tools`); everything executable still goes through a child.
 VALIDATOR_OBSERVATION_TOOLS = ("batch_status", "inspect_filesystem", "list_batches")
+# The tool the adapter registers so the coordinator can launch a round without
+# transcribing its arguments. Kept in step with DISPATCH_TOOL_NAME in
+# .loam/adapters/hermes/plugin/__init__.py, which tests/test_round_dispatch.py
+# asserts, because a drift here silently tells the model to call a tool that
+# does not exist.
+DISPATCH_TOOL = "loam_dispatch_round"
 _LOAM_TAG = re.compile(r"\[loam-[a-z-]+=[^\]]*\]")
 
 
@@ -965,56 +971,44 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
             "action": "block",
             "message": "The active plan's reasoner is already dispatched; wait for its terminal result before any further tool call.",
         }
-    if not starts and tool_name == "delegate_task" and isinstance(arguments, Mapping):
-        tasks = arguments.get("tasks")
-        raw_tasks = tasks if isinstance(tasks, list) else [arguments]
-        validator_tasks = [
-            (index, task)
-            for index, task in enumerate(raw_tasks)
-            if isinstance(task, Mapping)
-            and _marker(_text(task.get("goal")), "loam-agent-role") == "hypothesis-validator"
-        ]
-        if latest_plan_id and not plan_finished and not active_validators_complete and not validator_tasks:
-            return {
-                "action": "block",
-                "message": (
-                    "The active campaign requires one tagged hypothesis-validator task for each "
-                    "selected hypothesis; do not dispatch an untagged substitute batch."
-                ),
-            }
-        missing_orchestrator_role = [
-            index
-            for index, task in validator_tasks
-            if _text(task.get("role")) != "orchestrator"
-        ]
-        if missing_orchestrator_role:
-            return {
-                "action": "block",
-                "message": (
-                    "Each tagged hypothesis-validator in a delegate_task batch requires "
-                    "per-task role=orchestrator so it can delegate its code-generator child; "
-                    f"invalid task indexes: {missing_orchestrator_role}"
-                ),
-            }
-        missing_contract = [
-            index
-            for index, task in validator_tasks
-            if '"loam_validator_contract": "v1"' not in _text(task.get("context"))
-        ]
-        if missing_contract:
-            return {
-                "action": "block",
-                "message": (
-                    "Each tagged hypothesis-validator must preserve the complete injected task context "
-                    f"with loam_validator_contract v1; invalid task indexes: {missing_contract}"
-                ),
-            }
-    if not starts and latest_plan_id and not plan_finished and not active_validators_complete and tool_name != "delegate_task":
+    if not starts and tool_name == "delegate_task":
+        # The coordinator does not compose delegation at all any more: it calls
+        # DISPATCH_TOOL, whose handler hands the hook's own canonical arguments
+        # straight to delegate_task. So there is nothing to inspect here, and
+        # nothing to repair afterwards.
+        #
+        # This replaces four branches that checked the model's transcription --
+        # a substitute batch, a missing per-task role=orchestrator, a dropped
+        # loam_validator_contract -- which were only ever approximations of "did
+        # the LLM copy it correctly". Blocking the whole hop is both shorter and
+        # stronger: it holds mid-round, where `canonical_delegation_args` has no
+        # repair available and those checks were the only thing standing between
+        # a substitute batch and execution.
+        return {
+            "action": "block",
+            "message": (
+                f"Call {DISPATCH_TOOL} to launch this round instead of composing a delegate_task "
+                "batch. It takes no arguments and dispatches the hypothesis validators, or the "
+                "reasoner once every validator has reported, from the campaign's persisted plan. "
+                "You cannot see the selected hypotheses in full, so a batch you compose yourself "
+                "is a substitute for the campaign's work, not the campaign's work."
+            ),
+        }
+    if (
+        not starts
+        and latest_plan_id
+        and not plan_finished
+        and not active_validators_complete
+        # delegate_task is refused above with a pointer to the dispatch tool;
+        # the dispatch tool is how the round gets launched, so blocking it here
+        # would leave the coordinator with no legal move at all.
+        and tool_name not in ("delegate_task", DISPATCH_TOOL)
+    ):
         return {
             "action": "block",
             "message": (
                 "The active campaign plan is pending. Do not execute or inspect work as coordinator; "
-                "delegate tagged hypothesis-validator tasks from the injected payload first."
+                f"call {DISPATCH_TOOL} first and let the validators report."
             ),
         }
     if not session_id:
@@ -1354,7 +1348,16 @@ def record_stop(payload: Mapping[str, Any]) -> None:
         )
 
 
-def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry: Mapping[str, AgentSpec], payload: Mapping[str, Any]) -> str:
+def _validator_tasks(plan_id: str, selected: list[dict[str, Any]], registry: Mapping[str, AgentSpec], payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The round's validator task objects, as delegate_task arguments.
+
+    Separated from the directive that announces them because both the directive
+    and `canonical_delegation_args` need these objects, and the latter used to
+    recover them by string-parsing the directive's own text for a marker line.
+    Removing the printed array broke that parse, which is the clearest possible
+    argument against a function reading its own prose output.
+    """
+
     validator = registry["hypothesis-validator"]
     execution = payload.get("loam_execution")
     campaign = campaign_context(payload)
@@ -1406,16 +1409,42 @@ def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry:
                 "role": "orchestrator",
             }
         )
+    return tasks
+
+
+def _validator_directive(plan_id: str, selected: list[dict[str, Any]], registry: Mapping[str, AgentSpec], payload: Mapping[str, Any]) -> str:
+    """Announce what this round will launch; the arguments travel in the dispatch."""
+
+    validator = registry["hypothesis-validator"]
+    execution = payload.get("loam_execution")
+    tasks = _validator_tasks(plan_id, selected, registry, payload)
+    # The task array is NOT printed. It used to be, with instructions to copy it
+    # verbatim, and the copying is what failed: a validator at char ~9,000 of an
+    # 11 KB payload told its child the hypothesis "is not visible in this
+    # message" while holding it (2026-10-21). `DISPATCH_TOOL` hands these exact
+    # task objects to delegate_task from inside the adapter, so the coordinator
+    # never transcribes them and this directive only has to say what is pending
+    # and what the budget is. Everything the array carried -- the hypothesis, the
+    # campaign goal and rules, the agent definition, the execution contract --
+    # still reaches each validator; it travels in the dispatch instead of
+    # through the coordinator's context.
+    count = len(tasks)
     lines = [
-        "Loam orchestration directive: launch every selected hypothesis validator now, in one delegate_task batch.",
-        f"Each child's role definition ({validator.prompt_path.name}) is already inlined in its task context as \"agent_definition\" -- the validator cannot read that file, since it may call no tool but delegate_task, so do not replace the definition with a path. Call delegate_task exactly once using the ready-to-run task array below; do not rewrite or replace its goals, contexts, tags, or roles. Every validator task object has its required \"role\": \"orchestrator\" inside the task object; a top-level role is insufficient for batch dispatch. Do not perform experimental code or tool calls yourself.",
+        f"Loam orchestration directive: {count} hypothesis validator"
+        f"{'s are' if count != 1 else ' is'} planned for this round. "
+        f"Call {DISPATCH_TOOL} to launch {'them' if count != 1 else 'it'} now. It takes no arguments.",
+        (
+            "Do not compose a delegate_task batch yourself: the selected hypotheses are not in your "
+            "context in full, and a batch you write is a substitute for the campaign's work rather "
+            "than the campaign's work. Each validator receives its hypothesis, the campaign goal and "
+            f"rules, and its role definition ({validator.prompt_path.name}) inlined by the dispatch. "
+            "Do not perform experimental code or tool calls yourself."
+        ),
         (
             f"Every executable action MUST be delegated by that validator to at most {_max_children(execution)} leaf code-generator children; no other child may execute code."  # type: ignore[arg-type]
             if _generated(execution if isinstance(execution, Mapping) else None)
             else "Every executable action MUST be delegated by that validator to one leaf code-generator child; no other child may execute code."
         ),
-        "Required delegate_task tasks payload:",
-        json.dumps(tasks, ensure_ascii=False, sort_keys=True),
     ]
     return "\n".join(lines)
 
@@ -1633,15 +1662,55 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
             }
         return None
 
-    directive = context_for(dict(payload))
-    marker = "Required delegate_task tasks payload:\n"
-    if marker not in directive:
+    # Build the round's arguments directly. This used to re-run `context_for`
+    # and parse a marker line out of its prose, which tied the hook's ability to
+    # dispatch to the exact wording of a message meant for a model.
+    report = _latest_report(payload)
+    if report is None:
         return None
-    try:
-        tasks = json.loads(directive.split(marker, 1)[1])
-    except json.JSONDecodeError:
+    report_path, report_value = report
+    plan_id = _plan_id(report_path, payload)
+    workflow_id = _text(payload.get("workflow_id"))
+    if any(
+        row.get("event") == "reasoner_completed"
+        and _text(row.get("plan_id")) == plan_id
+        and _text(row.get("workflow_id")) == workflow_id
+        for row in rows
+    ):
         return None
-    return {"tasks": tasks} if isinstance(tasks, list) else None
+    selected = _selected_hypotheses(payload, report_value)
+    if not selected:
+        return None
+    return {"tasks": _validator_tasks(plan_id, selected, agent_registry(payload), payload)}
+
+
+def _selected_hypotheses(payload: Mapping[str, Any], report_value: Mapping[str, Any]) -> list[dict[str, Any]] | None:
+    """The ranked hypotheses this round should validate, with their full text.
+
+    `None` means there is nothing to dispatch: an empty ranking, or a ranked
+    hypothesis whose full text is missing from the tournament state. The second
+    case returns None rather than a shorter list on purpose -- dispatching a
+    partial fan-out would silently drop a hypothesis the tournament selected.
+
+    Shared by `context_for`, which announces the round, and
+    `canonical_delegation_args`, which builds the arguments that launch it. One
+    implementation, because two would eventually disagree about what the round is.
+    """
+
+    result = report_value.get("result")
+    rankings = result.get("top_hypotheses") if isinstance(result, Mapping) else None
+    if not isinstance(rankings, list) or not rankings:
+        return None
+    full_hypotheses = _full_hypotheses(payload)
+    selected: list[dict[str, Any]] = []
+    for rank, ranking in enumerate(rankings, start=1):
+        if not isinstance(ranking, Mapping):
+            continue
+        hypothesis = full_hypotheses.get(_text(ranking.get("hypothesis_id")))
+        if not hypothesis:
+            return None
+        selected.append({"rank": rank, "elo_rating": ranking.get("elo_rating"), "hypothesis": hypothesis})
+    return selected
 
 
 def context_for(payload: dict[str, Any]) -> str:
@@ -1669,18 +1738,7 @@ def context_for(payload: dict[str, Any]) -> str:
         for row in rows
     ):
         return f"Latest reasoner brief for the next tournament turn:\n{brief}" if brief else ""
-    result = report_value.get("result")
-    rankings = result.get("top_hypotheses") if isinstance(result, Mapping) else None
-    if not isinstance(rankings, list) or not rankings:
+    selected = _selected_hypotheses(payload, report_value)
+    if selected is None:
         return ""
-    full_hypotheses = _full_hypotheses(payload)
-    selected: list[dict[str, Any]] = []
-    for rank, ranking in enumerate(rankings, start=1):
-        if not isinstance(ranking, Mapping):
-            continue
-        hypothesis_id = _text(ranking.get("hypothesis_id"))
-        hypothesis = full_hypotheses.get(hypothesis_id)
-        if not hypothesis:
-            return ""
-        selected.append({"rank": rank, "elo_rating": ranking.get("elo_rating"), "hypothesis": hypothesis})
     return _validator_directive(plan_id, selected, registry, payload)
