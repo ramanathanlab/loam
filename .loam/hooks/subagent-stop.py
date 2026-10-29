@@ -18,6 +18,13 @@ from ledger import write_stop_and_candidate
 from run_manifest import ensure as ensure_run_manifest
 
 
+try:
+    from cairn_ratings import record_ratings
+except Exception as exc:  # Cairn must never stop the lifecycle records
+    record_ratings = None
+    print(f"loam subagent-stop: cairn ratings unavailable: {type(exc).__name__}: {exc}", file=sys.stderr)
+
+
 def _payload() -> dict[str, Any]:
     value = json.load(sys.stdin)
     if not isinstance(value, dict):
@@ -43,7 +50,7 @@ def main() -> int:
     # dangling "...started" that deadlocks the plan). A failure writing the
     # manifest must not drop either, and a failure in one must not drop the
     # other -- so they do not share a try with the manifest or with each other.
-    for step in (write_stop_and_candidate, record_stop):
+    for step in (write_stop_and_candidate, record_stop, *([record_ratings] if record_ratings else [])):
         try:
             step(payload)
         except Exception as exc:  # observer failures must not change Hermes behavior
