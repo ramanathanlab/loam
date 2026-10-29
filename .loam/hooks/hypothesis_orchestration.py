@@ -728,6 +728,10 @@ def _layout_block(base: str, run_id: str, remote: bool = False, batch_root: str 
         "completed runs' outputs/rK/; Loam records each such read as an input of your run",
         "Write nothing anywhere else, and never /tmp: /tmp is local to one node and the next tool call "
         "may run on another. Other runs' outputs are frozen; do not modify them.",
+        "DECISIONS: as you commit to each high-level choice -- the approach, which generator or "
+        "folding model, the tier size, a go/stop -- record it with the loam_record_decision tool "
+        "(what, why, alternatives, expected, confidence) BEFORE you act on it. Your full reasoning "
+        "is not otherwise kept, so an unrecorded decision is lost.",
     ]
     if remote:
         # fs_policy requires an explicit workdir on every run_code (the server
@@ -1834,6 +1838,9 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
             f"it to at most {cap} code-generator leaf children, one at a time, iterating on their actual "
             "results. Do not compute anything yourself; delegate_task is your only executable tool, though "
             f"you may call {', '.join(VALIDATOR_OBSERVATION_TOOLS)} to check on and read a child's run. "
+            "As you commit to each high-level decision -- the experiment design, what to delegate, "
+            "whether the evidence is sufficient -- record it with the loam_record_decision tool before "
+            "you act on it; your reasoning is not otherwise kept. "
             "Then return the required report headings, including a bare decimal Evidence Score. "
             f"[loam-agent-role=hypothesis-validator] [loam-plan-id={plan_id}] "
             f"[loam-hypothesis-id={hypothesis_id}]"
@@ -2038,7 +2045,12 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
             ):
                 return None
             return {
-                "goal": f"Synthesize validator results [loam-agent-role=reasoner] [loam-plan-id={plan_id}]",
+                "goal": (
+                    "Synthesize validator results. As you commit to each synthesis decision -- which "
+                    "hypotheses to promote or retire, how to steer the next round -- record it with the "
+                    "loam_record_decision tool before you finalize your brief; your reasoning is not "
+                    f"otherwise kept. [loam-agent-role=reasoner] [loam-plan-id={plan_id}]"
+                ),
                 "context": _reasoner_directive(plan_id, completions, agent_registry(payload), campaign_context(payload), _elo_ratings(payload)),
                 "role": "leaf",
             }

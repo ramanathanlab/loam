@@ -2238,6 +2238,64 @@ class WorkspaceDecisionTests(WorkspacePolicyTests):
             self.assertEqual([p for p in problems if "validator" in p], [])
 
 
+class WorkspaceBackfillTests(WorkspacePolicyTests):
+    """G5: backfill traces for agents whose stop never fired, and the directive text."""
+
+    def _state_db(self, home: Path, rows_by_session: dict) -> None:
+        import sqlite3
+
+        home.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(home / "state.db")
+        conn.execute(
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, "
+            "content TEXT, tool_call_id TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL, "
+            "token_count INTEGER, finish_reason TEXT, reasoning TEXT, reasoning_content TEXT)"
+        )
+        for session, rows in rows_by_session.items():
+            for i, (role, content) in enumerate(rows):
+                conn.execute("INSERT INTO messages (session_id, role, content, timestamp) VALUES (?,?,?,?)",
+                             (session, role, content, 1000.0 + i))
+        conn.commit()
+        conn.close()
+
+    def test_backfill_fills_a_run_whose_stop_never_fired(self) -> None:
+        verifier = _load("loam_vw_backfill", ROOT / ".loam" / "reconcile" / "verify_workspace.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))  # validator + child-1 on r1, never stopped
+            home = Path(tmp) / "home"
+            self._state_db(home, {"child-1": [("user", "go"), ("assistant", "done")],
+                                  "validator-1": [("user", "validate"), ("assistant", "delegated")]})
+            db = home / "state.db"
+
+            # Nothing captured yet (no stop fired).
+            self.assertNotIn("trace", json.loads((root / "runs" / "r1" / "run.json").read_text()))
+            filled = verifier.traces(root, db, False)
+            self.assertEqual(sorted(filled["h-1"]), ["r1", "validator"])
+            run = json.loads((root / "runs" / "r1" / "run.json").read_text())
+            self.assertEqual(run["trace"]["rows"], 2)
+            self.assertTrue((root / "runs" / "r1" / "trace.jsonl").is_file())
+            experiment = json.loads((root / "experiment.json").read_text())
+            self.assertEqual(experiment["trace"]["path"], "validator/trace.jsonl")
+
+    def test_backfill_is_idempotent(self) -> None:
+        verifier = _load("loam_vw_backfill_idem", ROOT / ".loam" / "reconcile" / "verify_workspace.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp))
+            home = Path(tmp) / "home"
+            self._state_db(home, {"child-1": [("user", "go")], "validator-1": [("user", "v")]})
+            db = home / "state.db"
+            verifier.traces(root, db, False)
+            # Second sweep finds nothing left to fill.
+            again = verifier.traces(root, db, False)
+            self.assertEqual(again["h-1"], [])
+
+    def test_child_context_tells_it_to_record_decisions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            orchestration, payload, root = self._child(Path(tmp), mode="remote_mcp")
+            task = self._delegate(orchestration, payload, ["Fold B with T."])["tasks"][0]
+            self.assertIn("loam_record_decision", task["context"])
+
+
 class WorkspaceReasonerTests(_StopHelpers, unittest.TestCase):
     """G4: the plan-level reasoner record (decisions + trace + synthesis)."""
 
