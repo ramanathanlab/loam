@@ -68,3 +68,6 @@ loam_state/
 .venv/
 *.bak-*
 .DS_Store
+
+# Local working notes (see notes/README.md). Never part of the framework.
+notes/

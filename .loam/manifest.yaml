@@ -30,3 +30,69 @@ hooks:
   subagent_stop:
     script: hooks/subagent-stop.py
     behavior: observe
+
+# In-process seams. Unlike the hooks above these are not spawned scripts: the
+# adapter registers a callback that runs inside the harness process. They are
+# declared here because this file is where someone looks to learn what Loam can
+# do to a running campaign, and a rewrite is the most consequential thing it
+# does. Leaving it undeclared made the four `observe`/`may_block` entries above
+# read as the whole contract, which understated Loam considerably.
+# Tools the adapter registers into the harness. Declared for the same reason as
+# the middleware: a tool Loam adds is part of what Loam does to a campaign.
+tools:
+  loam_dispatch_round:
+    toolset: delegation
+    handler: dispatch_round
+    arguments: none
+    why: |
+      Launches the round the hook has already planned -- one hypothesis-validator
+      per selected hypothesis, or the reasoner once every validator has reported.
+      The coordinator calls this instead of composing a `delegate_task` batch,
+      which removes the transcription step rather than repairing it afterwards.
+      The directive that used to print the ready-to-run array for the model to
+      copy now announces what is pending in a few hundred characters; the task
+      objects travel in the dispatch.
+    dispatch: |
+      The handler calls `ctx.dispatch_tool("delegate_task", ...)`, the documented
+      plugin path with the parent agent resolved. That reaches the tool registry
+      directly, so neither `pre_tool_call` nor the `tool_request` middleware
+      fires on the call it makes: no double rewrite, and `tool_policy` cannot
+      veto Loam's own dispatch.
+    toolset_note: |
+      Registered into the existing `delegation` toolset, not a new `loam` one. A
+      plugin's own toolset is configurable and OFF until toggled on per
+      platform, so a `loam` toolset would leave this invisible to the
+      coordinator until someone edited config.
+
+middleware:
+  tool_request:
+    adapter_callback: canonicalize_campaign_delegation
+    behavior: may_rewrite_arguments
+    applies_to: delegate_task
+    returns: |
+      Optional JSON object. `{"args": {...}, "source": "...", "reason": "..."}`
+      REPLACES the arguments the model supplied for that call. Empty or absent
+      means the model's arguments stand.
+    why: |
+      The hook computes each round's delegation from persisted state, so the
+      authoritative arguments already exist before the model writes anything.
+      Asking an LLM to transcribe them was the original design and it failed in
+      ways the scars in hypothesis_orchestration.py record (the 2026-10-21
+      char-9000 incident, `_SCRUBBERS`, `_hypothesis_block`). This seam replaces
+      the transcription with the canonical arguments instead of trusting it.
+    ordering: |
+      Runs AFTER pre_tool_call, in the same sequential path. A pre_tool_call
+      veto therefore PREEMPTS the rewrite -- a blocked call never reaches this
+      seam, so a `tool_policy` branch that rejects a malformed delegation
+      prevents the repair that would have fixed it silently.
+    coverage: |
+      `canonical_delegation_args` does not repair every state, which is why the
+      `tool_policy` branches still exist. Pinned by
+      tests/test_delegation_repair.py:
+        - coordinator, fresh round (no validator launched yet) -- REPAIRS
+        - a known hypothesis-validator delegating its child    -- REPAIRS
+        - coordinator, all validators complete (reasoner due)   -- REPAIRS
+        - coordinator, mid-round (validators launched, pending) -- NO REPAIR
+      The last row is load-bearing: with no repair available, the veto is the
+      only thing standing between a coordinator's substitute batch and
+      execution.

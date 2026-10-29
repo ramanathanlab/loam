@@ -13,7 +13,7 @@ orchestration, and tournament artifact there.
 
 - `subagent-ledger.jsonl` is an append-only lifecycle audit log.
 - `candidate-results.jsonl` can contain shape-valid but unvalidated opt-in
-  protein or hypothesis-provenance candidates.
+  hypothesis-provenance candidates.
 - `hypothesis-ledger.jsonl`, `evidence-ledger.jsonl`, and `credit-ledger.jsonl`
   are created only by explicit hypothesis-provenance reconciliation.
 - `hypothesis-memory.jsonl` is a compact projection of accepted hypotheses and

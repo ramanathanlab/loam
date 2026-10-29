@@ -71,8 +71,8 @@ policy as it is designed.
   `subagent-stop.py` also extracts opt-in structured candidates into
   `candidate-results.jsonl`; candidates remain unvalidated and receive no
   findings, evidence, memory, or control credit until explicit reconciliation.
-  The available contracts include the narrow protein-metadata pilot and
-  `hypothesis_provenance_v1`, documented in `reconcile/HYPOTHESIS_PROVENANCE.md`.
+  The contract is `hypothesis_provenance_v1`, documented in
+  `reconcile/HYPOTHESIS_PROVENANCE.md`.
   Set a unique directory per deployment to isolate all hook, orchestration, and
   tournament artifacts for that run:
 
@@ -113,6 +113,33 @@ policy as it is designed.
 Set `hypothesis_orchestration.enabled: true` alongside `hypothesis_tournament` and an `execution` contract to make the harness LLM act as the campaign orchestrator. The pre-LLM hook runs the tournament first, then supplies a directive containing full selected hypotheses from the Jnana state. The harness MUST launch one `hypothesis-validator` per selected hypothesis in a `delegate_task` batch, using an orchestrator role. Validators MAY delegate only to leaf `code-generator` children.
 
 `execution.mode: remote_mcp` requires code generators to use the configured MCP tool; `execution.mode: local` permits their local execution. Validator lifecycle hooks alone append `hypothesis-campaign.jsonl` start/completion records. A reasoner completion appends the round synthesis and its validator results. The structured `evidence_score` and `evidence_score_status` from each validator completion are included in the reasoner directive.
+
+#### Payload ordering is load-bearing
+
+Where text sits in a child's payload changes whether the child acts on it. On
+2026-10-21, alphabetical `sort_keys` put the 8.6 KB `agent_definition` first,
+pushing the real assignment to roughly char 9,000 of an 11 KB payload; the
+validator reported that the hypothesis text "is not visible in this message"
+while holding it, and sent its child only an id. The child then spent its whole
+budget grepping the filesystem for that id.
+
+So, as a contract rather than a preference:
+
+- Campaign goal and rules belong in the first ~2 KB of a payload, and
+  `tests/test_campaign_context.py` asserts that bound.
+- `sort_keys` stays **off** in `_generated_validator_task`.
+- Rules precede the validator's instruction in a child's context: the claim
+  matters more than the wording of the request, and the validator's text may
+  contradict it.
+- The "authoritative — overrides any instruction below that conflicts" framing
+  stays verbatim. It is what settles a conflict between campaign policy and a
+  validator's paraphrase.
+
+The goal and the hypothesis now compete for the front of that payload, so both
+are explicitly budgeted (`MAX_CAMPAIGN_CHARS`, `MAX_RULES_CHARS`,
+`MAX_HYPOTHESIS_CHARS`) rather than left to grow.
+
+#### Run manifest
 
 Every run writes `$LOAM_STATE_DIR/run-manifest.json` on its first hook event. It identifies the run, profile, execution configuration, campaign settings, colocated artifacts, and event counts without recording secrets or model summaries.
 

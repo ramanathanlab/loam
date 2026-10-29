@@ -40,8 +40,12 @@ VALID_PAYLOADS = {
 MALFORMED_INPUTS = ("", "not json", "[]", '{"event": "some_other_event"}')
 
 
+def _manifest() -> dict:
+    return yaml.safe_load(MANIFEST.read_text())
+
+
 def _manifest_hooks() -> dict[str, dict]:
-    return yaml.safe_load(MANIFEST.read_text())["hooks"]
+    return _manifest()["hooks"]
 
 
 class HookContractTests(unittest.TestCase):
@@ -86,6 +90,27 @@ class HookContractTests(unittest.TestCase):
                 self.assertTrue(script.is_file(), f"{script} is missing")
                 self.assertTrue(os.access(script, os.X_OK), f"{script} is not executable")
                 self.assertEqual(script.read_text().splitlines()[0], "#!/usr/bin/env python3")
+
+    def test_manifest_declares_every_middleware_the_adapter_registers(self) -> None:
+        """The manifest is where someone learns what Loam can do to a campaign.
+
+        `canonicalize_campaign_delegation` rewrites a `delegate_task` call's
+        arguments and went undeclared, so the four observe/may_block hook
+        entries read as the whole contract and understated Loam considerably.
+        This keeps a newly registered seam from being invisible the same way.
+        """
+
+        registered = set(re.findall(r'register_middleware\(\s*"([^"]+)"', ADAPTER.read_text()))
+        declared = _manifest().get("middleware") or {}
+        self.assertTrue(registered, "adapter registers no middleware; update this test")
+        self.assertEqual(registered, set(declared))
+        for event, spec in declared.items():
+            with self.subTest(event=event):
+                self.assertEqual(spec["behavior"], "may_rewrite_arguments")
+                # Ordering is the fact a reader most needs and cannot infer:
+                # the veto runs first, so it preempts the rewrite.
+                self.assertIn("pre_tool_call", spec["ordering"])
+                self.assertIn(spec["adapter_callback"], ADAPTER.read_text())
 
     def test_adapter_invokes_only_manifest_scripts(self) -> None:
         # A misspelled name is not an error in the adapter: it logs "hook missing"
