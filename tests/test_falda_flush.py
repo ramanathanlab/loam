@@ -237,3 +237,21 @@ def test_resent_batch_reuses_atom_ids_so_retries_are_idempotent(payload, state, 
     [body] = fake.bodies("/atoms/upsert")
     assert body["atoms"][0]["id"] == str(uuid.UUID(first["id"]))
     assert body["atoms"][0]["content"] == "atom 1"
+
+
+def test_rows_spooled_during_a_flush_are_sent_by_it(payload, state, cfg):
+    # A second validator stop's flusher finds the lock busy and exits; the running flusher must pick
+    # up its row, or a short run ends with it unsent (Hermes probe, 2026-10-30).
+    falda_flush.enqueue(payload, _atom(1), plan_id="p", hypothesis_id="h")
+
+    class _Late(FakeTransport):
+        def __call__(self, url, headers, body, timeout):
+            if len(self.requests) == 0:
+                falda_flush.enqueue(payload, _atom(2), plan_id="p", hypothesis_id="h2")
+            return super().__call__(url, headers, body, timeout)
+
+    fake = _Late()
+    falda_memory.set_transport(fake)
+    summary = falda_flush.flush(state, cfg)
+    assert summary["sent"] == 2 and summary["pending"] == 0
+    assert [a["content"] for b in fake.bodies("/atoms/upsert") for a in b["atoms"]] == ["atom 1", "atom 2"]

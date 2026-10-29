@@ -141,9 +141,13 @@ def _with_id(row: Mapping[str, Any]) -> dict[str, Any]:
     return atom
 
 
-def _send(state: Path, cfg: Mapping[str, Any], pending: list[dict[str, Any]], summary: dict[str, Any]) -> None:
-    for start in range(0, min(len(pending), BATCH_SIZE * MAX_BATCHES), BATCH_SIZE):
-        batch = pending[start : start + BATCH_SIZE]
+def _send(state: Path, cfg: Mapping[str, Any], summary: dict[str, Any]) -> None:
+    # Re-read the spool before each batch: rows queued while this flusher holds the lock (whose own
+    # flushers exited on the busy lock) are sent now, not left for a flush that may never come.
+    for _ in range(MAX_BATCHES):
+        batch = _pending(state)[:BATCH_SIZE]
+        if not batch:
+            return
         first = batch[0]
         payload = {
             "loam_falda": cfg,
@@ -197,7 +201,7 @@ def flush(state_dir: Path, cfg: Mapping[str, Any]) -> dict[str, Any]:
                 timeout = min(float(cfg.get("timeout_seconds") or 60), MINT_TIMEOUT_CAP)
                 key, summary["key"] = falda_keys.ensure_key(cfg, timeout)
                 if key:
-                    _send(state, cfg, pending, summary)  # upsert reads the key ensure_key just cached
+                    _send(state, cfg, summary)  # upsert reads the key ensure_key just cached
                 else:
                     summary["last_error"] = summary["key"]
         except Exception as exc:  # noqa: BLE001 - never raise from the flusher
