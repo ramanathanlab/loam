@@ -114,6 +114,16 @@ python -m pytest tests/           # use the interpreter with `pip install -e .`
 PyYAML in particular is required — without it `load_profile` returns `None` and
 the profile-parsing tests fail.
 
+## Run enzyme reactions with Reactra
+
+The [Reactra skill](skills/reactra/SKILL.md) covers YAML-driven enzyme-reaction
+simulations, including packaged PMD and chorismate-mutase examples, HPC execution,
+recovery, and interpreting crossings versus barriers. Make the skill available in
+the campaign's Hermes skill library and add `reactra` to `campaign.skills` in your
+Loam profile so code-generators consult it. The
+[execution guide](skills/reactra/references/loam-execution.md) explains environment
+setup and resource ownership for direct and cluster execution.
+
 ## Where things live
 
 | Path | What |
