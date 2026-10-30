@@ -15,7 +15,7 @@ from typing import Any
 from hypothesis_recall import context_for as hypothesis_context_for
 from hypothesis_steering_recall import context_for as steering_context_for
 from hypothesis_orchestration import context_for as orchestration_context_for
-from hypothesis_orchestration import is_campaign_child, prepare_payload
+from hypothesis_orchestration import is_campaign_child, prepare_payload, runbatch_nudge_for
 from hypothesis_tournament import context_for as tournament_context_for
 from memory_recall import context_for as memory_context_for
 from run_manifest import ensure as ensure_run_manifest
@@ -37,10 +37,15 @@ def main() -> int:
             hypothesis_context_for(payload),
             steering_context_for(payload),
         ]
-        if payload.get("loam_hypothesis_orchestration") is True and not is_campaign_child(payload):
-            prepare_payload(payload)
-            contexts.append(tournament_context_for(payload))
-            contexts.append(orchestration_context_for(payload))
+        # Orchestration-only extras. Gating the run_batch nudge here keeps it (and
+        # its per-turn orchestration-state read) off every non-campaign Hermes
+        # session's hot path; it self-gates to code-generator children within.
+        if payload.get("loam_hypothesis_orchestration") is True:
+            contexts.append(runbatch_nudge_for(payload))
+            if not is_campaign_child(payload):
+                prepare_payload(payload)
+                contexts.append(tournament_context_for(payload))
+                contexts.append(orchestration_context_for(payload))
         context = "\n\n".join(part for part in contexts if part)
         if context:
             print(json.dumps({"context": context}))

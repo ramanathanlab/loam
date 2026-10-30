@@ -177,6 +177,79 @@ DISPATCH_TOOL_SCHEMA: dict[str, Any] = {
 }
 
 
+RECORD_DECISION_TOOL_NAME = "loam_record_decision"
+RECORD_DECISION_TOOL_SCHEMA: dict[str, Any] = {
+    "name": RECORD_DECISION_TOOL_NAME,
+    "description": (
+        "Record ONE high-level decision in your workspace record, as you make it and "
+        "BEFORE you act on it: the choice, why, the alternatives you rejected, the "
+        "falsifiable outcome you expect, and your confidence. This is how the campaign "
+        "keeps your reasoning -- your full transcript is not retained, and nothing else "
+        "captures WHY you chose what you did. Call it when you commit to an approach, a "
+        "tool or model, a tier size, or a go/stop; not for routine mechanical steps. "
+        "It records into your own hypothesis workspace and returns once stored."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "what": {"type": "string", "description": "The decision, in one line."},
+            "why": {"type": "string", "description": "The rationale for it."},
+            "alternatives": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Options you considered and rejected, each with a brief reason.",
+            },
+            "expected": {
+                "type": "string",
+                "description": "The falsifiable result you predict if this decision is right.",
+            },
+            "confidence": {"type": "number", "description": "Your confidence, 0 to 1."},
+        },
+        "required": ["what", "why"],
+    },
+}
+
+
+def record_decision(args: dict[str, Any], **kwargs: Any) -> str:
+    """Write one declared decision into the calling agent's Pando workspace record.
+
+    Recording happens here, in-process, rather than relying on pre_tool_call to
+    fire for a plugin-registered tool: the handler already has the caller's
+    session, and hypothesis_workspace.record_decision writes into the same
+    flock-guarded run.json / experiment.json that captures every other call.
+    """
+
+    profile = _profile()
+    if profile is None:
+        return json.dumps({"error": "Loam is not active for this profile; decision not recorded."})
+    what = str(args.get("what", "")).strip()
+    if not what:
+        return json.dumps({"error": "loam_record_decision needs a non-empty `what`."})
+    values = dict(kwargs)
+    values.update(payload_values(profile))
+    values.setdefault("session_id", values.get("parent_session_id", ""))
+    values.pop("arguments", None)
+    try:
+        if str(HOOKS_DIR) not in sys.path:
+            sys.path.insert(0, str(HOOKS_DIR))
+        from hypothesis_orchestration import workspace_decision
+
+        stored = workspace_decision(_payload("tool_request", tool_name=RECORD_DECISION_TOOL_NAME,
+                                             arguments=args, **values))
+    except Exception as exc:
+        logger.warning("Loam could not record a decision: %s", exc)
+        return json.dumps({"error": f"Loam could not record the decision: {exc}"})
+    if not stored:
+        # Not an error the agent can fix: no open workspace run for this session
+        # (e.g. the reasoner, whose record arrives in a later version). Say so
+        # plainly rather than claim a record that was not written.
+        return json.dumps({
+            "status": "not_recorded",
+            "detail": "No open workspace run is attributed to this session; the decision was not stored.",
+        })
+    return json.dumps({"status": "recorded", "what": what[:200]})
+
+
 def dispatch_round(args: dict[str, Any], **kwargs: Any) -> str:
     """Dispatch the round's planned delegation without the model transcribing it.
 
@@ -318,6 +391,17 @@ def register(ctx: Any) -> None:
         handler=dispatch_round,
         description=DISPATCH_TOOL_SCHEMA["description"],
         emoji="🌱",
+    )
+    # Same toolset as the dispatch tool, for the same reason: `delegation` is on
+    # wherever orchestration runs, so the tool is visible to every campaign agent
+    # without a config toggle.
+    ctx.register_tool(
+        name=RECORD_DECISION_TOOL_NAME,
+        toolset="delegation",
+        schema=RECORD_DECISION_TOOL_SCHEMA,
+        handler=record_decision,
+        description=RECORD_DECISION_TOOL_SCHEMA["description"],
+        emoji="📝",
     )
     ctx.register_middleware("tool_request", canonicalize_campaign_delegation)
     ctx.register_hook("pre_tool_call", pre_tool_call)

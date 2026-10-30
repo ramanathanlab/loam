@@ -728,6 +728,10 @@ def _layout_block(base: str, run_id: str, remote: bool = False, batch_root: str 
         "completed runs' outputs/rK/; Loam records each such read as an input of your run",
         "Write nothing anywhere else, and never /tmp: /tmp is local to one node and the next tool call "
         "may run on another. Other runs' outputs are frozen; do not modify them.",
+        "DECISIONS: as you commit to each high-level choice -- the approach, which generator or "
+        "folding model, the tier size, a go/stop -- record it with the loam_record_decision tool "
+        "(what, why, alternatives, expected, confidence) BEFORE you act on it. Your full reasoning "
+        "is not otherwise kept, so an unrecorded decision is lost.",
     ]
     if remote:
         # fs_policy requires an explicit workdir on every run_code (the server
@@ -969,7 +973,13 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
     if not isinstance(raw, Mapping):
         return None
     tasks = raw.get("tasks")
-    items = tasks if isinstance(tasks, list) else [raw]
+    # An EMPTY tasks list is single-task mode, not an empty batch: models that
+    # fill every optional field emit `tasks: []` alongside a top-level `goal`,
+    # and Hermes's own delegate_task handler treats that as single mode
+    # (`if tasks and isinstance(tasks, list)`). Matching that here is what keeps
+    # Loam from building zero children -- and the gate below from blocking -- on
+    # a dispatch Hermes would run.
+    items = tasks if (isinstance(tasks, list) and tasks) else [raw]
     workdir = _workdir(execution if isinstance(execution, Mapping) else None, plan_id, hypothesis_id)
     # Look the hypothesis up here rather than trusting the validator to have
     # copied it into the instruction; see _hypothesis_block. Unknown id -> empty
@@ -1010,7 +1020,43 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
                 "role": "leaf",
             }
         )
+    _record_dispatch_edges(payload, plan_id, hypothesis_id, items, out, run_ids)
     return {"tasks": out}
+
+
+def _record_dispatch_edges(
+    payload: Mapping[str, Any], plan_id: str, hypothesis_id: str,
+    items: list, out: list[dict[str, Any]], run_ids: list[str],
+) -> None:
+    """Record the validator->child edge for each dispatched run (hypothesis_workspace.record_dispatch).
+
+    Hashes the validator's original ask (``items``) and the canonical task the
+    child receives (``out``) so a Loam rewrite between them is on the record.
+    Runs at dispatch, when the runs are reserved but the children have not
+    started. A workspace problem never blocks the dispatch.
+    """
+
+    if hypothesis_workspace.settings(payload) is None or not any(run_ids):
+        return
+    validator_session = _text(payload.get("session_id")) or _text(payload.get("parent_session_id"))
+    try:
+        root = hypothesis_workspace.workspace_root(payload, plan_id, hypothesis_id)
+    except Exception as exc:
+        print(f"loam workspace: dispatch edge skipped: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return
+    for item, entry, run_id in zip(items, out, run_ids):
+        if not run_id or not isinstance(item, Mapping):
+            continue
+        requested = _text(item.get("goal")) + "\n\n" + _text(item.get("context"))
+        canonical = _text(entry.get("goal")) + "\n\n" + _text(entry.get("context"))
+        try:
+            hypothesis_workspace.record_dispatch(
+                root, run_id, validator_session,
+                hashlib.sha256(requested.encode("utf-8")).hexdigest(),
+                hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+            )
+        except Exception as exc:
+            print(f"loam workspace: could not record dispatch edge for {run_id}: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
 def _reserve_child_runs(
@@ -1221,6 +1267,13 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
         return None
     role = _text(starts[-1].get("role"))
     tool_name = _text(payload.get("tool_name"))
+    # Recording a decision is provenance, not execution -- the same carve-out as
+    # the read-only skill tools below. It must precede every role gate, or the
+    # per-role allowlists (which do not list it) refuse it: live, every
+    # validator's loam_record_decision call was blocked here and no decision was
+    # ever recorded, though the validators were calling it with real content.
+    if tool_name == hypothesis_workspace.DECISION_TOOL:
+        return None
     if role == "reasoner":
         return {"action": "block", "message": "reasoner has no tool capability; return the synthesis to the harness"}
     if role == "code-generator":
@@ -1265,7 +1318,10 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     goals = []
     if isinstance(arguments, Mapping):
         tasks = arguments.get("tasks")
-        if isinstance(tasks, list):
+        # Empty tasks list == single-task mode (see _generated_child_tasks): fall
+        # through to the top-level goal rather than reading zero goals and
+        # blocking a dispatch Hermes would have run.
+        if isinstance(tasks, list) and tasks:
             goals.extend(
                 goal
                 for task in tasks
@@ -1301,7 +1357,8 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
         )
         cap = _max_children(execution)  # type: ignore[arg-type]
         raw_tasks = arguments.get("tasks") if isinstance(arguments, Mapping) else None
-        requested = len(raw_tasks) if isinstance(raw_tasks, list) else 1
+        # Empty tasks list is one single-task child, not zero (same rule as above).
+        requested = len(raw_tasks) if (isinstance(raw_tasks, list) and raw_tasks) else 1
         if used + requested > cap:
             return {
                 "action": "block",
@@ -1361,6 +1418,19 @@ def workspace_capture(payload: Mapping[str, Any]) -> None:
         hypothesis_workspace.capture_code(payload, _session_start(payload))
 
 
+def workspace_decision(payload: Mapping[str, Any]) -> bool:
+    """Record one declared decision in the caller's workspace record (any campaign role).
+
+    Called from the loam_record_decision tool handler, which carries the calling
+    agent's session_id. Returns whether a decision was stored, so the tool can
+    tell the agent plainly rather than claim a record it did not make.
+    """
+
+    if hypothesis_workspace.settings(payload) is None:
+        return False
+    return hypothesis_workspace.record_decision(payload, _session_start(payload))
+
+
 def workspace_stop(payload: Mapping[str, Any]) -> None:
     """Close a stopped child's workspace run, or its validator's workspace.
 
@@ -1412,6 +1482,58 @@ def is_campaign_child(payload: Mapping[str, Any]) -> bool:
             for row in _read_rows(_state_path(payload))
         )
     )
+
+
+# L2 (warn-only, no block): nudge a code-generator toward run_batch once it has
+# looped run_code. Injected each pre-LLM turn by pre-llm.py; it self-gates and
+# returns "" for everything else. Rationale: each serial run_code re-sends the
+# child's whole growing context (skills + CAMPAIGN.md + accumulated tool output),
+# which measurement showed is the dominant driver of the per-minute token-rate
+# limit -- one child's 17 serial run_code calls re-sent ~45K tokens apiece.
+# run_batch collapses the fan-out to one submit + batch_status polling and runs
+# the rows on HPC tiles, so it is both the scale-out path and the rate-limit fix.
+RUNBATCH_NUDGE_THRESHOLD = 5
+
+
+def runbatch_nudge_for(payload: Mapping[str, Any]) -> str:
+    """Advisory run_batch reminder for a code-generator that is looping run_code."""
+    session_id = _text(payload.get("session_id"))
+    if not session_id:
+        return ""
+    start = None
+    for row in _read_rows(_state_path(payload)):
+        if row.get("event") == "agent_started" and _text(row.get("child_session_id")) == session_id:
+            start = row  # last start for this session wins
+    if start is None or _text(start.get("role")) != "code-generator":
+        return ""
+    # The workspace run id is start["run"] (e.g. "r2"); start["run_id"] is the
+    # campaign LOAM_RUN_ID (a uuid) and does NOT name the run dir. record_decision
+    # and every other consumer read start["run"] -- mirror them or the path never
+    # resolves and this nudge silently no-ops.
+    workspace = _text(start.get("workspace"))
+    run = _text(start.get("run"))
+    if not workspace or not run:
+        return ""
+    try:
+        rec = hypothesis_workspace.read_json(
+            Path(workspace) / "runs" / run / hypothesis_workspace.RUN_FILE
+        )
+    except Exception:
+        return ""
+    calls = rec.get("calls") or []
+    n_run_code = sum(1 for c in calls if hypothesis_workspace._hpc_function(_text(c.get("tool"))) == "run_code")
+    n_run_batch = sum(1 for c in calls if hypothesis_workspace._hpc_function(_text(c.get("tool"))) == "run_batch")
+    if n_run_code >= RUNBATCH_NUDGE_THRESHOLD and n_run_batch == 0:
+        return (
+            f"RUN_BATCH REMINDER: this run has {n_run_code} serial run_code calls and no run_batch. "
+            "A design tier's per-candidate fan-out (generate / fold / score many candidates) MUST go "
+            "through run_batch -- one JSONL row per candidate, one submit, then poll batch_status until "
+            "unfinished == 0 -- NOT a run_code loop. Each serial run_code resends your whole growing "
+            "context and is the main cause of the model token-rate-limit failures that abort runs; "
+            "run_batch executes the rows on HPC tiles without that per-call cost. Keep run_code only for "
+            "setup, a single probe fold, and post-batch aggregation."
+        )
+    return ""
 
 
 def _latest_report(payload: Mapping[str, Any]) -> tuple[Path, Mapping[str, Any]] | None:
@@ -1785,6 +1907,9 @@ def _generated_validator_task(plan_id: str, hypothesis_id: str, item: Mapping[st
             f"it to at most {cap} code-generator leaf children, one at a time, iterating on their actual "
             "results. Do not compute anything yourself; delegate_task is your only executable tool, though "
             f"you may call {', '.join(VALIDATOR_OBSERVATION_TOOLS)} to check on and read a child's run. "
+            "As you commit to each high-level decision -- the experiment design, what to delegate, "
+            "whether the evidence is sufficient -- record it with the loam_record_decision tool before "
+            "you act on it; your reasoning is not otherwise kept. "
             "Then return the required report headings, including a bare decimal Evidence Score. "
             f"[loam-agent-role=hypothesis-validator] [loam-plan-id={plan_id}] "
             f"[loam-hypothesis-id={hypothesis_id}]"
@@ -1989,7 +2114,12 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
             ):
                 return None
             return {
-                "goal": f"Synthesize validator results [loam-agent-role=reasoner] [loam-plan-id={plan_id}]",
+                "goal": (
+                    "Synthesize validator results. As you commit to each synthesis decision -- which "
+                    "hypotheses to promote or retire, how to steer the next round -- record it with the "
+                    "loam_record_decision tool before you finalize your brief; your reasoning is not "
+                    f"otherwise kept. [loam-agent-role=reasoner] [loam-plan-id={plan_id}]"
+                ),
                 "context": _reasoner_directive(plan_id, completions, agent_registry(payload), campaign_context(payload), _elo_ratings(payload)),
                 "role": "leaf",
             }
