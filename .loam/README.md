@@ -313,11 +313,16 @@ walltime resume rejoins the same run rather than forking a new one):
   each tool call is linked back to its inference by `api_request_id` (falling
   back to the session's last inference), which also carries that inference's
   token usage onto the tool-call record.
+- **The skill each tool call ran under** — the reviewed recipe most recently
+  read in that session (`skill_view`/`skills_list` `name`), so tool time can be
+  grouped by skill as well as by tool. A call before any skill read is charged
+  to `(none)`.
 
 These land as per-call rows in an `events` table **and** as cumulative scalar
-series (live charts), plus end-of-run `summary/agents` and `summary/tools`
-tables. Every event is also appended to `<state_dir>/metrics-events.jsonl`, a
-durable record that survives when W&B is unreachable.
+series (live charts), plus end-of-run `summary/agents`, `summary/tools` and
+`summary/skills` tables. Every event is also appended to
+`<state_dir>/metrics-events.jsonl`, a durable record that survives when W&B is
+unreachable.
 
 **Per tool call, in the Pando workspace.** When the per-hypothesis workspace is
 on, each tool call a code-generator child makes also gets one line in

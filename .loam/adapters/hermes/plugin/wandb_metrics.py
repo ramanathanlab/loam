@@ -74,6 +74,17 @@ _agent_wall_ms: dict[str, int] = {}
 # {count, time_ms, errors, inference_ms, gap_ms} per tool; the last two sum the
 # matched-inference duration and inference->tool gap so means are derivable.
 _tool_by_name: dict[str, dict[str, int]] = {}
+# Tool time attributed to the skill (reviewed recipe) in effect for the call:
+# {count, time_ms, errors} per skill name. A code-generator reads a skill with
+# skill_view/skills_list(name=...) and then runs code under it, so each tool
+# call is charged to the skill most recently read in its session (the read
+# itself counts under the skill it fetches). Calls before any read -> "(none)".
+_tool_by_skill: dict[str, dict[str, int]] = {}
+_last_skill_by_session: dict[str, str] = {}
+# Hermes tools that read a campaign skill; args["name"] is the skill. Kept in
+# step with hypothesis_workspace.SKILL_READ_TOOLS.
+_SKILL_READ_TOOLS = ("skill_view", "skills_list")
+_NO_SKILL = "(none)"
 
 # The inference that most recently finished in each session, kept so the tool
 # call it triggers can be linked back to it (duration, tokens) and the gap
@@ -98,6 +109,7 @@ _EVENT_COLUMNS = (
     "turn_id",
     "model",
     "tool_name",
+    "skill",
     "status",
     "duration_ms",
     "inference_ms",
@@ -564,6 +576,17 @@ def record_tool_call(payload: Mapping[str, Any]) -> dict[str, Any] | None:
         ms = max(0, _int(payload.get("duration_ms")))
         is_error = bool(status) and status not in {"ok", "success", "completed", ""}
 
+        # Skill attribution: a call runs under the skill most recently read in
+        # this session. A skill_view/skills_list(name=...) call adopts that skill
+        # (and is itself charged to it, so update before attributing); any call
+        # before the first read is charged to "(none)".
+        args = payload.get("args") if isinstance(payload.get("args"), Mapping) else {}
+        if tool_name in _SKILL_READ_TOOLS:
+            read_name = str(args.get("name") or "").strip()
+            if read_name:
+                _last_skill_by_session[session_id] = read_name
+        skill = _last_skill_by_session.get(session_id, _NO_SKILL)
+
         # Resolve the tool's start time (stamped at pre_tool_call, else inferred
         # from arrival minus duration) and the gap since its inference ended.
         now = time.time()
@@ -593,6 +616,10 @@ def record_tool_call(payload: Mapping[str, Any]) -> dict[str, Any] | None:
         by_role = _tool_by_role.setdefault(role, {"count": 0, "time_ms": 0})
         by_role["count"] += 1
         by_role["time_ms"] += ms
+        by_skill = _tool_by_skill.setdefault(skill, {"count": 0, "time_ms": 0, "errors": 0})
+        by_skill["count"] += 1
+        by_skill["time_ms"] += ms
+        by_skill["errors"] += 1 if is_error else 0
 
         record = {
             "record_version": "loam_metrics_event_v1",
@@ -605,6 +632,7 @@ def record_tool_call(payload: Mapping[str, Any]) -> dict[str, Any] | None:
             "turn_id": turn_id,
             "tool_call_id": tool_call_id,
             "tool_name": tool_name,
+            "skill": skill,
             "status": status,
             "error_type": str(payload.get("error_type") or ""),
             # the five requested quantities
@@ -629,6 +657,9 @@ def record_tool_call(payload: Mapping[str, Any]) -> dict[str, Any] | None:
             f"tool_calls/by_tool/{tool_name}/errors": by_name["errors"],
             f"tool_time_ms/by_agent/{role}/total": by_role["time_ms"],
             f"tool_calls/by_agent/{role}/count": by_role["count"],
+            f"tool_time_ms/by_skill/{skill}/total": by_skill["time_ms"],
+            f"tool_time_ms/by_skill/{skill}/mean": by_skill["time_ms"] / by_skill["count"],
+            f"tool_calls/by_skill/{skill}/count": by_skill["count"],
             "tool_calls/all": sum(t["count"] for t in _tool_by_name.values()),
             "tool_time_ms/all": sum(t["time_ms"] for t in _tool_by_name.values()),
             "tool_time_ms/last": ms,
@@ -648,6 +679,7 @@ def record_tool_call(payload: Mapping[str, Any]) -> dict[str, Any] | None:
                 "turn_id": turn_id,
                 "model": "",
                 "tool_name": tool_name,
+                "skill": skill,
                 "status": status,
                 "duration_ms": ms,
                 "inference_ms": inference_ms,
@@ -720,6 +752,20 @@ def _summary_tables() -> None:
         ]
         _RUN.log({"summary/tools": _WANDB.Table(columns=tool_cols, data=tool_rows)}, step=_step)
 
+        # Tool time grouped by the skill (reviewed recipe) it ran under.
+        skill_cols = ["skill", "tool_calls", "total_ms", "mean_ms", "errors"]
+        skill_rows = [
+            [
+                name,
+                v["count"],
+                v["time_ms"],
+                (v["time_ms"] / v["count"]) if v["count"] else 0,
+                v["errors"],
+            ]
+            for name, v in sorted(_tool_by_skill.items())
+        ]
+        _RUN.log({"summary/skills": _WANDB.Table(columns=skill_cols, data=skill_rows)}, step=_step)
+
         _RUN.summary["tokens_total"] = sum(t["total"] for t in _tokens_by_role.values())
         _RUN.summary["llm_calls_total"] = sum(_llm_calls_by_role.values())
         _RUN.summary["tool_calls_total"] = sum(t["count"] for t in _tool_by_name.values())
@@ -775,6 +821,8 @@ def _reset_for_tests() -> None:
         _llm_calls_by_role.clear()
         _tool_by_name.clear()
         _tool_by_role.clear()
+        _tool_by_skill.clear()
+        _last_skill_by_session.clear()
         _agent_wall_ms.clear()
         _last_inference_by_session.clear()
         _inference_by_request.clear()

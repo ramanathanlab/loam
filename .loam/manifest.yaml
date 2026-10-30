@@ -122,11 +122,14 @@ observability:
       the session's last inference): tool wall time (post_tool_call duration_ms),
       the inference's duration (post_api_request api_duration) and token usage,
       and the gap between the inference ending and the tool starting (the tool
-      start is stamped at pre_tool_call). Tokens are also aggregated per agent.
-      Everything lands as per-call event rows and cumulative aggregates, plus
-      end-of-run per-agent and per-tool summary tables. Agent attribution is the
-      subagent role map built at subagent_start; an unmapped session is the
-      coordinator.
+      start is stamped at pre_tool_call). Each call is also charged to the skill
+      (reviewed recipe) in effect -- the one most recently read in its session
+      with skill_view/skills_list -- so tool time can be grouped by skill, not
+      only by tool. Tokens are aggregated per agent. Everything lands as per-call
+      event rows and cumulative aggregates, plus end-of-run per-agent, per-tool
+      and per-skill summary tables. Agent attribution is the subagent role map
+      built at subagent_start; an unmapped session is the coordinator, and a call
+      before any skill read is charged to "(none)".
     durability: |
       Every event is appended to `<state_dir>/metrics-events.jsonl`, so the
       record survives when W&B is unreachable. In addition, when the

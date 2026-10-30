@@ -359,6 +359,37 @@ class MetricsEngineTests(unittest.TestCase):
         self.assertIsNone(rec["gap_from_inference_ms"])
         self.assertIsNone(rec["inference"]["duration_ms"])
 
+    def test_tool_time_is_attributed_to_the_skill_in_effect(self) -> None:
+        fake = _FakeWandb()
+        sys.modules["wandb"] = fake
+        self.wm.configure(_Cfg(), state_dir=self.state_dir, run_id="r", workflow_id="wf")
+        self.wm.note_subagent_start("gen", "code-generator")
+
+        def tool(tname, ms, status="ok", **args):  # noqa: ANN001, ANN003
+            self.wm.record_tool_call(
+                {"session_id": "gen", "tool_name": tname, "duration_ms": ms, "status": status, "args": args}
+            )
+
+        tool("read_file", 10)                       # before any skill read -> (none)
+        tool("skill_view", 5, name="folding")       # adopt folding (counts under it)
+        tool("run_code", 200)                       # under folding
+        tool("run_code", 300, status="error")       # under folding, errored
+        tool("skill_view", 5, name="inverse-folding")  # switch skill
+        tool("run_code", 100)                       # under inverse-folding
+        self.wm.finish()
+
+        by_skill = self.wm._tool_by_skill
+        # folding: skill_view(5) + run_code(200) + run_code(300) = 505, 3 calls, 1 error
+        self.assertEqual(by_skill["folding"], {"count": 3, "time_ms": 505, "errors": 1})
+        # inverse-folding: skill_view(5) + run_code(100) = 105, 2 calls
+        self.assertEqual(by_skill["inverse-folding"], {"count": 2, "time_ms": 105, "errors": 0})
+        # the pre-read call is charged to "(none)"
+        self.assertEqual(by_skill["(none)"]["time_ms"], 10)
+        # the skill in effect lands on each per-call event record
+        run_codes = [e for e in self._events() if e["tool_name"] == "run_code"]
+        self.assertEqual(run_codes[0]["skill"], "folding")
+        self.assertEqual(run_codes[-1]["skill"], "inverse-folding")
+
 
 class WorkspaceMetricsTests(unittest.TestCase):
     """hypothesis_workspace.record_tool_metrics writes runs/<run_id>/metrics.jsonl."""
