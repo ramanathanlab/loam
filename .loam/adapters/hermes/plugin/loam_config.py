@@ -33,6 +33,9 @@ class HypothesisTournamentConfig:
     matches_per_run: int
     top_k: int
     timeout_seconds: int
+    # How many brief-informed hypotheses enter a seeded pool per new reasoner
+    # brief. 0 (the default) leaves a seeded pool only ever re-ranked.
+    refresh_hypotheses: int
     provider: str
     inference_endpoint: str
     endpoint_is_chat_completions: bool
@@ -246,6 +249,20 @@ def _positive_int(value: Any, default: int) -> int:
         return max(1, int(value))
     except (TypeError, ValueError):
         return default
+
+
+def _count_int(value: Any) -> int:
+    """A non-negative count: 0 for absent, negative, or unreadable.
+
+    Separate from `_positive_int` because zero is a meaningful setting for a
+    count that switches a feature off, and clamping it to one would turn the
+    default into the feature.
+    """
+
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 
@@ -473,6 +490,7 @@ def _tournament_config(value: Any, state_dir: Path | None = None) -> HypothesisT
         matches_per_run=_positive_int(raw.get("matches_per_run"), 1),
         top_k=_positive_int(raw.get("top_k"), 3),
         timeout_seconds=_positive_int(raw.get("timeout_seconds"), 30),
+        refresh_hypotheses=_count_int(raw.get("refresh_hypotheses")),
         provider=required["provider"],
         inference_endpoint=required["inference_endpoint"],
         endpoint_is_chat_completions=raw.get("endpoint_is_chat_completions") is True,
@@ -699,6 +717,7 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "matches_per_run": tournament.matches_per_run,
             "top_k": tournament.top_k,
             "timeout_seconds": tournament.timeout_seconds,
+            "refresh_hypotheses": tournament.refresh_hypotheses,
             "provider": tournament.provider,
             "inference_endpoint": tournament.inference_endpoint,
             "endpoint_is_chat_completions": tournament.endpoint_is_chat_completions,
