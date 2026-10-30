@@ -72,8 +72,10 @@ Two OpenAI-compatible bases the campaign talks to:
 - **Argo tunnel on `:51900`** — the Hermes reasoner and every delegated subagent
   (`argo:gpt-5.6-sol`). Bring up this SSH tunnel yourself.
 - **`scripts/alcf_inference_proxy.py` on `:51911`** (Minerva) — Jnana's ranking
-  judge. `run-hermes`/`run-campaign` auto-start this if nothing is listening; on
-  an auth error run `alcf-tokens login inference`.
+  judge. **`run-hermes` starts this if nothing is listening; `run-campaign` does
+  not** — bring it up yourself before a campaign launch, or the preflight's
+  ranking-role completion fails and aborts. On an auth error run
+  `alcf-tokens login inference`.
 
 ## Step 2 — Bring up the HPC MCP server ("the hpc thing")
 
@@ -82,6 +84,14 @@ This is the `hpc-deployment` skill. From that skill's SKILL.md §Deployment:
 1. **Edit `skills/hpc-deployment/set_env_akv.sh`** (or your own copy of
    `set_env.sh`) — the single definition point. See the hardcoded-value table
    below for everything a new user must change.
+
+   Both files are tracked and they name **different** endpoints and base dirs.
+   This step sources whichever you edited, so the choice is yours — but the
+   preflight's HPC auto-start defaults to `set_env.sh` regardless, so if you
+   edited the other one and intend to let it start an allocation, export
+   `HPC_ENV_FILE=$PWD/skills/hpc-deployment/set_env_akv.sh`. Bringing the server
+   up yourself here avoids the question entirely, which is what a real run should
+   do anyway.
 2. `source skills/hpc-deployment/set_env_akv.sh` — **every later step runs in
    that same shell**; the server reads its configuration from the process
    environment and nowhere else.
