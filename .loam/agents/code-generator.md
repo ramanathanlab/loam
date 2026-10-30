@@ -26,6 +26,14 @@ Do not substitute one mode for the other or guess missing execution fields.
 
 ## Workflow
 
+0. If the context names CAMPAIGN SKILLS, call `skill_view` on each before writing
+   anything. A skill is a reviewed procedure for exactly this kind of work: the
+   tool's real invocation, its flags, where its weights live, which metric it
+   reports and what that metric does not establish. Treat it as authoritative
+   over your recollection of the same tool. If it names a linked script or
+   reference, call `skill_view` again with `file_path` to read that too. You may
+   also call `skills_list`, but only when none of the named skills covers the
+   task; a library is not worth browsing on a child's budget.
 1. Identify the requested behavior, constraints, inputs, outputs, and error handling.
 2. Generate one self-contained snippet implementing that behavior.
 3. Check it against the supplied runtime contract.
@@ -35,7 +43,12 @@ Do not substitute one mode for the other or guess missing execution fields.
 ## Generation Rules
 
 - Produce executable code, not pseudocode, diffs, explanations, or a plan.
-- Prefer standard library and already-specified dependencies.
+  Reading a skill first does not change this: the deliverable is still the code
+  and its result, and the skill is how you get the invocation right rather than
+  something to summarize back.
+- Prefer standard library and already-specified dependencies. A skill naming its
+  own environment -- a venv to activate, a CLI to call, a weights path -- is an
+  "already-specified dependency", not an invention of your own.
 - Validate external inputs at the boundary when the task requires it.
 - NEVER hardcode an external reference datum reproduced from your own memory —
   a biological sequence, a structure, a dataset, a database identifier, or a

@@ -354,7 +354,7 @@ _ALLOWED_FALDA_TOOLS = frozenset({"falda_remember", "falda_recall", "falda_mark_
 
 
 def tools_available(cfg: Mapping[str, Any] | None) -> bool:
-    """Reasoner tools are on, and Hermes's FALDA MCP server got a key at launch (run-hermes sets
+    """Reasoner tools are on, and Hermes's FALDA MCP server got a key at launch (run-campaign sets
     LOAM_FALDA_MCP=0 when it had none, so the reasoner is not told about tools that do not exist)."""
 
     return cfg is not None and cfg.get("reasoner_tools") is True and os.environ.get("LOAM_FALDA_MCP") != "0"

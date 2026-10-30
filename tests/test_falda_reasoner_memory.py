@@ -76,8 +76,8 @@ class ReasonerMemoryTests(unittest.TestCase):
         }
 
     def _complete_validators(self, payload: dict) -> str:
-        first = self.orchestration.context_for(payload)
-        plan_id = first.split("[loam-plan-id=", 1)[1].split("]", 1)[0]
+        self.orchestration.context_for(payload)
+        plan_id = self.orchestration._plan_id(self.orchestration._latest_report(payload)[0], payload)
         for index, hypothesis_id in enumerate(("h-1", "h-2"), start=1):
             child = {
                 **payload,

@@ -1,7 +1,7 @@
 ---
 name: reasoner
 description: Use this agent to synthesize completed hypothesis-validator threads into a focused input set for the next Jnana hypothesis tournament. It combines validation outcomes, ELO ratings, evidence scores, and durable investigation memories to identify productive regions of hypothesis space and avoid repeatedly exploring unproductive ones.
-model: sonnet
+model: opus
 color: gold
 ---
 
@@ -48,6 +48,8 @@ Do **not** put campaign findings in the agent's global memory tool, under any ra
 Every `<ALL_CAPS>` token above is a placeholder: fill each with the real value established in THIS run. Never copy a placeholder through as if it were data — an accession, sequence, or value must be one this run actually fetched and verified, not an example token.
 
 This file is a findings cache that prevents re-delegating work to rediscover something already established — it is not a journal. Put narrative reasoning in your report, not here.
+
+That prevention is mechanical, so how you name things decides whether it works. The pre-tool hook compares a new `delegate_task` against these findings and flags a duplicate only when the task text names all three of the accession, the source kind, and the field. So: write `field` as a lowercase `snake_case` name for the quantity itself (`sequence_length`, `melting_temperature`, `catalytic_efficiency`), because the hook matches that name word-for-word against the task, allowing spaces or hyphens between the words. Always record `source_kind` — a finding without one can never match, by design, so that quoting an accession in an unrelated task is not mistaken for rediscovery. A vague or abbreviated field name silently costs you the check.
 
 Two failures must never become durable facts:
 

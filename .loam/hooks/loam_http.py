@@ -2,7 +2,7 @@
 
 Two things the stdlib does not give us. Proxy selection: on an Aurora compute node the only way out is
 the ALCF proxy; when none is exported it is applied to our own opener only, never to os.environ.
-(run-hermes separately exports https_proxy for Hermes's FALDA MCP connection, with local hosts in
+(run-campaign separately exports https_proxy for Hermes's FALDA MCP connection, with local hosts in
 no_proxy.) A wall-clock cap: urllib's ``timeout`` bounds each socket operation, not the request, so a
 slow-dripping response can outlast it.
 """

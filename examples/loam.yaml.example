@@ -14,7 +14,7 @@ profiles:
     # Absolute path. Lifecycle ledgers, run-manifest, Jnana memory and
     # tournament reports are written here. run-campaign overrides this with the
     # campaign directory's state/, so this value is the default for bare
-    # run-hermes launches.
+    # launches that do not go through run-campaign.
     state_dir: /ABS/PATH/TO/loam/.loam/state/my_campaign
     pre_llm_every: 1
     duplicate_policy: allow_and_audit
@@ -56,6 +56,42 @@ profiles:
       top_k: 3                # hypotheses handed to validators per round
       timeout_seconds: 600
 
+    # What this campaign is for, and the rules specific to it. Loam ships no
+    # campaign content, so these files are yours: `dir` is a directory you own
+    # holding `campaigns/<goal>.md` and `rules/<name>.md`. Names are resolved
+    # there first, then in the repo's `.loam/`, which carries only the rules
+    # invariant across every campaign -- those load whether or not this block
+    # exists. Omit the block entirely and children get the invariant rules but
+    # no objective. See .loam/rules/README.md.
+    campaign:
+      dir: /ABS/PATH/TO/your/campaign      # absolute; `~` is expanded
+      goal: my-campaign                    # <dir>/campaigns/my-campaign.md
+      rules: [my-protocol]                 # <dir>/rules/my-protocol.md
+      # Skills a code-generator must consult before writing code. Names from
+      # the Hermes skill library, NOT files under `dir` -- the harness resolves
+      # these, Loam only names them. Omit and children write from recollection,
+      # which is what this exists to stop. `skills_list` returns the whole
+      # library, so name the campaign's own rather than letting a child browse.
+      skills: [chai, proteinmpnn]
+    # Pando-style folder per hypothesis, enforced by the hooks
+    # (.loam/README.md, "Hypothesis workspace"). Off unless enabled.
+    workspace:
+      enabled: false
+      strict: true
+      # Hashes remote outputs a child didn't report; needs fastmcp.
+      verifier_python: /ABS/PATH/TO/.loam-venv-312/bin/python
+      verifier_mcp_url: http://127.0.0.1:8000/mcp
+      # Campaign inputs. inputs_dir is copied into every hypothesis's data/ and
+      # hashed into experiment.json; remote_inputs_dir is the same thing already
+      # staged on HPC, which the verifier copies (a hook cannot reach HPC).
+      # inputs_dir: /ABS/PATH/TO/campaign/inputs
+      # remote_inputs_dir: /flare/PROJECT/USER/campaign-inputs
+      # Read-only reference data too big to copy per hypothesis: children read
+      # it in place and every file read is recorded as an input.
+      # shared_inputs:
+      #   - /flare/PROJECT/shared/pdb
+      # max_input_bytes: 1073741824
+
     execution:
       mode: remote_mcp                    # or: local (for CAMPAIGN_TEST.md)
       tool_name: mcp__hpc__run_code
@@ -64,6 +100,13 @@ profiles:
       input_schema: '{"payload": "str", "workdir": "str|None", "timeout": "float", "venv_path": "str|None"}'
       runtime: Aurora frameworks python 3.12 via EL
       workdir_root: /flare/<PROJECT>/<USER>/hpc-run/work
+      # Where the HPC server keeps run_batch results (its HPC_BATCH_ROOT).
+      # Default: <workdir_root>/../batches.
+      # batch_root: /flare/<PROJECT>/<USER>/hpc-run/batches
+      # Other spellings of the same HPC directory (Aurora mounts Flare twice);
+      # the workspace checks compare HPC paths as text.
+      workdir_aliases:
+        /lus/flare/projects/<PROJECT>: /flare/<PROJECT>
       # Handed verbatim to every code-generator child. The child runs on the
       # HPC node and cannot see local files, so the activation recipe and every
       # tool command must be self-contained here. Use run_code SYNCHRONOUSLY for

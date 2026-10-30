@@ -211,6 +211,32 @@ def test_adapter_applies_decoration(monkeypatch, payload, fake_score_batch):
     assert "Tool reputation from Cairn" in result["args"]["tasks"][0]["context"]
 
 
+def test_round_dispatch_applies_decoration(monkeypatch, payload, fake_score_batch):
+    # loam_dispatch_round hands the plan straight to delegate_task through ctx.dispatch_tool, so the
+    # tool_request middleware (canonicalize_campaign_delegation) never sees it: it must decorate too.
+    path = ROOT / ".loam" / "adapters" / "hermes" / "plugin" / "__init__.py"
+    spec = importlib.util.spec_from_file_location("loam_hermes_adapter_cairn_dispatch_test", path)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+
+    task = {"goal": "x [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-a]", "context": "ctx"}
+    stub = types.ModuleType("hypothesis_orchestration")
+    stub.canonical_delegation_args = lambda p: {"tasks": [dict(task)]}
+    monkeypatch.setitem(sys.modules, "hypothesis_orchestration", stub)
+    monkeypatch.setattr(module, "_profile", lambda: types.SimpleNamespace(hypothesis_orchestration=True))
+    monkeypatch.setattr(module, "payload_values", lambda profile: {
+        "loam_state_dir": payload["loam_state_dir"], "loam_cairn": payload["loam_cairn"]})
+    dispatched = []
+    context = types.SimpleNamespace(dispatch_tool=lambda name, args: dispatched.append((name, args)) or "ok")
+    monkeypatch.setattr(module, "_PLUGIN_CONTEXT", context)
+
+    assert module.dispatch_round({}) == "ok"
+    [(name, args)] = dispatched
+    assert name == "delegate_task"
+    assert "### Tool Ratings" in args["tasks"][0]["context"]
+
+
 def test_nonempty_appendix_is_delimited_exactly_once(payload, fake_score_batch):
     text = appendix(payload, "plan-a", "code-generator")
     assert text.startswith(SECTION_START + "\n\n") and text.endswith("\n\n" + SECTION_END)

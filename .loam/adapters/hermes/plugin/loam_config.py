@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -59,6 +60,42 @@ class HypothesisTournamentConfig:
 
 
 @dataclass(frozen=True)
+class CampaignConfig:
+    """Invariant campaign context: what the campaign is for, and its rules.
+
+    This is campaign policy rather than compute configuration, so it sits beside
+    `execution` instead of inside it. `goal` and `rules` name files that the
+    hooks read, the way agent prompts are already loaded: the hook holds the
+    paths and this module does not, so a name is validated here and read there.
+
+    `dir` is where those files live -- a directory the user owns, outside this
+    repo. Loam ships no campaign content: a goal, and a rule naming a particular
+    measurement, belong to whoever is running the campaign, and checking one in
+    would make this framework quietly about protein binders. The repo's own
+    `.loam/rules/` holds only rules invariant across every campaign, and those
+    load whether or not `dir` is set.
+
+    Names stay bare and validated even though `dir` is a free path: the user
+    chooses the directory once, in their own profile, and nothing inside the
+    campaign can then reach a file outside it.
+
+    Only the invariant half of a campaign's context lives here. The evolving
+    half -- current state -- already exists as the reasoner brief and the
+    reconciled findings that the pre-LLM recall hooks inject.
+    """
+
+    goal: str
+    rules: tuple[str, ...] = ()
+    dir: str = ""
+    # Skills a code-generator should consult before writing code. Names only:
+    # these are resolved by the harness's own skill system, not by Loam, so
+    # unlike `rules` they name nothing this repo or `dir` contains. Named rather
+    # than left open because `skills_list` returns every skill installed in the
+    # Hermes home, and a child with three children of budget should not browse.
+    skills: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ExecutionConfig:
     """Execution contract supplied to hypothesis-validation children."""
 
@@ -83,10 +120,48 @@ class ExecutionConfig:
     # Prefix of the HPC server's other MCP tool names (run_batch, list_tools,
     # ...). Empty: derived from tool_name when it ends with function_name.
     tool_prefix: str = ""
+    # Other spellings of a workdir_root prefix, as (alias, canonical) pairs:
+    # on Aurora /lus/flare/projects/X and /flare/X are one directory. The
+    # workspace checks compare HPC paths as text, so they need to be told.
+    workdir_aliases: tuple[tuple[str, str], ...] = ()
+    # Where the HPC server keeps run_batch results (its HPC_BATCH_ROOT).
+    # Empty: <workdir_root>/../batches (hypothesis_workspace.batch_root_for).
+    batch_root: str = ""
 
 
 _EXECUTION_MODES = {"remote_mcp", "local"}
 _CODE_SOURCES = {"fixed", "generated"}
+
+
+@dataclass(frozen=True)
+class WorkspaceConfig:
+    """Pando-style per-hypothesis workspace (see .loam/hooks/hypothesis_workspace.py)."""
+
+    # Parent of the <plan_id>/<hypothesis_id> folders. Empty: <state_dir>/hypotheses,
+    # resolved in payload_values so a LOAM_STATE_DIR override moves it too.
+    root: str = ""
+    # true: pre-tool blocks layout violations. false: they are only logged.
+    strict: bool = True
+    # Background verifier for HPC runs (.loam/reconcile/verify_workspace.py):
+    # an interpreter that has fastmcp, and the HPC MCP server's URL. Both empty:
+    # no verifier is launched and a missing remote manifest stays missing.
+    verifier_python: str = ""
+    verifier_mcp_url: str = ""
+    # Campaign inputs every hypothesis starts with, COPIED into its own data/
+    # so the record is self-contained: `inputs_dir` is a local directory copied
+    # by the hook, `remote_inputs_dir` an HPC directory the operator staged once
+    # and the verifier copies (a hook cannot reach HPC). Either may be set.
+    inputs_dir: str = ""
+    remote_inputs_dir: str = ""
+    # Read-only reference data too large to copy per hypothesis. Children may
+    # READ these absolute paths in place; each read is recorded as an input.
+    # Nothing is ever written there, and it is opt-in: unset, the only readable
+    # inputs are the hypothesis's own data/.
+    shared_inputs: tuple[str, ...] = ()
+    # Refuse a seed bigger than this rather than silently copying a dataset
+    # into every hypothesis. 0 keeps the hook's default.
+    max_input_bytes: int = 0
+
 
 @dataclass(frozen=True)
 class LoamProfile:
@@ -96,11 +171,13 @@ class LoamProfile:
     pre_llm_every: int
     duplicate_policy: str
     hypothesis_orchestration: bool = False
+    campaign: CampaignConfig | None = None
     execution: ExecutionConfig | None = None
     hypothesis_tournament: HypothesisTournamentConfig | None = None
     cairn: dict[str, Any] | None = None
     falda: dict[str, Any] | None = None
     falda_status: str = "disabled"
+    workspace: WorkspaceConfig | None = None
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any] | None:
@@ -124,6 +201,73 @@ def _positive_int(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
 
+
+
+# A campaign or rules name becomes a file name under `.loam/`, so it may not
+# carry a path at all: `../../../etc/passwd`, or an absolute path, would
+# otherwise let a profile pull arbitrary text into every child's context.
+# Requiring a leading alphanumeric also rejects `.` and `..` outright.
+_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _campaign_name(value: Any, field_name: str) -> str:
+    name = _clean_text(value)
+    if not _NAME_RE.fullmatch(name):
+        raise ValueError(f"campaign.{field_name} must be a bare file name: {value!r}")
+    return name
+
+
+def _campaign_config(value: Any) -> CampaignConfig | None:
+    """Parse the optional `campaign:` block.
+
+    `None` means a profile with no campaign context, which is the pre-existing
+    behavior: nothing is injected. A malformed block raises instead, for the same
+    reason `_execution_config` rejects a bad mode -- a typo that silently dropped
+    the objective would leave every validator aiming at nothing while the run
+    still looked governed.
+
+    `goal` is required whenever the block exists. Rules alone would be the older
+    "rules context" framing, in which policy says what not to do and nothing says
+    what the campaign is for.
+    """
+
+    raw = _as_mapping(value)
+    if raw is None:
+        return None
+    goal = _campaign_name(raw.get("goal"), "goal")
+    rules = raw.get("rules", [])
+    if not isinstance(rules, list):
+        raise ValueError(f"campaign.rules must be a list of names: {rules!r}")
+    names = tuple(_campaign_name(item, "rules") for item in rules)
+    if len(set(names)) != len(names):
+        raise ValueError(f"campaign.rules must not repeat a name: {list(names)!r}")
+    raw_skills = raw.get("skills", [])
+    if not isinstance(raw_skills, list):
+        raise ValueError(f"campaign.skills must be a list of names: {raw_skills!r}")
+    skills = tuple(_campaign_name(item, "skills") for item in raw_skills)
+    if len(set(skills)) != len(skills):
+        raise ValueError(f"campaign.skills must not repeat a name: {list(skills)!r}")
+    return CampaignConfig(
+        goal=goal, rules=names, dir=_campaign_dir(raw.get("dir")), skills=skills
+    )
+
+
+def _campaign_dir(value: Any) -> str:
+    """Parse the optional `campaign.dir`, the user's own campaign directory.
+
+    Absolute after `~` expansion, because a relative path would resolve against
+    whatever directory the harness happened to spawn the hook in. Empty means
+    the campaign's files are expected in the repo, which is the older behavior
+    and still works for someone keeping their campaign beside the code.
+    """
+
+    raw = _clean_text(value)
+    if not raw:
+        return ""
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"campaign.dir must be an absolute path: {value!r}")
+    return str(path)
 
 
 def _execution_config(value: Any) -> ExecutionConfig | None:
@@ -152,6 +296,8 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
         workdir_root=_clean_text(raw.get("workdir_root")),
         tool_prefix=_clean_text(raw.get("tool_prefix")),
         setup=_clean_text(raw.get("setup")),
+        workdir_aliases=_aliases(raw.get("workdir_aliases")),
+        batch_root=_clean_text(raw.get("batch_root")),
     )
     if mode == "local":
         return ExecutionConfig(mode=mode, runtime=_clean_text(raw.get("runtime")), **extras)
@@ -170,6 +316,54 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
         runtime=_clean_text(raw.get("runtime")),
         **extras,
     )
+
+def _workspace_config(value: Any) -> WorkspaceConfig | None:
+    """`workspace: {enabled: true, ...}` turns the workspace on; anything else leaves it off."""
+
+    raw = _as_mapping(value)
+    if raw is None or raw.get("enabled") is not True:
+        return None
+    return WorkspaceConfig(
+        root=_clean_text(raw.get("root")),
+        strict=raw.get("strict") is not False,
+        verifier_python=_clean_text(raw.get("verifier_python")),
+        verifier_mcp_url=_clean_text(raw.get("verifier_mcp_url")),
+        inputs_dir=_clean_text(raw.get("inputs_dir")),
+        remote_inputs_dir=_clean_text(raw.get("remote_inputs_dir")),
+        shared_inputs=_shared_inputs(raw.get("shared_inputs")),
+        max_input_bytes=_positive_int(raw.get("max_input_bytes"), 0),
+    )
+
+
+def _shared_inputs(value: Any) -> tuple[str, ...]:
+    """`shared_inputs: [/abs/path, ...]` -- absolute paths only, deduplicated.
+
+    A relative path is dropped rather than resolved: these are matched against
+    paths a child names, and the hook's working directory is not the child's.
+    """
+
+    items = value if isinstance(value, (list, tuple)) else [value] if value else []
+    paths = []
+    for item in items:
+        text = _clean_text(item).rstrip("/")
+        if text.startswith("~"):
+            text = str(Path(text).expanduser()).rstrip("/")
+        if text.startswith("/") and text not in paths:
+            paths.append(text)
+    return tuple(paths)
+
+
+def _aliases(value: Any) -> tuple[tuple[str, str], ...]:
+    """`workdir_aliases: {alias: canonical}` as normalized absolute-path pairs."""
+
+    raw = _as_mapping(value) or {}
+    pairs = []
+    for alias, canonical in raw.items():
+        alias, canonical = _clean_text(alias).rstrip("/"), _clean_text(canonical).rstrip("/")
+        if alias.startswith("/") and canonical.startswith("/") and alias != canonical:
+            pairs.append((alias, canonical))
+    return tuple(sorted(pairs))
+
 
 def _tournament_config(value: Any, state_dir: Path | None = None) -> HypothesisTournamentConfig | None:
     raw = _as_mapping(value)
@@ -305,6 +499,10 @@ def load_profile() -> LoamProfile | None:
     if policy not in _ALLOWED_POLICIES:
         return None
     orchestration = _as_mapping(raw.get("hypothesis_orchestration")) is not None and raw["hypothesis_orchestration"].get("enabled") is True
+    # Deliberately not required by orchestration: an existing profile has no
+    # `campaign:` block, and rejecting it here would take every hook inert
+    # rather than merely leaving the campaign context uninjected.
+    campaign = _campaign_config(raw.get("campaign"))
     execution = _execution_config(raw.get("execution"))
     if orchestration and execution is None:
         return None
@@ -317,11 +515,13 @@ def load_profile() -> LoamProfile | None:
         pre_llm_every=_interval(raw.get("pre_llm_every", DEFAULT_INTERVAL)),
         duplicate_policy=policy,
         hypothesis_orchestration=orchestration,
+        campaign=campaign,
         execution=execution,
         hypothesis_tournament=_tournament_config(raw.get("hypothesis_tournament"), override),
         cairn=cairn_config(raw.get("cairn"), workflow_id),
         falda=falda,
         falda_status=falda_status,
+        workspace=_workspace_config(raw.get("workspace")),
     )
 
 
@@ -361,6 +561,16 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
         "loam_duplicate_policy": profile.duplicate_policy,
         "loam_hypothesis_orchestration": profile.hypothesis_orchestration,
     }
+    campaign = profile.campaign
+    if campaign is not None:
+        # Names plus the directory holding them. The hooks do the reading; this
+        # module never opens a campaign file.
+        values["loam_campaign"] = {
+            "goal": campaign.goal,
+            "rules": list(campaign.rules),
+            "dir": campaign.dir,
+            "skills": list(campaign.skills),
+        }
     execution = profile.execution
     if execution is not None:
         values["loam_execution"] = {
@@ -376,6 +586,24 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "workdir_root": execution.workdir_root,
             "tool_prefix": execution.tool_prefix,
         }
+        if execution.workdir_aliases:
+            values["loam_execution"]["workdir_aliases"] = dict(execution.workdir_aliases)
+        if execution.batch_root:
+            values["loam_execution"]["batch_root"] = execution.batch_root
+    workspace = profile.workspace
+    if workspace is not None:
+        values["loam_workspace"] = {
+            "enabled": True,
+            "root": str(Path(workspace.root).expanduser() if workspace.root else profile.state_dir / "hypotheses"),
+            "strict": workspace.strict,
+        }
+        for key in ("verifier_python", "verifier_mcp_url", "remote_inputs_dir", "max_input_bytes"):
+            if getattr(workspace, key):
+                values["loam_workspace"][key] = getattr(workspace, key)
+        if workspace.inputs_dir:
+            values["loam_workspace"]["inputs_dir"] = str(Path(workspace.inputs_dir).expanduser())
+        if workspace.shared_inputs:
+            values["loam_workspace"]["shared_inputs"] = list(workspace.shared_inputs)
     run_id = _clean_text(os.environ.get("LOAM_RUN_ID"))
     if run_id:
         values["loam_run_id"] = run_id

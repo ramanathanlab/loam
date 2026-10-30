@@ -6,7 +6,7 @@ Use this when an isolated Loam campaign requires `coordinator → validator → 
 
 - Use one fresh temporary root per acceptance attempt, containing `hermes-home/`, `state/`, `bin/`, and `loam.yaml`.
 - Keep a stable `LOAM_RUN_ID` within that one root; never reuse a stopped root as an acceptance run.
-- Export `HERMES_HOME` before invoking `.loam/run-hermes`. The launcher must preserve caller-supplied `HERMES_HOME`; otherwise campaign-local `delegation.max_spawn_depth: 2` is silently lost.
+- Export `HERMES_HOME` before invoking `hermes` (there is no launcher wrapper; `run-campaign` assigns its own home and is not used for an isolated acceptance run). A wrapper that resets it loses campaign-local `delegation.max_spawn_depth: 2` silently.
 - Supply a Python 3.11 shim when the default `python3` is older and the campaign contract requires `python3.11`.
 
 ## Hermes batch role contract

@@ -32,7 +32,7 @@ It is strictly best effort. A slow, overloaded or unreachable FALDA never fails 
 The repo ships `.loam/falda.json`, which enables FALDA for every profile with no `falda` block. To turn it
 off:
 
-- for one launch: `LOAM_FALDA=0 ./run-hermes`;
+- for one launch: `LOAM_FALDA=0 ./run-campaign`;
 - for a profile: `falda: {enabled: false}` in `loam.yaml` (a profile block replaces the default entirely).
 
 A profile block takes these keys (defaults shown):
@@ -57,7 +57,7 @@ falda:
 
 ## Keys: nothing to do
 
-Loam gets its own key. `run-hermes` gets it at launch (Hermes's FALDA MCP server takes its key only
+Loam gets its own key. `run-campaign` gets it at launch (Hermes's FALDA MCP server takes its key only
 at start): the cached key if there is one, else it calls `POST /auth/machine` with the pool and a
 `loam-<host>-<user>` label and caches the key at `~/.falda/keys/loam-<pool>.json` (0600). This takes
 at most `LOAM_FALDA_LAUNCH_BUDGET` seconds (default 6; `0` means cached key only). If no key comes
@@ -89,7 +89,7 @@ All FALDA traffic comes from the host running Hermes. On an Aurora compute node 
 `http://proxy.alcf.anl.gov:3128` without exporting it (`.loam/hooks/loam_http.py`). On a login node or a
 laptop it connects directly. An exported proxy always wins.
 
-`run-hermes` exports `FALDA_TOKEN` and `FALDA_POOL` for Hermes's FALDA MCP server. On a compute node
+`run-campaign` exports `FALDA_TOKEN` and `FALDA_POOL` for Hermes's FALDA MCP server. On a compute node
 with no proxy set it also exports `https_proxy`/`HTTPS_PROXY` (the ALCF proxy; plain-HTTP variables
 are left alone), and whenever a proxy is in force there it puts `localhost,127.0.0.1,::1`, the node's
 own name and `.alcf.anl.gov` in `no_proxy`/`NO_PROXY`, so local and ALCF-internal services stay direct.
@@ -129,7 +129,7 @@ Hook code on compute node `x4601c7s0b0n0` (ALCF proxy chosen automatically), via
 - A blackholed FALDA costs exactly 2.0 s per recall; a validator-outcome write costs ~0.1 ms.
 
 Full Hermes probes (Hermes and hooks on a laptop, code on Aurora through `mcp__hpc_aurora__run_code`,
-launched through `run-hermes` with no FALDA credentials set): the launch-time key let Hermes register
+launched through `run-hermes`, since replaced by `run-campaign`, with no FALDA credentials set): the launch-time key let Hermes register
 all eight `mcp__falda__*` tools; each run sent both validator outcomes to FALDA (none left pending) and
 submitted four Cairn ratings.
 

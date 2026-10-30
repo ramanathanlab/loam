@@ -40,8 +40,12 @@ VALID_PAYLOADS = {
 MALFORMED_INPUTS = ("", "not json", "[]", '{"event": "some_other_event"}')
 
 
+def _manifest() -> dict:
+    return yaml.safe_load(MANIFEST.read_text())
+
+
 def _manifest_hooks() -> dict[str, dict]:
-    return yaml.safe_load(MANIFEST.read_text())["hooks"]
+    return _manifest()["hooks"]
 
 
 class HookContractTests(unittest.TestCase):
@@ -87,6 +91,27 @@ class HookContractTests(unittest.TestCase):
                 self.assertTrue(os.access(script, os.X_OK), f"{script} is not executable")
                 self.assertEqual(script.read_text().splitlines()[0], "#!/usr/bin/env python3")
 
+    def test_manifest_declares_every_middleware_the_adapter_registers(self) -> None:
+        """The manifest is where someone learns what Loam can do to a campaign.
+
+        `canonicalize_campaign_delegation` rewrites a `delegate_task` call's
+        arguments and went undeclared, so the four observe/may_block hook
+        entries read as the whole contract and understated Loam considerably.
+        This keeps a newly registered seam from being invisible the same way.
+        """
+
+        registered = set(re.findall(r'register_middleware\(\s*"([^"]+)"', ADAPTER.read_text()))
+        declared = _manifest().get("middleware") or {}
+        self.assertTrue(registered, "adapter registers no middleware; update this test")
+        self.assertEqual(registered, set(declared))
+        for event, spec in declared.items():
+            with self.subTest(event=event):
+                self.assertEqual(spec["behavior"], "may_rewrite_arguments")
+                # Ordering is the fact a reader most needs and cannot infer:
+                # the veto runs first, so it preempts the rewrite.
+                self.assertIn("pre_tool_call", spec["ordering"])
+                self.assertIn(spec["adapter_callback"], ADAPTER.read_text())
+
     def test_adapter_invokes_only_manifest_scripts(self) -> None:
         # A misspelled name is not an error in the adapter: it logs "hook missing"
         # and the event silently becomes a no-op.
@@ -103,6 +128,26 @@ class HookContractTests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 self.assertNotIn("Traceback", completed.stderr)
                 self._assert_response(spec["behavior"], completed.stdout)
+
+    def test_payload_with_workspace_enabled_stays_within_contract(self) -> None:
+        # An active campaign with the per-hypothesis workspace on, but no
+        # campaign session yet: every hook must still answer within its
+        # behavior, and nothing may be blocked.
+        active = {
+            "loam_state_dir": str(self.state_dir),
+            "workflow_id": "contract-v1",
+            "loam_hypothesis_orchestration": True,
+            "loam_workspace": {"enabled": True, "root": str(self.state_dir / "hypotheses"), "strict": True},
+        }
+        for event, spec in _manifest_hooks().items():
+            payload = {"event": event, "repo_root": str(ROOT), **VALID_PAYLOADS[event], **active}
+            with self.subTest(event=event):
+                completed = self._run(LOAM / spec["script"], json.dumps(payload))
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertNotIn("Traceback", completed.stderr)
+                self._assert_response(spec["behavior"], completed.stdout)
+                if spec["behavior"] == "may_block":
+                    self.assertEqual(completed.stdout.strip(), "")
 
     def test_inactive_pre_tool_call_is_not_blocked(self) -> None:
         script = LOAM / _manifest_hooks()["pre_tool_call"]["script"]

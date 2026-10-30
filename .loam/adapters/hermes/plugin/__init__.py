@@ -29,6 +29,10 @@ LOAM_ROOT = REPO_ROOT / ".loam"
 HOOKS_DIR = LOAM_ROOT / "hooks"
 HOOK_TIMEOUT_SECONDS = 15
 _DEFAULT_PRE_LLM_INTERVAL = 5
+# Set once by `register`. The dispatch tool needs it to reach
+# `ctx.dispatch_tool`, which is the only supported way for a plugin to
+# invoke delegate_task with the parent agent resolved.
+_PLUGIN_CONTEXT: Any | None = None
 _PRE_LLM_TURNS: dict[str, int] = defaultdict(int)
 _PRE_LLM_TURNS_LOCK = threading.Lock()
 _CHILD_SUBAGENT_IDS: dict[str, str] = {}
@@ -172,6 +176,82 @@ def canonicalize_campaign_delegation(tool_name: str, args: dict[str, Any], **kwa
     }
 
 
+DISPATCH_TOOL_NAME = "loam_dispatch_round"
+DISPATCH_TOOL_SCHEMA: dict[str, Any] = {
+    "name": DISPATCH_TOOL_NAME,
+    "description": (
+        "Launch the campaign work Loam has already planned for this round: one "
+        "hypothesis-validator per selected hypothesis, or the reasoner once every "
+        "validator has reported. Takes no arguments -- the plan comes from persisted "
+        "campaign state, not from you. Call this instead of composing a delegate_task "
+        "batch yourself; you cannot see the hypotheses in full and transcribing them "
+        "has failed before."
+    ),
+    "parameters": {"type": "object", "properties": {}, "required": []},
+}
+
+
+def dispatch_round(args: dict[str, Any], **kwargs: Any) -> str:
+    """Dispatch the round's planned delegation without the model transcribing it.
+
+    The hook computes each round's delegation from persisted state, so the
+    authoritative arguments exist before the model writes anything. Until now
+    they were printed into the coordinator's context with instructions to copy
+    them verbatim, and the `tool_request` middleware repaired the copy
+    afterwards -- a repair that does not cover every state (see
+    `canonical_delegation_args`). Calling this tool removes the transcription
+    step rather than correcting it.
+
+    Dispatch goes through `ctx.dispatch_tool`, which resolves the parent agent
+    and is the documented way for a plugin to invoke `delegate_task`. That path
+    reaches the tool registry directly, so neither the `tool_request` middleware
+    nor `pre_tool_call` fires again on the call this makes: no double rewrite,
+    and `tool_policy` cannot veto Loam's own dispatch.
+    """
+
+    context = _PLUGIN_CONTEXT
+    if context is None:
+        return json.dumps({"error": "Loam plugin context unavailable; cannot dispatch."})
+    profile = _profile()
+    if profile is None or not profile.hypothesis_orchestration:
+        return json.dumps({"error": "Loam hypothesis orchestration is not enabled for this profile."})
+    values = dict(kwargs)
+    values.update(payload_values(profile))
+    values.setdefault("session_id", values.get("parent_session_id", ""))
+    values.pop("arguments", None)
+    try:
+        if str(HOOKS_DIR) not in sys.path:
+            sys.path.insert(0, str(HOOKS_DIR))
+        from hypothesis_orchestration import canonical_delegation_args
+
+        payload = _payload("tool_request", **values)
+        canonical = canonical_delegation_args(payload)
+    except Exception as exc:
+        logger.warning("Loam round dispatch could not compute the plan: %s", exc)
+        return json.dumps({"error": f"Loam could not compute this round's plan: {exc}"})
+    if canonical is None:
+        # Not an error: no round is pending. Said plainly so the coordinator
+        # reports rather than inventing work to fill the turn.
+        return json.dumps(
+            {
+                "status": "nothing_to_dispatch",
+                "detail": (
+                    "No campaign delegation is pending. Either this round's children are "
+                    "already running, or the tournament has selected nothing. Do not "
+                    "substitute work of your own; report and wait."
+                ),
+            }
+        )
+    # The tool_request middleware never sees this call, so Cairn's brief is added here.
+    try:
+        from cairn_brief import decorate_delegation
+
+        canonical = decorate_delegation(canonical, payload)
+    except Exception as exc:
+        logger.warning("Loam Cairn brief skipped: %s", exc)
+    return context.dispatch_tool("delegate_task", canonical)
+
+
 def pre_llm_call(session_id: str = "", **kwargs: Any) -> dict[str, Any] | None:
     """Run Loam's pre-LLM hook every N turns, independently per session."""
     # Newer Hermes passes its own `parent_session_id` (a subagent's parent, empty for top-level
@@ -251,6 +331,22 @@ def subagent_stop(**kwargs: Any) -> None:
 
 
 def register(ctx: Any) -> None:
+    global _PLUGIN_CONTEXT
+    _PLUGIN_CONTEXT = ctx
+    # Registered into the existing `delegation` toolset rather than a new `loam`
+    # one. A plugin's own toolset is configurable and OFF until it is toggled on
+    # per platform, so a `loam` toolset would leave this tool invisible to the
+    # coordinator until someone edited config -- the same silent-no-op footgun
+    # as a profile with no campaign block. `delegation` is already enabled
+    # wherever orchestration runs, because that is where delegate_task lives.
+    ctx.register_tool(
+        name=DISPATCH_TOOL_NAME,
+        toolset="delegation",
+        schema=DISPATCH_TOOL_SCHEMA,
+        handler=dispatch_round,
+        description=DISPATCH_TOOL_SCHEMA["description"],
+        emoji="🌱",
+    )
     ctx.register_middleware("tool_request", canonicalize_campaign_delegation)
     ctx.register_hook("pre_tool_call", pre_tool_call)
     ctx.register_hook("pre_llm_call", pre_llm_call)

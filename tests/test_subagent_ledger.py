@@ -10,14 +10,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 HOOKS = ROOT / ".loam" / "hooks"
 START = HOOKS / "subagent-start.py"
 STOP = HOOKS / "subagent-stop.py"
-RECONCILER = ROOT / ".loam" / "reconcile" / "protein_structure_metadata.py"
-MEMORY_PROJECTOR = ROOT / ".loam" / "reconcile" / "project_parent_memory.py"
 MEMORY_RECALL = HOOKS / "memory_recall.py"
 
 
@@ -30,14 +27,6 @@ def _load_module(name: str, path: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def _load_reconciler():
-    return _load_module("loam_reconciler", RECONCILER)
-
-
-def _load_memory_projector():
-    return _load_module("loam_memory_projector", MEMORY_PROJECTOR)
 
 
 class SubagentLedgerTests(unittest.TestCase):
@@ -278,16 +267,14 @@ class SubagentLedgerTests(unittest.TestCase):
             summary = '''Candidate output:
 ```json
 {
-  "contract_version": "protein_structure_metadata_v1",
-  "source_kind": "uniprot",
-  "source_accession": "P00918",
-  "source_url": "https://www.uniprot.org/uniprotkb/P00918",
-  "claims": {
-    "recommended_name": "Carbonic anhydrase 2",
-    "gene_name": "CA2",
-    "sequence_length": 260
-  },
-  "uncertainties": []
+  "contract_version": "hypothesis_provenance_v1",
+  "hypotheses": [
+    {"hypothesis_key": "h1", "statement": "The candidate engages the target interface.", "parent_hypothesis_keys": []}
+  ],
+  "evidence_candidates": [
+    {"hypothesis_key": "h1", "claim": "The record reports the interface residues.",
+     "source_url": "https://example.org/record/1", "stance": "supports"}
+  ]
 }
 ```'''
             completed = self._run_hook(
@@ -309,14 +296,26 @@ class SubagentLedgerTests(unittest.TestCase):
             candidate = json.loads(candidate_file.read_text())
 
         self.assertEqual(candidate["candidate_status"], "pending")
-        self.assertEqual(candidate["candidate"]["source_accession"], "P00918")
-        self.assertEqual(candidate["candidate"]["claims"]["gene_name"], "CA2")
+        self.assertEqual(candidate["record_version"], "hypothesis_provenance_v1")
+        self.assertEqual(candidate["candidate"]["hypotheses"][0]["hypothesis_key"], "h1")
+        self.assertEqual(
+            candidate["candidate"]["evidence_candidates"][0]["source_url"],
+            "https://example.org/record/1",
+        )
+        # Extraction is not acceptance: no finding until explicit reconciliation.
         self.assertNotIn("finding_id", candidate)
 
     def test_completed_plain_fence_contract_creates_pending_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ledger = Path(tmp) / "ledger.jsonl"
-            summary = '''Verified record:\n\n```\n{"contract_version":"protein_structure_metadata_v1","source_kind":"uniprot","source_accession":"P00918","source_url":"https://www.uniprot.org/uniprotkb/P00918","claims":{"recommended_name":"Carbonic anhydrase 2","gene_name":"CA2","sequence_length":260},"uncertainties":[]}\n```'''
+            summary = (
+                "Verified record:\n\n```\n"
+                '{"contract_version":"hypothesis_provenance_v1",'
+                '"hypotheses":[{"hypothesis_key":"h1","statement":"A claim.","parent_hypothesis_keys":[]}],'
+                '"evidence_candidates":[{"hypothesis_key":"h1","claim":"The source states it.",'
+                '"source_url":"https://example.org/record/1","stance":"supports"}]}'
+                "\n```"
+            )
             completed = self._run_hook(
                 STOP,
                 {
@@ -335,86 +334,7 @@ class SubagentLedgerTests(unittest.TestCase):
             candidate = json.loads(ledger.with_name("candidate-results.jsonl").read_text())
 
         self.assertEqual(candidate["candidate_status"], "pending")
-        self.assertEqual(candidate["candidate"]["source_accession"], "P00918")
-
-    def test_reconciler_accepts_matching_uniprot_claims(self) -> None:
-        reconciler = _load_reconciler()
-        candidate_record = {
-            "candidate_status": "pending",
-            "candidate_id": "candidate-1",
-            "unit_id": "unit-1",
-            "candidate": {
-                "source_kind": "uniprot",
-                "source_accession": "P00918",
-                "claims": {
-                    "recommended_name": "Carbonic anhydrase 2",
-                    "gene_name": "CA2",
-                    "sequence_length": 260,
-                },
-            },
-        }
-        source = {
-            "proteinDescription": {
-                "recommendedName": {"fullName": {"value": "Carbonic anhydrase 2"}}
-            },
-            "genes": [{"geneName": {"value": "CA2"}}],
-            "sequence": {"length": 260},
-        }
-        module: Any = reconciler
-        original = module._fetch_json
-        module._fetch_json = lambda _url, _timeout: (source, "ok")
-        try:
-            rows = list(module.decisions(candidate_record, 1.0))
-        finally:
-            module._fetch_json = original
-
-        self.assertEqual(len(rows), 3)
-        self.assertTrue(all(row["validation_status"] == "accepted" for row in rows))
-        self.assertTrue(all(row["finding_id"] for row in rows))
-
-    def test_parent_memory_uses_only_accepted_deduplicated_findings(self) -> None:
-        projector = _load_memory_projector()
-        decisions = [
-            {
-                "parent_session_id": "parent",
-                "parent_turn_id": "turn",
-                "unit_id": "unit-a",
-                "source_kind": "uniprot",
-                "source_accession": "P00918",
-                "field": "gene_name",
-                "authoritative_value": "CA2",
-                "source_url": "https://rest.uniprot.org/uniprotkb/P00918.json",
-                "validation_status": "accepted",
-                "finding_id": "finding-ca2",
-            },
-            {
-                "parent_session_id": "parent",
-                "parent_turn_id": "turn",
-                "unit_id": "unit-b",
-                "source_kind": "uniprot",
-                "source_accession": "P00918",
-                "field": "gene_name",
-                "authoritative_value": "CA2",
-                "source_url": "https://rest.uniprot.org/uniprotkb/P00918.json",
-                "validation_status": "accepted",
-                "finding_id": "finding-ca2",
-            },
-            {
-                "parent_session_id": "parent",
-                "parent_turn_id": "turn",
-                "unit_id": "unit-c",
-                "validation_status": "claim_mismatch",
-                "finding_id": "",
-            },
-        ]
-        snapshots = projector.project(decisions)
-
-        self.assertEqual(len(snapshots), 1)
-        snapshot = snapshots[0]
-        self.assertEqual(snapshot["accepted_finding_ids"], ["finding-ca2"])
-        self.assertEqual(snapshot["accepted_findings"][0]["unit_ids"], ["unit-a", "unit-b"])
-        self.assertEqual(snapshot["validation_failure_statuses"], ["claim_mismatch"])
-        self.assertEqual(snapshot["attempted_unit_ids"], ["unit-a", "unit-b", "unit-c"])
+        self.assertEqual(candidate["candidate"]["hypotheses"][0]["statement"], "A claim.")
 
     def test_recall_injects_validated_memory_and_audits_exact_duplicate(self) -> None:
         recall = _load_module("loam_memory_recall", MEMORY_RECALL)
@@ -525,6 +445,49 @@ class SubagentLedgerTests(unittest.TestCase):
         self.assertEqual(blocked["action"], "block")
         self.assertEqual(blocked["reason"], "accepted_exact_duplicate")
         self.assertIsNone(distinct)
+
+
+class DuplicateFieldMatchTests(unittest.TestCase):
+    """The duplicate audit must work for any claim, not seven protein fields.
+
+    `_FIELD_PATTERNS` used to be a table of `gene_name`, `resolution_angstrom`,
+    `ligand_component_ids` and four more, inherited from the retired
+    protein-metadata pilot. A finding whose field was not one of those seven
+    could never match, so the audit was inert for every other kind of campaign.
+    """
+
+    def setUp(self) -> None:
+        self.recall = _load_module("loam_recall_fields", MEMORY_RECALL)
+
+    def _matches(self, field: str, text: str) -> bool:
+        pattern = self.recall._field_pattern(field)
+        return pattern is not None and bool(pattern.search(text))
+
+    def test_a_field_no_list_ever_contained_matches(self) -> None:
+        self.assertTrue(self._matches("melting_temperature", "measure the melting temperature"))
+        self.assertTrue(self._matches("catalytic_efficiency", "report catalytic_efficiency"))
+
+    def test_separators_are_optional_between_the_words(self) -> None:
+        for text in ("sequence length", "sequence-length", "sequence_length", "sequencelength"):
+            self.assertTrue(self._matches("sequence_length", f"fetch the {text}"), text)
+
+    def test_an_unrelated_task_does_not_match(self) -> None:
+        self.assertFalse(self._matches("gene_name", "fold the candidate against the target"))
+
+    def test_a_field_name_too_short_to_be_specific_yields_no_pattern(self) -> None:
+        """Otherwise a one- or two-letter field would match most prose."""
+
+        self.assertIsNone(self.recall._field_pattern("id"))
+        self.assertIsNone(self.recall._field_pattern("Not An Identifier"))
+
+    def test_a_finding_without_a_source_kind_never_matches(self) -> None:
+        """Quoting an accession in an unrelated task is not rediscovery."""
+
+        self.assertFalse(self.recall._mentions_source_kind("from uniprot", ""))
+        self.assertTrue(self.recall._mentions_source_kind("from uniprot", "uniprot"))
+        # Any word of the source kind counts, as the pilot's hand-written check did.
+        self.assertTrue(self.recall._mentions_source_kind("the pdb entry", "rcsb_pdb"))
+        self.assertTrue(self.recall._mentions_source_kind("rcsb says", "rcsb_pdb"))
 
 
 if __name__ == "__main__":

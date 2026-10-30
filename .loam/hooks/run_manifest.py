@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import falda_memory
+from hypothesis_orchestration import campaign_provenance
 
 FILENAME = "run-manifest.json"
 SCHEMA_VERSION = "loam_run_manifest_v1"
@@ -78,19 +79,54 @@ def _deployment_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in identity.items() if k != "run_id"}
 
 
+def _workspace_identity(workspace: Any) -> dict[str, Any]:
+    """Whether the Pando-style per-hypothesis workspace was enabled, and how."""
+
+    if not isinstance(workspace, Mapping) or workspace.get("enabled") is not True:
+        return {"workspace_enabled": False}
+    return {
+        "workspace_enabled": True,
+        "workspace_strict": workspace.get("strict") is not False,
+        "workspace_root": str(workspace.get("root") or ""),
+        "workspace_verifier": bool(workspace.get("verifier_mcp_url")),
+    }
+
+
+def _campaign(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Campaign flags plus the policy in force, for attributing results to it.
+
+    Deliberately not part of `_identity`: editing a rule mid-campaign changes the
+    digest, and that must be recorded rather than rejected as a deployment
+    mismatch, which would stop a relaunch into an existing campaign directory.
+    Refreshed on every update for the same reason -- a policy change that only
+    appeared in a manifest created weeks earlier would say nothing about the
+    results produced after it.
+    """
+
+    tournament = payload.get("loam_hypothesis_tournament")
+    value = {
+        "hypothesis_orchestration_enabled": payload.get("loam_hypothesis_orchestration") is True,
+        "tournament_enabled": isinstance(tournament, Mapping) and tournament.get("enabled") is True,
+        "falda": _falda_summary(payload),
+    }
+    if policy := campaign_provenance(payload):
+        value["policy"] = policy
+    # The per-hypothesis workspace governs every write a child makes, so
+    # whether it was on (and strict) belongs here for the same reason the
+    # policy does: it is what the results were produced under, and changing
+    # it mid-campaign must be recorded rather than rejected.
+    value.update(_workspace_identity(payload.get("loam_workspace")))
+    return value
+
+
 def _new_manifest(payload: Mapping[str, Any], state_dir: Path, event: str) -> dict[str, Any]:
     now = _timestamp()
-    tournament = payload.get("loam_hypothesis_tournament")
     return {
         "schema_version": SCHEMA_VERSION,
         "created_at": now,
         "updated_at": now,
         "identity": _identity(payload, state_dir),
-        "campaign": {
-            "hypothesis_orchestration_enabled": payload.get("loam_hypothesis_orchestration") is True,
-            "tournament_enabled": isinstance(tournament, Mapping) and tournament.get("enabled") is True,
-            "falda": _falda_summary(payload),
-        },
+        "campaign": _campaign(payload),
         "lifecycle": {"first_event": event, "last_event": event, "event_counts": {event: 1}},
         "artifacts": {
             "subagent_ledger": "subagent-ledger.jsonl",
@@ -120,6 +156,7 @@ def ensure(payload: Mapping[str, Any]) -> Path:
         manifest = value
         # Same deployment, new launch: adopt the current run_id for provenance.
         manifest["identity"] = current
+        manifest["campaign"] = _campaign(payload)
         lifecycle = manifest.setdefault("lifecycle", {})
         counts = lifecycle.setdefault("event_counts", {})
         counts[event] = int(counts.get(event, 0)) + 1

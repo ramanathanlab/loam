@@ -24,7 +24,23 @@ py-modules = []
 target-version = "py310"
 line-length = 120
 # The Hermes runtime template is vendored upstream content, not Loam source.
-extend-exclude = [".hermes"]
+#
+# The Aurora tool-skill scripts are the same category: recipes verified against
+# one machine's software stack, written in the idiom of the tool they drive --
+# `from openmm import *` is how OpenMM's own documentation uses it. Linting them
+# would mean rewriting code whose only warrant is that it was run and passed, so
+# the exclusion is per tool category rather than all of skills/:
+# skills/hpc-deployment/scripts/ is Loam source and stays linted.
+extend-exclude = [
+    ".hermes",
+    "skills/analysis",
+    "skills/diffusion-models",
+    "skills/foundation-language-models",
+    "skills/inverse-folding",
+    "skills/md-simulation",
+    "skills/qm",
+    "skills/structure-prediction",
+]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]

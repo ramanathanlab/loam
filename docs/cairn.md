@@ -63,7 +63,7 @@ by Loam's hooks. That host needs outbound HTTPS to `api.cairnscore.ai`:
   there; ALCF documents that the proxy does not function on login nodes;
 - an Aurora compute node (`x4…c…s…b…n…`): nothing to do. With no `https_proxy`/`HTTPS_PROXY` set,
   Loam's hooks send their Cairn (and FALDA) requests through `http://proxy.alcf.anl.gov:3128`
-  (`.loam/hooks/loam_http.py`), and `run-hermes` exports `https_proxy`/`HTTPS_PROXY` for Hermes (its
+  (`.loam/hooks/loam_http.py`), and `run-campaign` exports `https_proxy`/`HTTPS_PROXY` for Hermes (its
   FALDA MCP connection) with loopback, the node itself and `.alcf.anl.gov` in `no_proxy`. Plain-HTTP
   proxy variables are not set;
 - another ALCF host without direct access: export `https_proxy`/`HTTPS_PROXY` before launching Hermes;
