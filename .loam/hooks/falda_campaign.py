@@ -323,7 +323,8 @@ def reasoner_memory_block(payload: Mapping[str, Any], plan_id: str, completions:
         lines.append(
             f"- You may write: call {FALDA_TOOL_PREFIX}falda_remember as described under \"Shared campaign memory\" "
             f"in your instructions, with tags that include {tag}. To read more, call "
-            f"{FALDA_TOOL_PREFIX}falda_recall with require_tags [\"{tag}\"]."
+            f"{FALDA_TOOL_PREFIX}falda_recall with require_tags [\"{tag}\"]. If {FALDA_TOOL_PREFIX}falda_remember "
+            "is not in your tool list, skip FALDA: do not call it or retry, and say so under Memory Update."
         )
     else:
         lines.append("- Writing is disabled for this run: report durable conclusions in your Memory Update section only.")

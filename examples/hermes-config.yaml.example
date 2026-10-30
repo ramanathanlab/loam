@@ -43,7 +43,7 @@ mcp_servers:
       Authorization: "Bearer ${FALDA_TOKEN}"
       X-Falda-Pool: "${FALDA_POOL}"
     timeout: 5
-    connect_timeout: 5
+    connect_timeout: 15            # once, at launch; 5 s lost the tools to a slow start
   # The HPC code-execution server from scripts/mcp_server.py (Step 2).
   hpc:
     url: http://127.0.0.1:8000/mcp

@@ -166,6 +166,9 @@ class ReasonerMemoryTests(unittest.TestCase):
         self._complete_validators(payload)
         directive = self.orchestration.context_for(payload)
         self.assertIn("You may write", directive)
+        # Hermes may have failed to connect the FALDA server at launch; three calls to a missing tool
+        # stop a subagent, so the reasoner is told to skip rather than retry.
+        self.assertIn("If mcp__falda__falda_remember is not in your tool list, skip FALDA", directive)
         self.assertNotIn("Recalled campaign memory", directive)
         self.assertEqual(fake.bodies("/recall"), [])
 

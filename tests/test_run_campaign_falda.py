@@ -103,7 +103,9 @@ def test_hermes_configs_declare_the_falda_mcp_server(path):
     server = yaml.safe_load(path.read_text())["mcp_servers"]["falda"]
     assert server["url"] == "https://falda.cairnscore.ai/mcp"
     assert server["headers"] == {"Authorization": "Bearer ${FALDA_TOKEN}", "X-Falda-Pool": "${FALDA_POOL}"}
-    assert server["timeout"] <= 5 and server["connect_timeout"] <= 5
+    # Calls are bounded tightly; the connect runs once at launch, where 5 s lost the tools to an ordinary
+    # slow start on 2026-10-30.
+    assert server["timeout"] <= 5 and 10 <= server["connect_timeout"] <= 20
 
 
 @pytest.mark.parametrize("path", [ROOT / "examples" / "hermes-config.yaml.example", ROOT / ".hermes" / ".loam-home" / "config.yaml"])
