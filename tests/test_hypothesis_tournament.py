@@ -39,13 +39,33 @@ GOAL = "---\nname: fixture-goal\n---\n\nDesign de novo binders against a fixture
 
 
 class _FakeCoScientist:
-    """The Jnana surface the hook touches: start/stop, hypotheses, memory."""
+    """The Jnana surface the hook touches: start/stop, hypotheses, memory.
+
+    Faithful to three facts about the real `CoScientist` that the hook's
+    correctness rests on, because a double more forgiving than Jnana is a double
+    that certifies bugs:
+
+    - `research_goal` is an instance attribute starting at `None`, set only by
+      `set_research_goal`, and restored from a loaded state by nothing.
+    - `generate_hypotheses` hands that attribute to each generation task, so
+      generating with it unset aims the pool at the string "None".
+    - its own guard reads the *persisted* `memory.metadata["research_goal"]`,
+      which a previous turn may well have left in place -- so that guard does
+      not catch the case above.
+
+    Subclasses override `set_research_goal`/`generate_hypotheses` to record
+    calls; they must call `super()` so these invariants keep holding.
+    """
 
     constructed: dict = {}
 
     def __init__(self, **kwargs):
         type(self).constructed.update(kwargs)
+        self.research_goal = None
         self.memory = type("Memory", (), {"save": lambda _self: None})()
+        # A real Jnana memory always has one; the stub that does not is a
+        # deliberate case, and says so by assigning a non-dict.
+        self.memory.metadata = {}
 
     def start(self):
         pass
@@ -56,11 +76,25 @@ class _FakeCoScientist:
     def get_all_hypotheses(self):
         return []
 
+    def _metadata(self):
+        metadata = getattr(self.memory, "metadata", None)
+        return metadata if isinstance(metadata, dict) else None
+
     def set_research_goal(self, goal):
-        pass
+        self.research_goal = goal
+        metadata = self._metadata()
+        if metadata is not None:
+            metadata["research_goal"] = goal
 
     def generate_hypotheses(self, count):
-        pass
+        # coscientist.py:362 -- the persisted key, not the instance attribute.
+        if not (self._metadata() or {}).get("research_goal"):
+            raise ValueError("Research goal must be set before generating hypotheses")
+        # coscientist.py:389 -- what every generation task is actually aimed at.
+        assert self.research_goal, (
+            "generate_hypotheses ran with research_goal unset: the pool would be "
+            "generated against the literal string 'None'"
+        )
 
     def wait_for_completion(self):
         pass
@@ -326,28 +360,17 @@ class HypothesisTournamentTests(unittest.TestCase):
             generated = []
             construction = {}
 
-            class FakeCoScientist:
+            class FakeCoScientist(_FakeCoScientist):
                 def __init__(self, **kwargs):
+                    super().__init__(**kwargs)
                     construction.update(kwargs)
-                    self.memory = type("Memory", (), {"save": lambda _self: None})()
-
-                def start(self):
-                    pass
-
-                def stop(self):
-                    pass
 
                 def get_all_hypotheses(self):
                     return generated
 
-                def set_research_goal(self, goal):
-                    self.goal = goal
-
                 def generate_hypotheses(self, count):
+                    super().generate_hypotheses(count)
                     generated.extend(range(count))
-
-                def wait_for_completion(self):
-                    pass
 
             result = {
                 "status": "completed",
@@ -459,12 +482,14 @@ class HypothesisTournamentTests(unittest.TestCase):
 
             class FakeCoScientist(_FakeCoScientist):
                 def set_research_goal(self, goal):
+                    super().set_research_goal(goal)
                     goals.append(goal)
 
                 def get_all_hypotheses(self):
                     return generated
 
                 def generate_hypotheses(self, count):
+                    super().generate_hypotheses(count)
                     generated.extend(range(count))
 
             context = self._run(hook, FakeCoScientist, payload)
@@ -498,8 +523,8 @@ class HypothesisTournamentTests(unittest.TestCase):
                     self.memory.metadata = metadata
 
                 def set_research_goal(self, goal):
+                    super().set_research_goal(goal)
                     goals.append(goal)
-                    metadata["research_goal"] = goal
 
                 def get_all_hypotheses(self):
                     return [object(), object(), object()]
@@ -548,13 +573,14 @@ class HypothesisTournamentTests(unittest.TestCase):
                     self.memory.metadata = metadata
 
                 def set_research_goal(self, goal):
+                    super().set_research_goal(goal)
                     goals.append(goal)
-                    metadata["research_goal"] = goal
 
                 def get_all_hypotheses(self):
                     return pool
 
                 def generate_hypotheses(self, count):
+                    super().generate_hypotheses(count)
                     requests.append(count)
                     pool.extend(object() for _ in range(count))
 
@@ -611,13 +637,14 @@ class HypothesisTournamentTests(unittest.TestCase):
                     self.memory.metadata = metadata
 
                 def set_research_goal(self, goal):
+                    super().set_research_goal(goal)
                     goals.append(goal)
-                    metadata["research_goal"] = goal
 
                 def get_all_hypotheses(self):
                     return generated
 
                 def generate_hypotheses(self, count):
+                    super().generate_hypotheses(count)
                     generated.extend(range(count))
 
             self._run(hook, FakeCoScientist, payload)
@@ -651,13 +678,14 @@ class HypothesisTournamentTests(unittest.TestCase):
                     self.memory.metadata = metadata
 
                 def set_research_goal(self, goal):
+                    super().set_research_goal(goal)
                     goals.append(goal)
-                    metadata["research_goal"] = goal
 
                 def get_all_hypotheses(self):
                     return [object(), object(), object()]
 
                 def generate_hypotheses(self, count):
+                    super().generate_hypotheses(count)
                     requests.append(count)
 
             self._run(hook, FakeCoScientist, payload)
@@ -700,13 +728,14 @@ class HypothesisTournamentTests(unittest.TestCase):
                     self.memory.metadata = metadata
 
                 def set_research_goal(self, goal):
+                    super().set_research_goal(goal)
                     goals.append(goal)
-                    metadata["research_goal"] = goal
 
                 def get_all_hypotheses(self):
                     return pool
 
                 def generate_hypotheses(self, count):
+                    super().generate_hypotheses(count)
                     requests.append(count)
                     pool.extend(object() for _ in range(count))
 
@@ -747,6 +776,12 @@ class HypothesisTournamentTests(unittest.TestCase):
             requests: list[int] = []
 
             class FakeCoScientist(_FakeCoScientist):
+                def __init__(self, **kwargs):
+                    super().__init__(**kwargs)
+                    # The deliberate case: a memory carrying no metadata at all,
+                    # so there is nowhere to record a digest.
+                    self.memory.metadata = None
+
                 def get_all_hypotheses(self):
                     return [object(), object(), object()]
 
@@ -777,12 +812,13 @@ class HypothesisTournamentTests(unittest.TestCase):
                     self.memory.metadata = metadata
 
                 def set_research_goal(self, goal):
-                    metadata["research_goal"] = goal
+                    super().set_research_goal(goal)
 
                 def get_all_hypotheses(self):
                     return [object(), object(), object()]
 
                 def generate_hypotheses(self, count):
+                    super().generate_hypotheses(count)
                     requests.append(count)
 
             self._run(hook, FakeCoScientist, payload)
@@ -792,6 +828,229 @@ class HypothesisTournamentTests(unittest.TestCase):
         self.assertEqual(generation["goal_sync"], "set")
         self.assertEqual(requests, [])
         self.assertIn("12-residue binders all fell apart", str(metadata["research_goal"]))
+
+    @unittest.skipUnless(HAVE_JNANA, "jnana checkout required")
+    def test_a_retried_seed_turn_still_aims_generation_at_the_goal(self) -> None:
+        """A first generation that yields nothing must not poison the retry.
+
+        `CoScientist.research_goal` is an instance attribute that no loaded
+        state restores, and `generate_hypotheses` feeds it to every generation
+        prompt while its own guard reads the persisted key instead. So a seed
+        turn gated on an already-matching digest would generate the entire pool
+        against the string "None" with every guard satisfied -- the bug this
+        whole hook exists to prevent, on the retry path.
+        """
+
+        hook = _load("loam_hypothesis_tournament_retry", HOOKS / "hypothesis_tournament.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = self._campaign_payload(root, turn=1, user_message="Begin the campaign.")
+            pool: list[object] = []
+            aimed_at: list[object] = []
+            metadata: dict[str, object] = {}
+            self.generation_works = False
+
+            class FakeCoScientist(_FakeCoScientist):
+                def __init__(inner, **kwargs):
+                    super().__init__(**kwargs)
+                    inner.memory.metadata = metadata
+
+                def get_all_hypotheses(inner):
+                    return pool
+
+                def generate_hypotheses(inner, count):
+                    super().generate_hypotheses(count)
+                    aimed_at.append(inner.research_goal)
+                    if self.generation_works:
+                        pool.extend(object() for _ in range(count))
+
+            # Turn one stores the goal and its digest, then every generation
+            # task fails: a provider error, a timeout, 16k-token responses that
+            # do not parse. The pool is left empty.
+            self._run(hook, FakeCoScientist, payload)
+            first = json.loads(self._latest_report(root).read_text())["result"]["generation"]
+
+            # Turn two re-enters the seed path against that stored digest.
+            self.generation_works = True
+            payload["loam_turn"] = 2
+            self._run(hook, FakeCoScientist, payload)
+            second = json.loads(self._latest_report(root).read_text())["result"]["generation"]
+
+        self.assertEqual(first["generated_hypotheses"], 0)
+        self.assertEqual(second["generated_hypotheses"], 3)
+        self.assertEqual(len(aimed_at), 2)
+        for goal in aimed_at:
+            self.assertIsInstance(goal, str)
+            self.assertIn("binders against a fixture target", goal)
+
+    @unittest.skipUnless(HAVE_JNANA, "jnana checkout required")
+    def test_a_failed_refresh_does_not_take_down_the_turns_context(self) -> None:
+        """The refresh is the first LLM work this hook does on a non-seed turn.
+
+        `pre-llm.py` assembles every tier under one `try`, and the orchestration
+        context is appended on the line after this hook's, so an exception here
+        would silently cost the turn its campaign orchestration as well as its
+        rankings.
+        """
+
+        hook = _load("loam_hypothesis_tournament_failopen", HOOKS / "hypothesis_tournament.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = self._campaign_payload(root, turn=9, user_message="Dispatch the next round.")
+            payload["loam_hypothesis_tournament"]["refresh_hypotheses"] = 4
+            payload["loam_reasoner_brief"] = "Round 8: the 12-residue binders all fell apart in MD."
+            metadata: dict[str, object] = {}
+
+            class FakeCoScientist(_FakeCoScientist):
+                def __init__(self, **kwargs):
+                    super().__init__(**kwargs)
+                    self.memory.metadata = metadata
+
+                def get_all_hypotheses(self):
+                    return [object(), object(), object()]
+
+                def generate_hypotheses(self, count):
+                    super().generate_hypotheses(count)
+                    raise RuntimeError("inference endpoint returned 503")
+
+            context = self._run(hook, FakeCoScientist, payload)
+            generation = json.loads(self._latest_report(root).read_text())["result"]["generation"]
+
+        self.assertTrue(str(generation["goal_sync"]).startswith("failed: RuntimeError"))
+        self.assertIn("503", str(generation["goal_sync"]))
+        # The turn still gets its rankings, and the caller still gets its turn.
+        self.assertIn("ran 2/2 pairwise matches", context)
+
+    @unittest.skipUnless(HAVE_JNANA, "jnana checkout required")
+    def test_a_refresh_that_generated_nothing_is_retried_not_filed_as_spent(self) -> None:
+        """A brief buys hypotheses, not an attempt at them.
+
+        Jnana logs an agent-level generation failure, stores nothing and raises
+        nothing, so committing the digest before counting the yield would record
+        the brief as consumed by a pool it never reached -- and nothing re-reads
+        a brief, so no later turn would ever try again.
+        """
+
+        hook = _load("loam_hypothesis_tournament_owed", HOOKS / "hypothesis_tournament.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = self._campaign_payload(root, turn=9, user_message="Dispatch the next round.")
+            payload["loam_hypothesis_tournament"]["refresh_hypotheses"] = 4
+            payload["loam_reasoner_brief"] = "Round 8: the 12-residue binders all fell apart in MD."
+            pool = [object(), object(), object()]
+            metadata: dict[str, object] = {}
+            requests: list[int] = []
+            self.generation_works = False
+
+            class FakeCoScientist(_FakeCoScientist):
+                def __init__(inner, **kwargs):
+                    super().__init__(**kwargs)
+                    inner.memory.metadata = metadata
+
+                def get_all_hypotheses(inner):
+                    return pool
+
+                def generate_hypotheses(inner, count):
+                    super().generate_hypotheses(count)
+                    requests.append(count)
+                    if self.generation_works:
+                        pool.extend(object() for _ in range(count))
+
+            self._run(hook, FakeCoScientist, payload)
+            empty = json.loads(self._latest_report(root).read_text())["result"]["generation"]
+
+            # The provider recovers, and the brief has not changed.
+            self.generation_works = True
+            payload["loam_turn"] = 10
+            self._run(hook, FakeCoScientist, payload)
+            retried = json.loads(self._latest_report(root).read_text())["result"]["generation"]
+
+            # Paid now, so a third quiet turn costs nothing again.
+            payload["loam_turn"] = 11
+            self._run(hook, FakeCoScientist, payload)
+            quiet = json.loads(self._latest_report(root).read_text())["result"]["generation"]
+
+        self.assertEqual(empty["status"], "refresh_yielded_nothing")
+        self.assertEqual(empty["generated_hypotheses"], 0)
+        self.assertEqual(retried["status"], "refreshed")
+        self.assertEqual(retried["generated_hypotheses"], 4)
+        self.assertEqual(quiet["goal_sync"], "unchanged")
+        self.assertEqual(requests, [4, 4])
+
+    @unittest.skipUnless(HAVE_JNANA, "jnana checkout required")
+    def test_a_state_seeded_before_the_marker_keeps_its_knowledge_brief(self) -> None:
+        """Every state this PR inherits was seeded without `loam_knowledge_brief`.
+
+        Reading its absence as "this pool had no knowledge" would drop the
+        pre-pass's brief from the goal the judge reads and bill a refresh for
+        the drop -- the defect the marker was added to close, surviving for
+        exactly the campaigns that already exist. The brief is recoverable from
+        the stored goal, because the pre-pass heads it.
+        """
+
+        hook = _load("loam_hypothesis_tournament_migrate", HOOKS / "hypothesis_tournament.py")
+        import knowledge_brief
+
+        knowledge = (
+            knowledge_brief.HEADER.format(name="OKN")
+            + "\nThe fixture target is an Fe/2OG dioxygenase. [tool: kg]"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = self._campaign_payload(root, turn=12, user_message="Dispatch the next round.")
+            payload["loam_hypothesis_tournament"]["knowledge"] = {"enabled": True}
+            payload["loam_hypothesis_tournament"]["refresh_hypotheses"] = 4
+            pool = [object(), object(), object()]
+            goals: list[str] = []
+            requests: list[int] = []
+            # A state written by the previous code: goal plus knowledge, no
+            # marker and no digest.
+            stored = "Design de novo binders against a fixture target.\n\n" + knowledge
+            metadata: dict[str, object] = {"research_goal": stored}
+
+            class FakeCoScientist(_FakeCoScientist):
+                def __init__(self, **kwargs):
+                    super().__init__(**kwargs)
+                    self.memory.metadata = metadata
+
+                def set_research_goal(self, goal):
+                    super().set_research_goal(goal)
+                    goals.append(goal)
+
+                def get_all_hypotheses(self):
+                    return pool
+
+                def generate_hypotheses(self, count):
+                    super().generate_hypotheses(count)
+                    requests.append(count)
+                    pool.extend(object() for _ in range(count))
+
+            self._run(hook, FakeCoScientist, payload)
+            upgrade = json.loads(self._latest_report(root).read_text())["result"]["generation"]
+            # Snapshot now: the edit below legitimately re-goals and generates.
+            upgrade_goals, upgrade_requests = list(goals), list(requests)
+            recovered = metadata.get("loam_knowledge_brief")
+
+            # A real edit still re-goals, and still carries the brief the pool
+            # was generated against rather than re-running the research loop.
+            (root / "campaigns" / "fixture-goal.md").write_text(
+                GOAL.replace("a fixture target", "a different fixture target"), encoding="utf-8"
+            )
+            payload["loam_turn"] = 13
+            self._run(hook, FakeCoScientist, payload)
+            edited = json.loads(self._latest_report(root).read_text())["result"]["generation"]
+
+        # The upgrade turn itself is free: no plan re-parse, no refresh.
+        self.assertEqual(upgrade["goal_sync"], "unchanged_stamped")
+        self.assertEqual(upgrade_goals, [])
+        self.assertEqual(upgrade_requests, [])
+        # And the marker is backfilled, so later turns read it directly.
+        self.assertEqual(recovered, knowledge)
+
+        self.assertEqual(edited["status"], "refreshed")
+        self.assertEqual(requests, [4])
+        self.assertIn("a different fixture target", goals[-1])
+        self.assertIn("Fe/2OG dioxygenase", goals[-1])
 
     def _campaign_payload(self, root: Path, *, turn: int, user_message: str) -> dict:
         """A tournament payload whose campaign goal lives in a throwaway directory."""

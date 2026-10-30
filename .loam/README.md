@@ -117,7 +117,19 @@ policy as it is designed.
   seeded state is only ever re-ranked, never added to. Both of those need a
   campaign goal to measure movement against; a profile that names none keeps
   the earlier behaviour, seeding once from the turn's request and then only
-  re-ranking, because that request differs every turn. The hook persists Jnana
+  re-ranking, because that request differs every turn.
+
+  A brief is recorded as spent only once it has actually bought hypotheses. A
+  generation that comes back empty — Jnana logs an agent-level failure, stores
+  nothing and raises nothing — leaves the refresh owed, and the next turn tries
+  the same brief again (`status: refresh_yielded_nothing`). A re-goal or refresh
+  that raises is advisory like the rest of the hook: it is reported in the turn's
+  report as `goal_sync: "failed: ..."` and costs the turn its rankings, not its
+  other context. A state seeded before these markers existed needs no migration:
+  its knowledge-pre-pass brief is recovered from the goal it is stored inside,
+  and an unmoved goal is stamped rather than re-parsed, so the first turn after
+  an upgrade spends no LLM call and no refresh (`goal_sync: unchanged_stamped`).
+  The hook persists Jnana
   JSON state and an immutable Loam report, and injects only a compact Elo
   ranking. Generation and rankings are advisory rather than empirical
   validation. The hook uses a nonblocking state lock and fails open on

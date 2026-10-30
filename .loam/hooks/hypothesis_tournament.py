@@ -9,7 +9,7 @@ produces no injected context.
 Both halves aim at the campaign's goal, not at the turn's message: generation
 and ranking read the same goal file the validators and the reasoner are given
 (`_research_goal`), and the stored copy is re-set when that file changes
-(`_sync_research_goal`).
+(`_refresh_pool`).
 """
 
 from __future__ import annotations
@@ -178,6 +178,14 @@ def _write_report(reports_dir: Path, payload: Mapping[str, Any], result: Mapping
     return path
 
 
+def _hooks_on_path() -> None:
+    """Make the sibling hook modules importable."""
+
+    hooks_dir = str(Path(__file__).resolve().parent)
+    if hooks_dir not in sys.path:
+        sys.path.insert(0, hooks_dir)
+
+
 def _campaign_goal(payload: Mapping[str, Any]) -> tuple[str, str]:
     """The campaign's objective, read from the file every other tier reads.
 
@@ -189,9 +197,7 @@ def _campaign_goal(payload: Mapping[str, Any]) -> tuple[str, str]:
     the failure this avoids.
     """
 
-    hooks_dir = str(Path(__file__).resolve().parent)
-    if hooks_dir not in sys.path:
-        sys.path.insert(0, hooks_dir)
+    _hooks_on_path()
     from hypothesis_orchestration import campaign_context
 
     campaign = campaign_context(payload)
@@ -230,6 +236,12 @@ def _reasoner_brief(payload: Mapping[str, Any]) -> str:
     return str(payload.get("loam_reasoner_brief") or "").strip()
 
 
+_BRIEF_HEADING = (
+    "Latest round synthesis from the campaign's reasoner (advisory, and "
+    "unvalidated unless independently reconciled):"
+)
+
+
 def _brief_block(brief: str, goal: str) -> str:
     """The reasoner brief under a heading that says what it is. Empty for none.
 
@@ -248,10 +260,7 @@ def _brief_block(brief: str, goal: str) -> str:
 
     if not brief or " ".join(brief.split()) in " ".join(goal.split()):
         return ""
-    return (
-        "Latest round synthesis from the campaign's reasoner (advisory, and "
-        "unvalidated unless independently reconciled):\n" + brief
-    )
+    return f"{_BRIEF_HEADING}\n{brief}"
 
 
 def _goal_with(goal: str, *blocks: str) -> str:
@@ -271,6 +280,36 @@ def _metadata(coscientist: Any) -> dict[str, Any] | None:
     return metadata if isinstance(metadata, dict) else None
 
 
+def _knowledge_prefix() -> str:
+    """The stable leader of the pre-pass's own heading, up to its graph name."""
+
+    _hooks_on_path()
+    from knowledge_brief import HEADER
+
+    return HEADER.split("{name}")[0]
+
+
+def _recover_knowledge(stored_goal: str) -> str:
+    """The pre-pass's brief carved back out of a goal stored without the marker.
+
+    States seeded before `loam_knowledge_brief` existed carry the brief only
+    inside `metadata["research_goal"]`, where `_goal_with` placed it between the
+    objective and the reasoner block. The pre-pass heads it with
+    `knowledge_brief.HEADER`, so it is recoverable rather than lost: without
+    this, the first re-goal of an existing campaign would drop the brief its
+    pool was generated against and spend a refresh on the drop.
+
+    Sliced without stripping, so the result recomposes byte-for-byte and
+    `_goal_moved` can see that such a goal has not actually moved.
+    """
+
+    start = stored_goal.find(_knowledge_prefix())
+    if start < 0:
+        return ""
+    end = stored_goal.find(f"\n\n{_BRIEF_HEADING}", start)
+    return stored_goal[start:] if end < 0 else stored_goal[start:end]
+
+
 def _stored_knowledge(coscientist: Any) -> str:
     """The knowledge pre-pass's brief as the seeding turn recorded it.
 
@@ -280,9 +319,16 @@ def _stored_knowledge(coscientist: Any) -> str:
     loop would cost minutes, while leaving it out would both narrow the text the
     pairwise judge reads and register as a goal that moved -- buying a pool
     refresh that no new knowledge asked for.
+
+    An absent marker means a state seeded before it existed, not a state with no
+    knowledge, so the brief is recovered from the stored goal rather than
+    assumed empty.
     """
 
-    return str((_metadata(coscientist) or {}).get("loam_knowledge_brief") or "")
+    metadata = _metadata(coscientist) or {}
+    if "loam_knowledge_brief" in metadata:
+        return str(metadata["loam_knowledge_brief"] or "")
+    return _recover_knowledge(str(metadata.get("research_goal") or ""))
 
 
 def _remember_knowledge(coscientist: Any, brief: str) -> None:
@@ -293,8 +339,12 @@ def _remember_knowledge(coscientist: Any, brief: str) -> None:
         metadata["loam_knowledge_brief"] = brief
 
 
-def _sync_research_goal(coscientist: Any, goal: str) -> str:
-    """Store `goal` as the research goal, re-parsing only when it has moved.
+def _digest(goal: str) -> str:
+    return hashlib.sha256(goal.encode("utf-8")).hexdigest()
+
+
+def _goal_moved(coscientist: Any, goal: str) -> str:
+    """Whether `goal` differs from the one the state was last set to.
 
     Generation is one-shot -- it is skipped once the state holds two hypotheses
     -- but the stored goal governs every later pairwise match: the judge reads
@@ -303,27 +353,126 @@ def _sync_research_goal(coscientist: Any, goal: str) -> str:
     or an edited campaign file (or a fresh reasoner brief) leaves the ranking
     judging against the old one.
 
-    `set_research_goal` costs an LLM call to parse the plan, so the digest of
-    the text as stored is recorded beside it and the call is made only when that
-    digest moves. "Moved" is also what licenses a pool refresh, so the two stay
-    in step: one new round of knowledge, one re-goal, one bounded generation.
+    `set_research_goal` costs an LLM call to parse the plan, so movement is
+    measured against a digest recorded beside the stored text. "Moved" is also
+    what licenses a pool refresh, so the two stay in step: one new round of
+    knowledge, one re-goal, one bounded generation.
+
+    Four readings, because each buys different handling:
+
+    `unverifiable` -- no metadata to record a digest in, so nothing can be
+    compared next turn either. Distinct from `moved` because without a digest
+    every turn would look like movement, and a refresh must not run on that.
+
+    `unstamped` -- a stored goal whose text matches but which carries no digest
+    at all: a state seeded before the digest existed. The text itself shows it
+    has not moved, so it is stamped rather than re-parsed, and no refresh is
+    spent. Only ever read for a state with no digest key, so it cannot absorb
+    the case below, where the text also matches.
+
+    `unchanged` / `moved` -- the digest agrees, or it does not. A refresh
+    recorded as still owed for this exact text reads as `moved`, because the
+    goal was already stored by a turn whose generation yielded nothing: the text
+    has not moved but the hypotheses it was supposed to buy are still missing.
     """
 
-    digest = hashlib.sha256(goal.encode("utf-8")).hexdigest()
     metadata = _metadata(coscientist)
     if metadata is None:
-        # Nowhere to record the digest, so nothing can be compared against it
-        # next turn. Reported distinctly from "set" because the refresh is gated
-        # on a goal that demonstrably moved: without a digest every turn would
-        # look like a move, and the fallback should be the safe reading.
-        coscientist.set_research_goal(goal)
-        return "set_unverified"
-    if metadata.get("loam_goal_sha256") == digest and metadata.get("research_goal"):
+        return "unverifiable"
+    stored = str(metadata.get("research_goal") or "")
+    digest = _digest(goal)
+    if not stored:
+        return "moved"
+    if metadata.get("loam_refresh_owed") == digest:
+        return "moved"
+    if metadata.get("loam_goal_sha256") == digest:
         return "unchanged"
-    coscientist.set_research_goal(goal)
-    metadata["loam_goal_sha256"] = digest
+    if stored == goal and "loam_goal_sha256" not in metadata:
+        return "unstamped"
+    return "moved"
+
+
+def _commit_goal(coscientist: Any, goal: str) -> None:
+    """Record the digest of the goal as stored, so the next turn can compare.
+
+    Deliberately separate from setting the goal. When a refresh is riding on the
+    move, this is deferred until the generation has actually yielded something:
+    committing first would mark the brief consumed even though it bought no
+    hypotheses, and nothing would ever retry it.
+    """
+
+    metadata = _metadata(coscientist)
+    if metadata is None:
+        return
+    metadata["loam_goal_sha256"] = _digest(goal)
+    metadata.pop("loam_refresh_owed", None)
     coscientist.memory.save()
-    return "set"
+
+
+def _owe_refresh(coscientist: Any, goal: str) -> None:
+    """Record that this goal's refresh has not been paid yet.
+
+    The goal itself is stored by now, so its text no longer distinguishes a
+    quiet turn from one whose generation came back empty. This does.
+    """
+
+    metadata = _metadata(coscientist)
+    if metadata is None:
+        return
+    metadata["loam_refresh_owed"] = _digest(goal)
+    coscientist.memory.save()
+
+
+def _refresh_pool(
+    coscientist: Any, config: Mapping[str, Any], goal: str, brief: str, existing: int
+) -> dict[str, Any]:
+    """Re-goal a seeded state when its goal has moved, and refresh the pool once.
+
+    Returns the fields to merge into the turn's generation outcome. Raises
+    whatever the two LLM calls raise; the caller treats that as advisory.
+    """
+
+    knowledge = _stored_knowledge(coscientist)
+    stored_goal = _goal_with(goal, knowledge, _brief_block(brief, goal))
+    moved = _goal_moved(coscientist, stored_goal)
+    if moved == "unchanged":
+        return {"goal_sync": "unchanged"}
+    if moved == "unstamped":
+        # The text already matches, so there is nothing to re-parse and nothing
+        # new to generate against: stamp it and let the next turn compare.
+        _remember_knowledge(coscientist, knowledge)
+        _commit_goal(coscientist, stored_goal)
+        return {"goal_sync": "unchanged_stamped"}
+
+    # Recorded alongside the goal it is part of, so a state seeded before the
+    # marker existed stops needing `_recover_knowledge` after this turn.
+    _remember_knowledge(coscientist, knowledge)
+    coscientist.set_research_goal(stored_goal)
+    outcome: dict[str, Any] = {"goal_sync": "set" if moved == "moved" else "set_unverified"}
+
+    refresh = _count(config.get("refresh_hypotheses"))
+    if not refresh or moved != "moved":
+        # Nothing rides on the move, so it is final as soon as it is stored.
+        _commit_goal(coscientist, stored_goal)
+        return outcome
+
+    coscientist.generate_hypotheses(count=refresh)
+    coscientist.wait_for_completion()
+    entered = max(0, len(coscientist.get_all_hypotheses()) - existing)
+    outcome["refresh_requested"] = refresh
+    outcome["generated_hypotheses"] = entered
+    if not entered:
+        # Every generation task failed inside its agent: Jnana logs it, stores
+        # nothing and raises nothing. Recording the debt rather than the digest
+        # is what makes the next turn try this brief again instead of filing it
+        # as spent on a pool it never reached.
+        _owe_refresh(coscientist, stored_goal)
+        outcome["status"] = "refresh_yielded_nothing"
+        return outcome
+    coscientist.memory.save()
+    _commit_goal(coscientist, stored_goal)
+    outcome["status"] = "refreshed"
+    return outcome
 
 
 def _ensure_initial_hypotheses(
@@ -375,17 +524,16 @@ def _ensure_initial_hypotheses(
             # match, so it is kept in step with the campaign's and the round's.
             # The pre-pass's brief is carried forward rather than re-researched
             # or dropped; see `_stored_knowledge`.
-            outcome["goal_sync"] = _sync_research_goal(
-                coscientist, _goal_with(goal, _stored_knowledge(coscientist), _brief_block(brief, goal))
-            )
-            refresh = _count(config.get("refresh_hypotheses"))
-            if refresh and outcome["goal_sync"] == "set":
-                coscientist.generate_hypotheses(count=refresh)
-                coscientist.wait_for_completion()
-                coscientist.memory.save()
-                outcome["status"] = "refreshed"
-                outcome["refresh_requested"] = refresh
-                outcome["generated_hypotheses"] = max(0, len(coscientist.get_all_hypotheses()) - existing)
+            #
+            # Guarded because both halves below are LLM calls -- a plan re-parse
+            # and a generation -- and they are the first ones this hook makes on
+            # a turn that is not the seeding turn. `pre-llm.py` assembles every
+            # tier under one `try`, so letting a provider hiccup out of here
+            # would discard the campaign's orchestration context along with it.
+            try:
+                outcome.update(_refresh_pool(coscientist, config, goal, brief, existing))
+            except Exception as exc:  # noqa: BLE001 - advisory: never block the turn
+                outcome["goal_sync"] = f"failed: {type(exc).__name__}: {exc}"
             return outcome
         if not goal:
             return {"status": "skipped", "reason": "missing_research_goal", "generated_hypotheses": 0}
@@ -395,7 +543,18 @@ def _ensure_initial_hypotheses(
         # Recorded, including as absent, so a later re-goal carries exactly what
         # the pre-pass produced for this pool rather than a stale brief.
         _remember_knowledge(coscientist, knowledge_block)
-        _sync_research_goal(coscientist, _goal_with(goal, knowledge_block, _brief_block(brief, goal)))
+        stored_goal = _goal_with(goal, knowledge_block, _brief_block(brief, goal))
+        # Set unconditionally, never gated on the digest. `CoScientist.research_goal`
+        # is an instance attribute that starts at None and is restored from a
+        # loaded state by nothing; `generate_hypotheses` passes it straight into
+        # each generation prompt, while its own guard reads the *persisted*
+        # `metadata["research_goal"]`. So a seed turn that reached this point
+        # with a matching digest -- a prior turn that stored the goal but left
+        # fewer than two hypotheses, which is what a failed or partial first
+        # generation leaves behind -- would generate the whole pool against the
+        # literal string "None" and pass every guard on the way.
+        coscientist.set_research_goal(stored_goal)
+        _commit_goal(coscientist, stored_goal)
         coscientist.generate_hypotheses(count=requested)
         coscientist.wait_for_completion()
         coscientist.memory.save()
