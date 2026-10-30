@@ -178,3 +178,14 @@ class ReasonerDirectiveTests(unittest.TestCase):
 
         self.assertIn(f"Call {orchestration.DISPATCH_TOOL}", directive)
         self.assertNotIn("Call delegate_task", directive)
+
+    def test_the_reasoner_directive_names_the_tool_in_its_first_line(self) -> None:
+        # Hermes previews only the first 500 chars of an oversized hook context.
+        orchestration = _load("loam_dispatch_reasoner_first_line")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = _payload(Path(temporary))
+            directive = orchestration._reasoner_directive(
+                "plan-1", [], orchestration.agent_registry(payload), payload=payload
+            )
+
+        self.assertIn(orchestration.DISPATCH_TOOL, directive.splitlines()[0])

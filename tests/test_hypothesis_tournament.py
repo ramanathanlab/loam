@@ -406,6 +406,24 @@ class HypothesisTournamentTests(unittest.TestCase):
         emitted = json.loads("".join(call.args[0] for call in stdout.write.call_args_list))
         self.assertEqual(emitted["context"], "Validated memory\n\nTournament ranking")
 
+    def test_pre_llm_hook_puts_the_orchestration_directive_first(self) -> None:
+        # Hermes spills hook context over 10,000 chars to a file and shows only the first 500;
+        # with the tournament summary first, the coordinator never saw "dispatch the reasoner"
+        # and ended the turn instead (Aurora, 2026-10-31).
+        pre_llm = _load("loam_pre_llm_directive_first", HOOKS / "pre-llm.py")
+        payload = {"event": "pre_llm_call", "session_id": "session", "loam_hypothesis_orchestration": True}
+        with patch.object(pre_llm, "ensure_run_manifest"), patch.object(
+            pre_llm, "memory_context_for", return_value="Validated memory"
+        ), patch.object(pre_llm, "tournament_context_for", return_value="Tournament ranking"), patch.object(
+            pre_llm, "orchestration_context_for", return_value="Loam orchestration directive"
+        ), patch.object(pre_llm, "is_campaign_child", return_value=False), patch.object(pre_llm, "prepare_payload"):
+            with patch("sys.stdin") as stdin, patch("sys.stdout") as stdout:
+                stdin.read.return_value = json.dumps(payload)
+                self.assertEqual(pre_llm.main(), 0)
+
+        emitted = json.loads("".join(call.args[0] for call in stdout.write.call_args_list))
+        self.assertEqual(emitted["context"], "Loam orchestration directive\n\nValidated memory\n\nTournament ranking")
+
     @unittest.skipUnless(HAVE_JNANA_LLM, "jnana checkout and openai required")
     def test_endpoint_normalization_and_no_auth_config(self) -> None:
         hook = _load("loam_hypothesis_tournament_endpoint", HOOKS / "hypothesis_tournament.py")

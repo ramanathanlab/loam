@@ -10,12 +10,16 @@ import json
 
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from cairn_config import cairn_config
-from falda_config import falda_config
+# Loaded by file path (tests, hooks) as well as from the plugin package: make its siblings importable.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cairn_config import cairn_config  # noqa: E402
+from falda_config import falda_config  # noqa: E402
 
 try:
     import yaml

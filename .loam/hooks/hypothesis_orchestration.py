@@ -2055,7 +2055,7 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
     return "\n".join(
         part
         for part in (
-            "Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding.",
+            f"Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding: call {DISPATCH_TOOL} now (no arguments).",
             # The reasoner goes out through the round's dispatch tool too (the
             # coordinator's own delegate_task is blocked), and this directive
             # carries the whole definition, so it is still big enough for

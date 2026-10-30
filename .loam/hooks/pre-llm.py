@@ -45,7 +45,8 @@ def main() -> int:
             if not is_campaign_child(payload):
                 prepare_payload(payload)
                 contexts.append(tournament_context_for(payload))
-                contexts.append(orchestration_context_for(payload))
+                # First, not last: Hermes shows only the first 500 chars of a context over 10,000.
+                contexts.insert(0, orchestration_context_for(payload))
         context = "\n\n".join(part for part in contexts if part)
         if context:
             print(json.dumps({"context": context}))
