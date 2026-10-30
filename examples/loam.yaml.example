@@ -121,3 +121,26 @@ profiles:
         <Add your tool activation recipes here, e.g. the Chai-1 fold command and
         its venv, the ProteinMPNN activation, etc. Verify each returns rc=0 on a
         smoke input before trusting a campaign result.>
+
+    # Optional Weights & Biases metrics export. Off unless enabled. When on, an
+    # in-process exporter records, into ONE W&B run per campaign: tokens used
+    # per agent (reasoner / hypothesis-validator / code-generator / coordinator)
+    # and wall time per tool call, as both per-call event rows and cumulative
+    # charts, plus end-of-run per-agent and per-tool summary tables. Every event
+    # is also written to <state_dir>/metrics-events.jsonl as a durable fallback.
+    # The API key is NOT set here. For online mode, authenticate by either
+    # exporting WANDB_API_KEY (or the variable named by api_key_env) in the
+    # environment that runs the harness, OR running `wandb login` once (its key
+    # in ~/.netrc is picked up automatically). A self-hosted base_url needs a
+    # login for that host.
+    metrics:
+      enabled: false
+      project: <WANDB_PROJECT>            # required when enabled
+      entity: <WANDB_ENTITY_OR_TEAM>      # optional; omit for your default
+      mode: online                        # online | offline | disabled
+      # run_name: my-campaign             # default: workflow_id
+      # group: alkbh1-campaigns           # optional W&B group
+      # tags: [alkbh1, pilot]
+      # api_key_env: WANDB_API_KEY        # variable NAME holding the key
+      # base_url: https://wandb.my-lab.org  # self-hosted W&B, if any
+      # table_log_every: 50               # re-upload the event table every N events

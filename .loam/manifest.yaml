@@ -96,3 +96,47 @@ middleware:
       The last row is load-bearing: with no repair available, the veto is the
       only thing standing between a coordinator's substitute batch and
       execution.
+
+# In-process observers Loam registers when a profile opts in. Declared here for
+# the same reason as the middleware and tools above: an exporter that reads
+# every API call and every tool call is part of what Loam does to a campaign,
+# and leaving it undeclared would understate the contract. These are NOT in the
+# `hooks:` map because that map is strictly the spawned-script contract (one
+# subprocess per event); these run inside the harness process, because they
+# fire on the hot path and a subprocess per call is not affordable there.
+observability:
+  wandb_metrics:
+    adapter_callbacks: [pre_tool_call, post_api_request, post_tool_call]
+    consumes_lifecycle: [subagent_start, subagent_stop]
+    behavior: observe
+    activation: |
+      Off unless the active profile carries a `metrics: {enabled: true}` block
+      (loam_config.MetricsConfig). When off, the two hot-path hooks are never
+      even registered, so an unconfigured campaign pays nothing. (pre_tool_call
+      is already registered for policy; the exporter only adds a start-time
+      stamp to it when metrics are on.)
+    records: |
+      One Weights & Biases run per campaign (keyed by LOAM_RUN_ID so a walltime
+      resume rejoins the same run). Per tool call it records a bundle linking the
+      call to the inference that triggered it (matched by api_request_id, else
+      the session's last inference): tool wall time (post_tool_call duration_ms),
+      the inference's duration (post_api_request api_duration) and token usage,
+      and the gap between the inference ending and the tool starting (the tool
+      start is stamped at pre_tool_call). Tokens are also aggregated per agent.
+      Everything lands as per-call event rows and cumulative aggregates, plus
+      end-of-run per-agent and per-tool summary tables. Agent attribution is the
+      subagent role map built at subagent_start; an unmapped session is the
+      coordinator.
+    durability: |
+      Every event is appended to `<state_dir>/metrics-events.jsonl`, so the
+      record survives when W&B is unreachable. In addition, when the
+      per-hypothesis workspace is on, each code-generator tool call's bundle is
+      written to `runs/<run_id>/metrics.jsonl` in its Pando run folder
+      (hypothesis_workspace.record_tool_metrics) -- append-only like log.jsonl,
+      but neither the hash-chained log nor the managed run.json.
+    failure: |
+      Runtime failures are swallowed (missing wandb, absent API key, unreachable
+      host): the exporter goes inert and never raises into the hook caller, so it
+      cannot slow or break a running campaign. A malformed `metrics:` block is
+      the exception and raises in loam_config, the way a bad `execution:` block
+      does. Implementation: adapters/hermes/plugin/wandb_metrics.py.
