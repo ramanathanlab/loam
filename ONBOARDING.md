@@ -175,8 +175,16 @@ contract. Key blocks:
 
 ## Step 4b — Write the campaign
 
-Loam ships no campaign content: no goal, and no rule naming a measurement. In a
-directory you own — the one `campaign.dir` points at — write:
+Loam ships no campaign content: no goal, and no rule naming a measurement.
+**Start from `examples/campaign-starter/`** — a copyable skeleton of this step
+and Step 4, with a template goal, two rules scoped to different tiers, and a
+collaborator checklist:
+
+```bash
+cp -r <loam-repo>/examples/campaign-starter ~/campaigns/my-campaign
+```
+
+In a directory you own — the one `campaign.dir` points at — you need:
 
 ```
 <campaign.dir>/campaigns/<goal>.md   # objective, success criteria,
@@ -195,6 +203,17 @@ quietly lost its objective while still looking governed is the failure this
 avoids. A campaign with no rules of its own still runs governed by the invariant
 rules the repo ships (`evidence-integrity`, `experiment-discipline`), which load
 whether or not a profile names them.
+
+Everything past the front matter in these files is injected into agent context
+verbatim — only the front matter is stripped. So keep both files short, since
+they are injected every turn, and leave no editorial notes in them: an HTML
+comment survives, and a rule's body arrives labelled as authoritative over any
+conflicting instruction.
+
+Not symmetrical with `campaign.skills`, which is only shape-checked: a
+`<PLACEHOLDER>` there raises, but a well-formed name for a skill that is not
+installed does not — that one fails inside a code-generator mid-round. Confirm
+your names with `hermes skills list`.
 
 See `.loam/rules/README.md` for the rule layers, the front matter, and what a
 protocol rule has to answer.

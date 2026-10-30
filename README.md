@@ -30,6 +30,16 @@ execution layer is already live and will abort the launch if it is not.
 
 ## Setup, in order
 
+> **Starting a new campaign, or handing one to a collaborator?** Copy
+> [`examples/campaign-starter/`](examples/campaign-starter/) — a runnable
+> skeleton of the profile, a goal, two scoped rules, and a checklist of what no
+> script can supply. It covers steps 4 and 5 below; the rest of this list is the
+> machine setup it assumes.
+>
+> ```bash
+> cp -r examples/campaign-starter ~/campaigns/my-campaign
+> ```
+
 Each step is detailed in [ONBOARDING.md](ONBOARDING.md); this is the shape.
 
 **1. Stand up the execution layer.** A Globus Compute endpoint running on the
@@ -48,13 +58,15 @@ Minerva proxy if nothing is listening on its port; the rest is yours.
 `loam-hooks` plugin and point `mcp_servers.hpc` at the server from step 1. See
 `examples/hermes-config.yaml.example`.
 
-**4. Write the Loam profile.** Copy `examples/loam.yaml.example` to
+**4. Write the Loam profile.** Copy the starter kit's `loam.yaml` (or
+`examples/loam.yaml.example`, which annotates every key more fully) to
 `~/.hermes/loam.yaml` and fill in every `<PLACEHOLDER>`. This is where the
 tournament settings, the `execution:` contract (including the `setup:` recipe
 handed verbatim to every code-generator child) and the `campaign:` block live.
 It is deliberately outside the repo: it holds your paths and endpoints.
 
-**5. Write your campaign.** In a directory you own, named by `campaign.dir`:
+**5. Write your campaign.** In a directory you own, named by `campaign.dir` —
+the starter kit is already this shape, with a template for each file:
 
 ```
 <campaign.dir>/campaigns/<goal>.md   # what the campaign is for
@@ -75,6 +87,11 @@ decides a hypothesis, or which hypotheses and tool categories are out of
 bounds. A campaign with no rules of its own still runs governed by the invariant
 ones. See [`.loam/rules/README.md`](.loam/rules/README.md) for the layers, the
 front matter, and what a rule has to answer.
+
+Everything past the front matter in these files is injected into agent context
+verbatim, and a rule arrives labelled authoritative over conflicting
+instructions. So keep them short, and leave no editorial notes in them — an HTML
+comment is not stripped, and is read as policy.
 
 **6. Launch.**
 
@@ -151,5 +168,7 @@ setup and resource ownership for direct and cluster execution.
 | `.loam/README.md` | Lifecycle-hook behavior, and global Hermes installation |
 | `skills/` | Domain procedures the campaign's code draws on |
 | `scripts/campaign_preflight.py` | The fail-closed readiness gate |
-| `examples/` | Config templates to copy outside the repo |
+| `examples/campaign-starter/` | A new campaign's skeleton: profile, goal, rules, checklist |
+| `examples/*.example` | Fully annotated config templates to copy outside the repo |
+| `scripts/install_skills.py` | Registers `skills/` in a Hermes library (run-campaign does this) |
 | `~/.hermes/loam.yaml` | Your profile (never tracked here) |
