@@ -180,6 +180,16 @@ def note_subagent_stop(session_id: str, role: str, duration_ms: int, status: str
         except (TypeError, ValueError):
             ms = 0
         _agent_wall_ms[resolved] = _agent_wall_ms.get(resolved, 0) + ms
+        # The child is finished and emits no more events, so drop its
+        # per-session state. This bounds these maps by the number of LIVE
+        # sessions rather than every session the campaign has ever spawned (a
+        # walltime-resumed run can see many). Aggregates are keyed by role, not
+        # session, so they are untouched.
+        _SESSION_ROLE.pop(session_id, None)
+        _last_skill_by_session.pop(session_id, None)
+        _last_inference_by_session.pop(session_id, None)
+        for key in [k for k in _tool_start if k[0] == session_id]:
+            _tool_start.pop(key, None)
         run = _ensure_run()
         if run is None:
             return

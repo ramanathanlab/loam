@@ -390,6 +390,32 @@ class MetricsEngineTests(unittest.TestCase):
         self.assertEqual(run_codes[0]["skill"], "folding")
         self.assertEqual(run_codes[-1]["skill"], "inverse-folding")
 
+    def test_subagent_stop_releases_per_session_state(self) -> None:
+        fake = _FakeWandb()
+        sys.modules["wandb"] = fake
+        self.wm.configure(_Cfg(), state_dir=self.state_dir, run_id="r", workflow_id="wf")
+        self.wm.note_subagent_start("gen", "code-generator")
+        self.wm.record_api_request({"session_id": "gen", "usage": {"total_tokens": 5}})
+        self.wm.note_tool_start("gen", "c1", "t1")
+        self.wm.record_tool_call(
+            {"session_id": "gen", "tool_name": "skill_view", "tool_call_id": "c2",
+             "args": {"name": "folding"}, "duration_ms": 3, "status": "ok"}
+        )
+        # present while the child runs
+        for m in (self.wm._SESSION_ROLE, self.wm._last_skill_by_session, self.wm._last_inference_by_session):
+            self.assertIn("gen", m)
+        self.assertIn(("gen", "c1"), self.wm._tool_start)  # an un-popped start stamp
+
+        self.wm.note_subagent_stop("gen", "code-generator", 1000, "completed")
+
+        # released on stop, so the maps are bounded by live sessions
+        for m in (self.wm._SESSION_ROLE, self.wm._last_skill_by_session, self.wm._last_inference_by_session):
+            self.assertNotIn("gen", m)
+        self.assertNotIn(("gen", "c1"), self.wm._tool_start)
+        # role-keyed aggregates survive the cleanup
+        self.assertEqual(self.wm._agent_wall_ms["code-generator"], 1000)
+        self.assertEqual(self.wm._tokens_by_role["code-generator"]["total"], 5)
+
 
 class WorkspaceMetricsTests(unittest.TestCase):
     """hypothesis_workspace.record_tool_metrics writes runs/<run_id>/metrics.jsonl."""
