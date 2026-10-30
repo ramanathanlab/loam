@@ -308,6 +308,33 @@ class HypothesisOrchestrationTests(unittest.TestCase):
         self.assertEqual(wrong_execution_tool["action"], "block")
         self.assertIsNone(remote_execution)
 
+    def test_empty_tasks_array_is_single_task_not_a_blocked_batch(self) -> None:
+        """A tagged goal beside tasks:[] must dispatch, not block.
+
+        Live, gpt-6.1-sol filled every optional field and emitted tasks:[] next
+        to a correctly tagged top-level goal. Hermes runs that as single mode;
+        Loam was reading the empty list as a zero-task batch and blocking every
+        dispatch, so no code-generator ever ran. Both the gate and the repair
+        must now treat an empty list as single mode.
+        """
+
+        orchestration = _load("loam_orch_empty_tasks")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            orchestration.record_start({**payload, "child_session_id": "validator-session",
+                "child_subagent_id": "validator-1",
+                "child_goal": "Validate [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1]"})
+            base = {**payload, "loam_hypothesis_orchestration": True, "session_id": "validator-session"}
+            tagged_goal = "Audit prerequisites [loam-agent-role=code-generator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1]"
+            args = {"goal": tagged_goal, "context": "", "tasks": [], "role": "leaf", "background": True}
+            # The gate must allow it (not "may delegate only tagged ...").
+            self.assertIsNone(orchestration.tool_policy({**base, "tool_name": "delegate_task", "arguments": args}))
+            # The repair must build exactly one child, not an empty batch.
+            repaired = orchestration.canonical_delegation_args({**base, "arguments": args})
+            self.assertIsNotNone(repaired)
+            self.assertEqual(len(repaired["tasks"]), 1)
+            self.assertIn("[loam-agent-role=code-generator]", repaired["tasks"][0]["goal"])
+
     def test_every_role_may_record_a_decision(self) -> None:
         """loam_record_decision is provenance, not execution: no role gate may block it.
 

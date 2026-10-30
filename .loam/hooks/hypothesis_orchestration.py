@@ -973,7 +973,13 @@ def _generated_child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_
     if not isinstance(raw, Mapping):
         return None
     tasks = raw.get("tasks")
-    items = tasks if isinstance(tasks, list) else [raw]
+    # An EMPTY tasks list is single-task mode, not an empty batch: models that
+    # fill every optional field emit `tasks: []` alongside a top-level `goal`,
+    # and Hermes's own delegate_task handler treats that as single mode
+    # (`if tasks and isinstance(tasks, list)`). Matching that here is what keeps
+    # Loam from building zero children -- and the gate below from blocking -- on
+    # a dispatch Hermes would run.
+    items = tasks if (isinstance(tasks, list) and tasks) else [raw]
     workdir = _workdir(execution if isinstance(execution, Mapping) else None, plan_id, hypothesis_id)
     # Look the hypothesis up here rather than trusting the validator to have
     # copied it into the instruction; see _hypothesis_block. Unknown id -> empty
@@ -1312,7 +1318,10 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     goals = []
     if isinstance(arguments, Mapping):
         tasks = arguments.get("tasks")
-        if isinstance(tasks, list):
+        # Empty tasks list == single-task mode (see _generated_child_tasks): fall
+        # through to the top-level goal rather than reading zero goals and
+        # blocking a dispatch Hermes would have run.
+        if isinstance(tasks, list) and tasks:
             goals.extend(
                 goal
                 for task in tasks
@@ -1348,7 +1357,8 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
         )
         cap = _max_children(execution)  # type: ignore[arg-type]
         raw_tasks = arguments.get("tasks") if isinstance(arguments, Mapping) else None
-        requested = len(raw_tasks) if isinstance(raw_tasks, list) else 1
+        # Empty tasks list is one single-task child, not zero (same rule as above).
+        requested = len(raw_tasks) if (isinstance(raw_tasks, list) and raw_tasks) else 1
         if used + requested > cap:
             return {
                 "action": "block",
