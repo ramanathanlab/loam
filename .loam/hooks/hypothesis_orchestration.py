@@ -1931,14 +1931,14 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
         part
         for part in (
             "Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding.",
-            # The reasoner is still dispatched with delegate_task (the round's
-            # dispatch tool covers the validators only), and this directive
+            # The reasoner goes out through the round's dispatch tool too (the
+            # coordinator's own delegate_task is blocked), and this directive
             # carries the whole definition, so it is still big enough for
             # Hermes to spill it to a file. Demanding a verbatim copy of text
             # the model may not be able to see is what deadlocked the
             # coordinator three times live; the middleware supplies the
             # definition either way, so say that instead.
-            f"The reasoner's role definition ({reasoner.prompt_path.name}) is below and Loam itself puts it into the dispatched task as \"agent_definition\"; the reasoner must not execute experimental code. Call delegate_task once for the reasoner -- Loam replaces your arguments with the canonical task, definition included. Do not reproduce the definition yourself, and if this directive was written to a file instead of shown inline, dispatch anyway: you do not need to read that file to comply.",
+            f"The reasoner's role definition ({reasoner.prompt_path.name}) is below and Loam itself puts it into the dispatched task as \"agent_definition\"; the reasoner must not execute experimental code. Call {DISPATCH_TOOL} once (no arguments) to dispatch the reasoner -- Loam builds the canonical task, definition included; a delegate_task you compose yourself is blocked. Do not reproduce the definition yourself, and if this directive was written to a file instead of shown inline, dispatch anyway: you do not need to read that file to comply.",
             # This synthesis sets the next tournament's whole direction, so the
             # tier it runs on is a campaign decision, not an incidental one.
             # `AgentSpec.model` was parsed from the front matter and never used

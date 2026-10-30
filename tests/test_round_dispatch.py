@@ -163,3 +163,18 @@ class CoordinatorBoundaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReasonerDirectiveTests(unittest.TestCase):
+    def test_the_reasoner_directive_points_at_the_tool_the_policy_allows(self) -> None:
+        # The coordinator's delegate_task is blocked in every shape (above), so a directive that says
+        # "call delegate_task" for the reasoner leaves it blocked with no reasoner run (Aurora, 2026-10-30).
+        orchestration = _load("loam_dispatch_reasoner_directive")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = _payload(Path(temporary))
+            directive = orchestration._reasoner_directive(
+                "plan-1", [], orchestration.agent_registry(payload), payload=payload
+            )
+
+        self.assertIn(f"Call {orchestration.DISPATCH_TOOL}", directive)
+        self.assertNotIn("Call delegate_task", directive)
