@@ -104,6 +104,15 @@ Prove the wiring without a cluster first: run the arithmetic campaign in
 hook → validator → code-generator → reasoner → next-round path and costs no
 allocation.
 
+## Optional features
+
+The workspace (a Pando-style folder per hypothesis), its provenance tracing
+(decision log, per-run traces, dispatch edges), and Weights & Biases are all off
+or external by default. See `ONBOARDING.md` Step 4c for turning each on: the
+first two with a `workspace:` block in the profile (the `loam.yaml` here has a
+commented one to uncomment), and W&B the standard way — `wandb login` plus
+`WANDB_MODE` — inside the `execution.setup:` recipe.
+
 ## Launching
 
 ```bash

@@ -235,6 +235,79 @@ your names with `hermes skills list`.
 See `.loam/rules/README.md` for the rule layers, the front matter, and what a
 protocol rule has to answer.
 
+## Step 4c — Optional features (workspace, provenance, Weights & Biases)
+
+Three capabilities are off or external by default. None has a single global
+switch; each is enabled where the thing it governs already lives.
+
+### Hypothesis workspace
+
+A Pando-style folder per hypothesis — `experiment.json`, a hash-chained
+`log.jsonl`, `src/`, `runs/rM/`, `outputs/rM/`, `data/` — written and enforced
+by `.loam/hooks/hypothesis_workspace.py`. Full layout: `.loam/README.md`,
+"Hypothesis workspace". Turn it on in the profile:
+
+```yaml
+    workspace:
+      enabled: true        # the switch; anything but true leaves it off
+      strict: true         # a pre-tool hook BLOCKS a layout violation; false only logs it
+      # trace_full: false  # provenance verbosity, below
+      # verifier_python: /ABS/PATH/.loam-venv-312/bin/python  # hashes remote outputs; needs fastmcp
+      # verifier_mcp_url: http://127.0.0.1:8000/mcp
+      # inputs_dir / remote_inputs_dir / shared_inputs / max_input_bytes — campaign inputs
+```
+
+It requires `hypothesis_orchestration.enabled: true`: without orchestration no
+validator is dispatched, so no folder is ever created. Off (the default), a run
+leaves the campaign ledger and tournament reports but no per-hypothesis record.
+`examples/loam.yaml.example` annotates every sub-key.
+
+### Provenance tracing
+
+The decision log, each run's `trace.jsonl`, and the reasoner→validator→
+code-generator dispatch edges are **part of the workspace** — they are produced
+whenever it is on, and there is no separate switch that keeps the folders while
+dropping the trace. The one knob is verbosity:
+
+```yaml
+    workspace:
+      enabled: true
+      trace_full: true   # keep every tool result verbatim in the captured trace
+```
+
+`trace_full: false` (the default) strips the bodies of skill reads from the
+trace: they are already content-hashed under each run's `skills`, so the trace
+stays a record of what was read rather than a second copy of the skill library.
+Set it true only when you need those bodies inline.
+
+Independently of the workspace, every run manifest records the campaign-policy
+digest — the SHA-256 of the goal and rule files, by name. So a result always
+says which objective and rules governed it, even with the workspace off; that
+part is always on and not configurable.
+
+### Weights & Biases
+
+W&B is not a Loam feature and has no profile key — Loam imports no `wandb` and
+exposes no switch. Tracking happens (or not) inside the code a code-generator
+runs, so you toggle it the standard W&B way, at the layer that owns the run:
+
+- Authenticate once on whatever machine will log — `wandb login`, or set
+  `WANDB_API_KEY`.
+- Turn logging on or off per run with the `WANDB_MODE` environment variable:
+  `online` logs to the server, `offline` records locally to sync later, and
+  `disabled` makes every `wandb` call a no-op. `wandb.init(mode=...)` in the
+  code does the same.
+- Code-generators run on the HPC node with the `execution.setup:` recipe handed
+  to them verbatim, so that recipe is where a campaign sets W&B: export
+  `WANDB_MODE` (and `WANDB_API_KEY` / `WANDB_PROJECT`) in the bash activation,
+  and the generated code that calls `wandb.init()` inherits it. Naming the
+  bundled `weights-and-biases` skill in `campaign.skills` points the generators
+  at its usage notes (`hermes skills list` shows the skill).
+
+With nothing exporting `WANDB_MODE` and no code calling `wandb`, there is no
+tracking — the default. `WANDB_MODE=disabled` is the explicit off switch for
+when a skill or script would otherwise open a run.
+
 ## Step 5 — Launch a campaign
 
 ```bash

@@ -81,6 +81,17 @@ profiles:
       # -- the loader requires bare names and rejects one with angle brackets.
       skills: [chai, proteinmpnn]
 
+    # Pando-style folder per hypothesis + its provenance tracing (hash-chained
+    # decision log, per-run traces, reasoner->validator->code-gen dispatch edges).
+    # OFF while this block is absent or enabled is not true; needs the
+    # hypothesis_orchestration block above. trace_full keeps full tool-result
+    # bodies (default false strips already-hashed skill reads). Full keys:
+    # examples/loam.yaml.example; the why: ONBOARDING.md Step 4c.
+    # workspace:
+    #   enabled: true
+    #   strict: true
+    #   trace_full: false
+
     execution:
       mode: remote_mcp                  # `local` for the CAMPAIGN_TEST.md run
       tool_name: mcp__hpc__run_code
@@ -94,6 +105,10 @@ profiles:
       # node and cannot see your laptop, so every activation and command must be
       # self-contained here. Smoke-test each line to rc=0 before trusting a
       # campaign result that depends on it.
+      #
+      # Weights & Biases, if a tool uses it, is toggled here (not a Loam key):
+      # export WANDB_MODE (online/offline/disabled) + WANDB_API_KEY in a tool's
+      # activation. WANDB_MODE=disabled is off; absent, nothing logs. ONBOARDING 4c.
       setup: |
         Run every tool by activating its venv in a bash command inside run_code
         (subprocess.run(["bash","-lc", CMD])), never by importing it as a Python
