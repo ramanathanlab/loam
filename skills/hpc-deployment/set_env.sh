@@ -17,4 +17,34 @@ export HPC_MCP_TRANSPORT="http"
 # spare it and a slow slot release is making restarts drag.
 # No available_accelerators: EL owns tile placement, not Parsl.
 # Keys match globus_compute_endpoint_configs/alcf_aurora/user_config_template.yaml.j2.
-export HPC_ENDPOINT_CONFIG_JSON='{"queue": "debug", "walltime": "00:30:00", "nodes_per_block": '"$HPC_NNODES"', "max_workers_per_node": '"$((HPC_POOL_SIZE + 1))"', "worker_init": "module reset; module load frameworks; source /lus/flare/projects/datascience/hari/loam/venv/bin/activate; which python; export PYTHONPATH=/lus/flare/projects/datascience/hari/loam/skills/hpc-deployment/scripts:$PYTHONPATH; export TMPDIR=/tmp"}'
+#
+# The shared venv and code the compute-node workers import from.
+HPC_VENV="/lus/flare/projects/datascience/hari/loam/venv"
+HPC_WORKER_PYTHONPATH="/lus/flare/projects/datascience/hari/loam/skills/hpc-deployment/scripts"
+
+# Copper (ALCF cooperative caching) accelerates importing the shared venv from
+# Lustre when many nodes start at once. Turn it on with `export HPC_USE_COPPER=1`
+# before sourcing this file; default off reproduces the plain launch exactly.
+# When on, a per-node Copper daemon starts and the venv + PYTHONPATH are read
+# through Copper's READ-ONLY mount at /tmp/$USER/copper/<original absolute path>;
+# TMPDIR and every write stay off it. The venv path then points INTO that mount,
+# so the mount point below must match where launch_copper_aurora.sh actually
+# mounts (its default is /tmp/$USER/copper) or the workers will not find the
+# venv. $USER is left literal so it resolves on the compute node, not here.
+export HPC_USE_COPPER="${HPC_USE_COPPER:-0}"
+if [ "$HPC_USE_COPPER" = "1" ]; then
+  _cop='/tmp/$USER/copper'
+  # Export the mount so the agent routes user-supplied run_code/run_batch
+  # venv_paths through Copper too (hpc_agent._copper_venv reads HPC_COPPER_MOUNT).
+  _copper_init="module load copper; launch_copper_aurora.sh; export HPC_COPPER_MOUNT=${_cop}; "
+  _venv="${_cop}${HPC_VENV}"
+  _pypath="${_cop}${HPC_WORKER_PYTHONPATH}"
+else
+  _copper_init=""
+  _venv="$HPC_VENV"
+  _pypath="$HPC_WORKER_PYTHONPATH"
+fi
+# worker_init must stay one line: the template renders it as one quoted YAML string.
+_worker_init="module reset; module load frameworks; ${_copper_init}source ${_venv}/bin/activate; which python; export PYTHONPATH=${_pypath}:\$PYTHONPATH; export TMPDIR=/tmp"
+export HPC_ENDPOINT_CONFIG_JSON='{"queue": "debug", "walltime": "00:30:00", "nodes_per_block": '"$HPC_NNODES"', "max_workers_per_node": '"$((HPC_POOL_SIZE + 1))"', "worker_init": "'"$_worker_init"'"}'
+unset _cop _copper_init _venv _pypath _worker_init
