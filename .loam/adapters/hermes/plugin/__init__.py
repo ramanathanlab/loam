@@ -20,8 +20,14 @@ _ADAPTER_DIR = Path(__file__).resolve().parent
 if str(_ADAPTER_DIR) not in sys.path:
     sys.path.insert(0, str(_ADAPTER_DIR))
 from loam_config import effective_profile, payload_values  # noqa: E402
+import wandb_metrics  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+# Set in `register` once the metrics config is resolved. Gates the per-call
+# token/tool observers so a profile without `metrics` pays nothing: the hooks
+# are only registered, and the subagent role map only fed, when this is True.
+_METRICS_ACTIVE = False
 
 # `.loam/adapters/hermes/plugin/__init__.py` -> repository root
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -131,6 +137,13 @@ def pre_tool_call(tool_name: str, args: dict[str, Any], **kwargs: Any) -> dict[s
     session_id = values.get("session_id")
     if isinstance(session_id, str) and session_id:
         values.setdefault("parent_session_id", session_id)
+    if _METRICS_ACTIVE and isinstance(session_id, str) and session_id:
+        # Stamp the tool's start so post_tool_call can measure the gap from the
+        # triggering inference. Observer only; never affects the policy result.
+        try:
+            wandb_metrics.note_tool_start(session_id, str(kwargs.get("tool_call_id") or ""), str(kwargs.get("turn_id") or ""))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Loam metrics note_tool_start failed: %s", exc)
     return _invoke(
         "pre-tool.py",
         _payload("pre_tool_call", tool_name=tool_name, arguments=args, **values),
@@ -189,6 +202,79 @@ DISPATCH_TOOL_SCHEMA: dict[str, Any] = {
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
+
+
+RECORD_DECISION_TOOL_NAME = "loam_record_decision"
+RECORD_DECISION_TOOL_SCHEMA: dict[str, Any] = {
+    "name": RECORD_DECISION_TOOL_NAME,
+    "description": (
+        "Record ONE high-level decision in your workspace record, as you make it and "
+        "BEFORE you act on it: the choice, why, the alternatives you rejected, the "
+        "falsifiable outcome you expect, and your confidence. This is how the campaign "
+        "keeps your reasoning -- your full transcript is not retained, and nothing else "
+        "captures WHY you chose what you did. Call it when you commit to an approach, a "
+        "tool or model, a tier size, or a go/stop; not for routine mechanical steps. "
+        "It records into your own hypothesis workspace and returns once stored."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "what": {"type": "string", "description": "The decision, in one line."},
+            "why": {"type": "string", "description": "The rationale for it."},
+            "alternatives": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Options you considered and rejected, each with a brief reason.",
+            },
+            "expected": {
+                "type": "string",
+                "description": "The falsifiable result you predict if this decision is right.",
+            },
+            "confidence": {"type": "number", "description": "Your confidence, 0 to 1."},
+        },
+        "required": ["what", "why"],
+    },
+}
+
+
+def record_decision(args: dict[str, Any], **kwargs: Any) -> str:
+    """Write one declared decision into the calling agent's Pando workspace record.
+
+    Recording happens here, in-process, rather than relying on pre_tool_call to
+    fire for a plugin-registered tool: the handler already has the caller's
+    session, and hypothesis_workspace.record_decision writes into the same
+    flock-guarded run.json / experiment.json that captures every other call.
+    """
+
+    profile = _profile()
+    if profile is None:
+        return json.dumps({"error": "Loam is not active for this profile; decision not recorded."})
+    what = str(args.get("what", "")).strip()
+    if not what:
+        return json.dumps({"error": "loam_record_decision needs a non-empty `what`."})
+    values = dict(kwargs)
+    values.update(payload_values(profile))
+    values.setdefault("session_id", values.get("parent_session_id", ""))
+    values.pop("arguments", None)
+    try:
+        if str(HOOKS_DIR) not in sys.path:
+            sys.path.insert(0, str(HOOKS_DIR))
+        from hypothesis_orchestration import workspace_decision
+
+        stored = workspace_decision(_payload("tool_request", tool_name=RECORD_DECISION_TOOL_NAME,
+                                             arguments=args, **values))
+    except Exception as exc:
+        logger.warning("Loam could not record a decision: %s", exc)
+        return json.dumps({"error": f"Loam could not record the decision: {exc}"})
+    if not stored:
+        # Not an error the agent can fix: no open workspace run for this session
+        # (e.g. the reasoner, whose record arrives in a later version). Say so
+        # plainly rather than claim a record that was not written.
+        return json.dumps({
+            "status": "not_recorded",
+            "detail": "No open workspace run is attributed to this session; the decision was not stored.",
+        })
+    return json.dumps({"status": "recorded", "what": what[:200]})
 
 
 def dispatch_round(args: dict[str, Any], **kwargs: Any) -> str:
@@ -252,6 +338,74 @@ def dispatch_round(args: dict[str, Any], **kwargs: Any) -> str:
     return context.dispatch_tool("delegate_task", canonical)
 
 
+def post_api_request(**kwargs: Any) -> None:
+    """In-process token accounting for the W&B exporter. Observer; never raises.
+
+    Fires after every LLM API call with the canonical `usage` buckets. Unlike
+    the spawned lifecycle hooks this does no subprocess work: the metrics engine
+    runs in-process because this event is on the hot path (see wandb_metrics).
+    """
+
+    if not _METRICS_ACTIVE:
+        return
+    try:
+        wandb_metrics.record_api_request(kwargs)
+    except Exception as exc:  # noqa: BLE001 - an observer must never affect a call
+        logger.debug("Loam metrics post_api_request failed: %s", exc)
+
+
+def post_tool_call(**kwargs: Any) -> None:
+    """In-process per-tool-call wall-time accounting. Observer; never raises.
+
+    Hermes supplies `duration_ms` (start of the call to its result), so the
+    exporter records that rather than timing the call itself. The returned
+    per-call record is also written into the tool call's Pando run workspace
+    (code-generator children only), next to run.json.
+    """
+
+    if not _METRICS_ACTIVE:
+        return
+    try:
+        record = wandb_metrics.record_tool_call(kwargs)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Loam metrics post_tool_call failed: %s", exc)
+        return
+    if record is not None:
+        try:
+            _store_tool_metrics_in_workspace(kwargs, record)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Loam metrics workspace store failed: %s", exc)
+
+
+def _store_tool_metrics_in_workspace(kwargs: dict[str, Any], record: dict[str, Any]) -> None:
+    """Append this tool call's metrics to its Pando run's metrics.jsonl.
+
+    Resolves the call's run the same way pre-tool.py's workspace enforcement
+    does -- its session's latest `agent_started` row -- then hands off to
+    hypothesis_workspace, which no-ops for any role without a run folder. Only
+    done when the per-hypothesis workspace is enabled.
+    """
+
+    profile = _profile()
+    if profile is None or profile.workspace is None:
+        return
+    values = dict(kwargs)
+    values.update(payload_values(profile))
+    session_id = values.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        values.setdefault("parent_session_id", session_id)
+    payload = _payload("post_tool_call", **values)
+    if str(HOOKS_DIR) not in sys.path:
+        sys.path.insert(0, str(HOOKS_DIR))
+    from hypothesis_orchestration import _session_start
+    import hypothesis_workspace
+
+    start = _session_start(payload)
+    if start is None:
+        return
+    hypothesis_workspace.record_tool_metrics(payload, start, record)
+
+
 def pre_llm_call(session_id: str = "", **kwargs: Any) -> dict[str, Any] | None:
     """Run Loam's pre-LLM hook every N turns, independently per session."""
     # Newer Hermes passes its own `parent_session_id` (a subagent's parent, empty for top-level
@@ -307,6 +461,9 @@ def subagent_start(**kwargs: Any) -> None:
     if isinstance(child_session_id, str) and child_session_id and isinstance(child_subagent_id, str):
         with _CHILD_SUBAGENT_IDS_LOCK:
             _CHILD_SUBAGENT_IDS[child_session_id] = child_subagent_id
+    if _METRICS_ACTIVE and isinstance(child_session_id, str) and child_session_id:
+        # Attribute this child's later token/tool metrics to its Loam role.
+        wandb_metrics.note_subagent_start(child_session_id, str(values.get("child_role") or ""))
     _invoke("subagent-start.py", _payload("subagent_start", **values))
 
 
@@ -327,6 +484,14 @@ def subagent_stop(**kwargs: Any) -> None:
         values.setdefault("child_subagent_id", child_subagent_id or child_session_id)
     else:
         values.setdefault("child_subagent_id", "")
+    if _METRICS_ACTIVE and isinstance(child_session_id, str) and child_session_id:
+        # The child's end-to-end wall time, recorded against its role.
+        wandb_metrics.note_subagent_stop(
+            child_session_id,
+            str(values.get("child_role") or ""),
+            values.get("duration_ms") or 0,
+            str(values.get("child_status") or ""),
+        )
     _invoke("subagent-stop.py", _payload("subagent_stop", **values))
 
 
@@ -347,8 +512,52 @@ def register(ctx: Any) -> None:
         description=DISPATCH_TOOL_SCHEMA["description"],
         emoji="🌱",
     )
+    # Same toolset as the dispatch tool, for the same reason: `delegation` is on
+    # wherever orchestration runs, so the tool is visible to every campaign agent
+    # without a config toggle.
+    ctx.register_tool(
+        name=RECORD_DECISION_TOOL_NAME,
+        toolset="delegation",
+        schema=RECORD_DECISION_TOOL_SCHEMA,
+        handler=record_decision,
+        description=RECORD_DECISION_TOOL_SCHEMA["description"],
+        emoji="📝",
+    )
     ctx.register_middleware("tool_request", canonicalize_campaign_delegation)
     ctx.register_hook("pre_tool_call", pre_tool_call)
     ctx.register_hook("pre_llm_call", pre_llm_call)
     ctx.register_hook("subagent_start", subagent_start)
     ctx.register_hook("subagent_stop", subagent_stop)
+    _register_metrics(ctx)
+
+
+def _register_metrics(ctx: Any) -> None:
+    """Turn on the in-process W&B exporter when the profile enables metrics.
+
+    Kept apart from the lifecycle wiring above because it is observability, not
+    campaign policy, and because its two hooks fire on the hot path: they are
+    registered ONLY when `metrics` is on, so an unconfigured profile never pays
+    the per-call cost of building their payloads. A malformed profile raises in
+    loam_config; here that is swallowed so a metrics typo cannot fail plugin
+    load (the loud failure still surfaces at preflight and in the other hooks).
+    """
+
+    global _METRICS_ACTIVE
+    try:
+        profile = _profile()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Loam metrics: profile load failed; exporter off (%s)", exc)
+        return
+    if profile is None or profile.metrics is None:
+        return
+    import os as _os
+
+    wandb_metrics.configure(
+        profile.metrics,
+        state_dir=profile.state_dir,
+        run_id=_os.environ.get("LOAM_RUN_ID", "") or profile.workflow_id,
+        workflow_id=profile.workflow_id,
+    )
+    _METRICS_ACTIVE = True
+    ctx.register_hook("post_api_request", post_api_request)
+    ctx.register_hook("post_tool_call", post_tool_call)

@@ -161,6 +161,62 @@ class WorkspaceConfig:
     # Refuse a seed bigger than this rather than silently copying a dataset
     # into every hypothesis. 0 keeps the hook's default.
     max_input_bytes: int = 0
+    # Keep the FULL per-agent trace (every tool result verbatim) when capturing
+    # it from state.db at stop. Default false strips the bodies of skill reads,
+    # which are already hashed under the run's `skills`, so the trace is not a
+    # second copy of the whole skill library.
+    trace_full: bool = False
+
+
+@dataclass(frozen=True)
+class MetricsConfig:
+    """Weights & Biases metrics export (adapters/hermes/plugin/wandb_metrics.py).
+
+    `metrics: {enabled: true, project: ...}` turns the in-process W&B exporter
+    on. It is observability, not campaign policy: the exporter runs inside the
+    Hermes process alongside the lifecycle hooks and records, into one W&B run
+    per campaign,
+
+      * per-agent token usage, from the `post_api_request` hook's canonical
+        `usage` buckets, and
+      * per-tool-call wall time, from the `post_tool_call` hook's `duration_ms`,
+
+    as both per-call event rows and cumulative aggregates. Agent attribution is
+    a Loam concept -- the subagent role map built at `subagent_start` -- which
+    is why the exporter lives in Loam's adapter rather than as a standalone
+    observability plugin that would only ever see opaque session IDs.
+
+    No secret lives here. `api_key_env` names the environment variable holding
+    the W&B API key, the same indirection the tournament uses for its inference
+    credential; the value itself is resolved at runtime and never persisted to
+    the profile or any hook payload.
+
+    A malformed block raises here, deliberately, the way `execution` and
+    `campaign` do: metrics is opt-in and set up by hand, so a profile that says
+    `enabled: true` but forgets `project` is a typo worth a loud failure, not a
+    silent no-op. Runtime failures are the opposite -- a missing `wandb`, an
+    absent API key, or an unreachable W&B host leaves the exporter inert and
+    never touches the running campaign (see wandb_metrics.py).
+    """
+
+    enabled: bool
+    project: str
+    entity: str = ""
+    # online streams to W&B; offline writes a local run dir for a later
+    # `wandb sync`; disabled parses clean but keeps the exporter inert.
+    mode: str = "online"
+    run_name: str = ""
+    group: str = ""
+    tags: tuple[str, ...] = ()
+    api_key_env: str = "WANDB_API_KEY"
+    # Self-hosted W&B host, if any; empty means the SDK default (wandb.ai).
+    base_url: str = ""
+    # Re-upload the per-call event table every N events (it is rewritten whole
+    # each time, so this throttles the cost); it is always logged at exit.
+    table_log_every: int = 50
+
+
+_METRICS_MODES = {"online", "offline", "disabled"}
 
 
 @dataclass(frozen=True)
@@ -178,6 +234,7 @@ class LoamProfile:
     falda: dict[str, Any] | None = None
     falda_status: str = "disabled"
     workspace: WorkspaceConfig | None = None
+    metrics: MetricsConfig | None = None
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any] | None:
@@ -332,6 +389,43 @@ def _workspace_config(value: Any) -> WorkspaceConfig | None:
         remote_inputs_dir=_clean_text(raw.get("remote_inputs_dir")),
         shared_inputs=_shared_inputs(raw.get("shared_inputs")),
         max_input_bytes=_positive_int(raw.get("max_input_bytes"), 0),
+        trace_full=raw.get("trace_full") is True,
+    )
+
+
+def _metrics_config(value: Any) -> MetricsConfig | None:
+    """`metrics: {enabled: true, project: ...}` turns the W&B exporter on.
+
+    Returns None when the block is absent or `enabled` is not exactly true --
+    the inert default. When it IS enabled, a missing project or an unknown mode
+    raises rather than silently disabling export, because an operator who set
+    `enabled: true` meant to see metrics and a quiet no-op would hide the typo.
+    """
+
+    raw = _as_mapping(value)
+    if raw is None or raw.get("enabled") is not True:
+        return None
+    project = _clean_text(raw.get("project"))
+    if not project:
+        raise ValueError("metrics.project is required when metrics.enabled is true")
+    mode = _clean_text(raw.get("mode")) or "online"
+    if mode not in _METRICS_MODES:
+        raise ValueError(f"metrics.mode must be one of {sorted(_METRICS_MODES)}: {mode!r}")
+    raw_tags = raw.get("tags", [])
+    if not isinstance(raw_tags, list):
+        raise ValueError(f"metrics.tags must be a list of strings: {raw_tags!r}")
+    tags = tuple(dict.fromkeys(_clean_text(tag) for tag in raw_tags if _clean_text(tag)))
+    return MetricsConfig(
+        enabled=True,
+        project=project,
+        entity=_clean_text(raw.get("entity")),
+        mode=mode,
+        run_name=_clean_text(raw.get("run_name")),
+        group=_clean_text(raw.get("group")),
+        tags=tags,
+        api_key_env=_clean_text(raw.get("api_key_env")) or "WANDB_API_KEY",
+        base_url=_clean_text(raw.get("base_url")),
+        table_log_every=_positive_int(raw.get("table_log_every"), 50),
     )
 
 
@@ -522,6 +616,7 @@ def load_profile() -> LoamProfile | None:
         falda=falda,
         falda_status=falda_status,
         workspace=_workspace_config(raw.get("workspace")),
+        metrics=_metrics_config(raw.get("metrics")),
     )
 
 
@@ -597,6 +692,8 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "root": str(Path(workspace.root).expanduser() if workspace.root else profile.state_dir / "hypotheses"),
             "strict": workspace.strict,
         }
+        if workspace.trace_full:
+            values["loam_workspace"]["trace_full"] = True
         for key in ("verifier_python", "verifier_mcp_url", "remote_inputs_dir", "max_input_bytes"):
             if getattr(workspace, key):
                 values["loam_workspace"][key] = getattr(workspace, key)
@@ -638,4 +735,22 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
     if profile.falda is not None:
         # As with Cairn, hooks receive the env-var name for the key, never the key itself.
         values["loam_falda"] = dict(profile.falda)
+    metrics = profile.metrics
+    if metrics is not None:
+        # Non-secret run addressing only: api_key_env is a variable NAME, never
+        # the key. The exporter is in-process and reads the profile directly,
+        # but it is surfaced here for the same reason the other optional blocks
+        # are -- so a reader of a hook payload can see metrics export is on.
+        values["loam_metrics"] = {
+            "enabled": True,
+            "project": metrics.project,
+            "entity": metrics.entity,
+            "mode": metrics.mode,
+            "run_name": metrics.run_name,
+            "group": metrics.group,
+            "tags": list(metrics.tags),
+            "api_key_env": metrics.api_key_env,
+            "base_url": metrics.base_url,
+            "table_log_every": metrics.table_log_every,
+        }
     return values

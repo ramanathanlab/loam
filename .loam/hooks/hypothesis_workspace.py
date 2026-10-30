@@ -8,6 +8,7 @@ out an experiment:
     log.jsonl         append-only history, each line chained to the previous one
     src/              code the code-generators ran, captured from their tool calls
     runs/rM/run.json  one record per code-generator child
+    runs/rM/metrics.jsonl  per-tool-call metrics for that run (tokens, timings)
     outputs/rM/       that run's result files; frozen once the run ends
     scratch/rM/       that run's temporary files; never hashed
     data/             inputs supplied up front; read-only to agents
@@ -38,10 +39,18 @@ EXPERIMENT_FILE = "experiment.json"
 LOG_FILE = "log.jsonl"
 LOCK_FILE = ".workspace.lock"
 RUN_FILE = "run.json"
-LAYOUT_DIRS = ("src", "runs", "outputs", "scratch", "data")
+METRICS_FILE = "metrics.jsonl"
+# "validator" holds the hypothesis-validator's own provenance (its trace), the
+# way runs/rM/ holds a code-generator's. Hook-written, so a code-generator still
+# cannot write there (_layout_problem has no branch for it); it is listed so the
+# stop-time audit does not count it a stray.
+LAYOUT_DIRS = ("src", "runs", "outputs", "scratch", "data", "validator")
 # Hook-owned top-level files. With LAYOUT_DIRS this is the whole legal top level.
 RECORD_FILES = (EXPERIMENT_FILE, LOG_FILE, LOCK_FILE)
-LOG_KINDS = ("plan", "result", "note", "report", "violation")
+# "decision" is a declared high-level choice (loam_record_decision); "trace" is a
+# captured per-agent conversation pointer. Both are reasoning provenance, chained
+# into log.jsonl like everything else so they are tamper-evident.
+LOG_KINDS = ("plan", "result", "note", "report", "violation", "decision", "trace")
 # A run's outputs may be read by other runs only with one of these: hashed by the
 # hook (local), reported by the child (remote), or hashed later by the verifier.
 VERIFIED_MANIFESTS = ("recorded", "recorded_by_loam")
@@ -94,6 +103,21 @@ def workspace_root(payload: Mapping[str, Any], plan_id: str, hypothesis_id: str)
         raise ValueError("loam_workspace is not enabled")
     base = Path(_text(config.get("root"))).expanduser()
     return base / safe_segment(plan_id) / safe_segment(hypothesis_id)
+
+
+# The reasoner is plan-level, not per-hypothesis, so its record sits beside the
+# hypothesis folders under <plan_id>/ rather than inside one of them. Hypothesis
+# ids are UUIDs, so this name never collides with one.
+REASONER_DIR = "reasoner"
+REASONER_FILE = "reasoner.json"
+
+
+def reasoner_root(payload: Mapping[str, Any], plan_id: str) -> Path:
+    config = settings(payload)
+    if config is None:
+        raise ValueError("loam_workspace is not enabled")
+    base = Path(_text(config.get("root"))).expanduser()
+    return base / safe_segment(plan_id) / REASONER_DIR
 
 
 @contextlib.contextmanager
@@ -440,6 +464,65 @@ def seed_configured_inputs(payload: Mapping[str, Any], root: Path, fresh: bool) 
         record_inputs(root, entries, source, "copied_by_hook")
 
 
+def ensure_reasoner(payload: Mapping[str, Any], plan_id: str, session_id: str) -> Path:
+    """Create the plan's reasoner record and its chained log; idempotent.
+
+    ``synthesized_from`` links the record to the hypotheses this plan actually
+    produced -- every sibling folder under <plan_id>/ that has an experiment.json
+    -- so the reasoner's synthesis is tied to the evidence it reasoned over.
+    """
+
+    root = reasoner_root(payload, plan_id)
+    plan_dir = root.parent
+    synthesized_from = sorted(
+        entry.name for entry in (plan_dir.iterdir() if plan_dir.is_dir() else [])
+        if entry.name != REASONER_DIR and (entry / EXPERIMENT_FILE).is_file()
+    )
+    with _locked(root):
+        record = root / REASONER_FILE
+        if not record.is_file():
+            _write_json(
+                record,
+                {
+                    "schema": "loam_reasoner_v1",
+                    "plan_id": plan_id,
+                    "role": "reasoner",
+                    "workflow_id": _text(payload.get("workflow_id")),
+                    "loam_run_id": _text(payload.get("loam_run_id")),
+                    "session_id": session_id,
+                    "state": "open",
+                    "created_at": _timestamp(),
+                    "closed_at": None,
+                    "synthesized_from": synthesized_from,
+                    "decisions": [],
+                },
+            )
+            _append_log_unlocked(
+                root, "note",
+                {"what": f"reasoner dispatched; synthesizing {len(synthesized_from)} hypotheses",
+                 "synthesized_from": synthesized_from,
+                 "actor": {"role": "reasoner", "session_id": session_id}},
+            )
+    return root
+
+
+def close_reasoner(root: Path, summary: str) -> None:
+    """Close the reasoner record at its stop and log its synthesis report. Idempotent."""
+
+    with _locked(root):
+        path = root / REASONER_FILE
+        record = read_json(path)
+        if record.get("state") != "open":
+            return
+        record.update(state="closed", closed_at=_timestamp())
+        _write_json(path, record)
+        _append_log_unlocked(
+            root, "report",
+            {"what": "reasoner finished", "results": summary[:MAX_RESULT_CHARS],
+             "actor": {"role": "reasoner", "session_id": _text(record.get("session_id"))}},
+        )
+
+
 def _next_run_id(root: Path) -> str:
     numbers = [
         int(match.group(1))
@@ -645,10 +728,17 @@ def on_agent_started(
     ``workspace_error`` and the failure is reported on stderr.
     """
 
-    if settings(payload) is None or role not in {"hypothesis-validator", "code-generator"} or not hypothesis_id:
+    if settings(payload) is None:
+        return {}
+    # A code-generator needs its hypothesis; a reasoner is plan-level and has none.
+    if role not in {"hypothesis-validator", "code-generator", "reasoner"}:
+        return {}
+    if role in {"hypothesis-validator", "code-generator"} and not hypothesis_id:
         return {}
     session_id = _text(payload.get("child_session_id"))
     try:
+        if role == "reasoner":
+            return {"workspace": str(ensure_reasoner(payload, plan_id, session_id))}
         if role == "hypothesis-validator":
             root = ensure_workspace(payload, plan_id, hypothesis_id, statement, session_id)
             _launch_seed(payload, plan_id, hypothesis_id, root)
@@ -1312,6 +1402,198 @@ def capture_code(payload: Mapping[str, Any], start: Mapping[str, Any] | None) ->
         _write_json(path, run)
 
 
+# --- declared decisions (loam_record_decision) --------------------------------------
+
+# Per-field cap on a recorded decision. A decision is a high-level choice, not a
+# transcript; a model that pastes an essay here is told, in effect, to summarize.
+MAX_DECISION_CHARS = 2000
+DECISION_TOOL = "loam_record_decision"
+
+
+def _decision_entry(args: Mapping[str, Any], session_id: str, role: str) -> dict[str, Any] | None:
+    """One inline decision record, or None when there is no `what` to record."""
+
+    what = _text(args.get("what"))
+    if not what:
+        return None
+    raw_alts = args.get("alternatives")
+    alternatives = (
+        [a[:MAX_DECISION_CHARS] for item in raw_alts if (a := _text(item))]
+        if isinstance(raw_alts, (list, tuple))
+        else []
+    )
+    try:
+        confidence: float | None = float(args["confidence"]) if args.get("confidence") is not None else None
+    except (TypeError, ValueError):
+        confidence = None
+    entry: dict[str, Any] = {
+        "ts": _timestamp(),
+        "what": what[:MAX_DECISION_CHARS],
+        "actor": {"role": role, "session_id": session_id},
+    }
+    if _text(args.get("why")):
+        entry["why"] = _text(args.get("why"))[:MAX_DECISION_CHARS]
+    if alternatives:
+        entry["alternatives"] = alternatives
+    if _text(args.get("expected")):
+        entry["expected"] = _text(args.get("expected"))[:MAX_DECISION_CHARS]
+    if confidence is not None:
+        entry["confidence"] = confidence
+    return entry
+
+
+def record_decision(payload: Mapping[str, Any], start: Mapping[str, Any] | None) -> bool:
+    """Append one declared decision inline to the caller's Pando record. Returns whether it stuck.
+
+    Linked into the structure, not kept beside it: a code-generator's decisions
+    live in its ``runs/rM/run.json`` ``decisions`` list, a validator's in its
+    ``experiment.json`` ``decisions`` list, each also chained into ``log.jsonl``.
+    The decision is the only record of WHY a tier was chosen -- the model emits
+    no reasoning text and this deployment's provider returns no reasoning tokens
+    (see the trace capture) -- so it is captured from a tool the agent calls,
+    never scraped. Best effort and never raising into the tool handler: a
+    provenance write must not fail the agent's turn.
+
+    The reasoner has no hypothesis folder yet, so its decisions are handled with
+    the plan-level record added in a later group; until then a reasoner decision
+    returns False rather than being misfiled into a hypothesis.
+    """
+
+    if settings(payload) is None or not isinstance(start, Mapping):
+        return False
+    role = _text(start.get("role"))
+    session_id = _text(start.get("child_session_id")) or _text(payload.get("session_id"))
+    entry = _decision_entry(_arguments(payload), session_id, role)
+    if entry is None:
+        return False
+    root_text = _text(start.get("workspace"))
+    if not root_text:
+        return False
+    root = Path(root_text)
+    log_fields = {key: value for key, value in entry.items() if key != "ts"}
+    if role == "code-generator":
+        run_id = _text(start.get("run"))
+        if not _RUN_ID.fullmatch(run_id or ""):
+            return False
+        with _locked(root):
+            path = root / "runs" / run_id / RUN_FILE
+            run = read_json(path)
+            if run.get("state") != "started":
+                return False  # a frozen run takes no more decisions
+            run["decisions"] = [*run.get("decisions", []), entry]
+            _write_json(path, run)
+            _append_log_unlocked(root, "decision", {"run": run_id, **log_fields})
+        return True
+    if role == "hypothesis-validator":
+        with _locked(root):
+            path = root / EXPERIMENT_FILE
+            experiment = read_json(path)
+            if experiment.get("state") != "open":
+                return False
+            experiment["decisions"] = [*experiment.get("decisions", []), entry]
+            _write_json(path, experiment)
+            _append_log_unlocked(root, "decision", log_fields)
+        return True
+    if role == "reasoner":
+        with _locked(root):
+            path = root / REASONER_FILE
+            record = read_json(path)
+            if record.get("state") != "open":
+                return False
+            record["decisions"] = [*record.get("decisions", []), entry]
+            _write_json(path, record)
+            _append_log_unlocked(root, "decision", log_fields)
+        return True
+    return False
+
+
+def record_dispatch(
+    root: Path, run_id: str, validator_session: str, requested_sha256: str, instruction_sha256: str
+) -> None:
+    """Link a reserved run to the validator that dispatched it, at dispatch time.
+
+    The validator↔code-generator handoff, made explicit and checkable. Written
+    before the child starts, onto two ends of one edge:
+
+    * the reserved ``run.json`` gets ``dispatched_by`` (validator session, and
+      the two hashes), and
+    * the validator's ``experiment.json`` gets a ``children`` entry for the run.
+
+    ``instruction_sha256`` is the hash of the canonical goal+context the child
+    actually receives; ``requested_sha256`` is the validator's own ask before
+    Loam augmented it with the layout, campaign and hypothesis blocks. They
+    differ whenever Loam rewrote the task -- which is the norm, not the
+    exception -- so the pair is what lets the validator's trace (the ask) and
+    the child's trace (what ran) be reconciled rather than silently diverge.
+    Idempotent: the dispatch middleware may run more than once for one round.
+    """
+
+    rewritten = requested_sha256 != instruction_sha256
+    edge = {
+        "validator_session": validator_session,
+        "requested_sha256": requested_sha256,
+        "instruction_sha256": instruction_sha256,
+        "rewritten": rewritten,
+    }
+    with _locked(root):
+        run_path = root / "runs" / run_id / RUN_FILE
+        run = read_json(run_path)
+        if run:
+            run["dispatched_by"] = {**edge, "at": _timestamp()}
+            _write_json(run_path, run)
+        experiment_path = root / EXPERIMENT_FILE
+        experiment = read_json(experiment_path)
+        if experiment:
+            already = any(isinstance(c, Mapping) and c.get("run") == run_id for c in experiment.get("children", []))
+            others = [c for c in experiment.get("children", []) if isinstance(c, Mapping) and c.get("run") != run_id]
+            child = {"run": run_id, "instruction_sha256": instruction_sha256, "rewritten": rewritten}
+            experiment["children"] = sorted([*others, child], key=lambda c: c.get("run", ""))
+            _write_json(experiment_path, experiment)
+            if not already:
+                _append_log_unlocked(
+                    root,
+                    "note",
+                    {"run": run_id,
+                     "what": f"dispatched by validator {validator_session[:12] or '(unknown)'}"
+                             + (" (instruction rewritten by Loam)" if rewritten else " (instruction verbatim)")},
+                )
+
+
+def record_tool_metrics(
+    payload: Mapping[str, Any], start: Mapping[str, Any] | None, metrics: Mapping[str, Any]
+) -> Path | None:
+    """Append one tool call's metrics to ``runs/<run_id>/metrics.jsonl``.
+
+    Sibling to run.json and modelled on log.jsonl: append-only, one JSON object
+    per line, one line per tool call. Deliberately NOT the hash-chained log and
+    NOT run.json, so recording a metric can never alter the provenance record or
+    the managed run index. Only a code-generator child has a run folder, so this
+    is a no-op for any other role (the exporter still logs those calls to W&B and
+    the flat state-dir log). Best effort; the caller isolates failures.
+
+    The timings and token counts come from the in-process W&B exporter, which is
+    where Hermes surfaces them; this function only places them in the workspace.
+    """
+
+    if settings(payload) is None or not isinstance(start, Mapping):
+        return None
+    if _text(start.get("role")) != "code-generator":
+        return None
+    root, run_id = Path(_text(start.get("workspace"))), _text(start.get("run"))
+    if not _text(start.get("workspace")) or not _RUN_ID.fullmatch(run_id):
+        return None
+    record = {**dict(metrics), "run": run_id}
+    record.setdefault("observed_at", _timestamp())
+    with _locked(root):
+        run_dir = root / "runs" / run_id
+        if not run_dir.is_dir():
+            return None
+        path = run_dir / METRICS_FILE
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return path
+
+
 def _call_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
     """The run.json ``calls`` entry for a tool call, or None for calls not worth recording.
 
@@ -1678,6 +1960,210 @@ def _audit_unlocked(root: Path, experiment: Mapping[str, Any], remote: bool) -> 
     return problems
 
 
+# --- per-agent trace capture (state.db -> trace.jsonl) ------------------------------
+
+TRACE_FILE = "trace.jsonl"
+# Columns the trace keeps from Hermes's messages table, in a stable order. The
+# reasoning_* columns are read even though this deployment's provider leaves them
+# empty: a provider that returns reasoning fills them with no change here.
+_TRACE_COLUMNS = (
+    "role", "content", "tool_name", "tool_calls", "tool_call_id",
+    "reasoning", "reasoning_content", "finish_reason", "token_count", "timestamp",
+)
+
+
+def trace_db_path(payload: Mapping[str, Any]) -> Path | None:
+    """Hermes's state.db for this campaign, or None when it cannot be located.
+
+    HERMES_HOME is set per campaign by run-campaign and inherited by the hook
+    subprocess; state.db lives at its root (hermes_state.DEFAULT_DB_PATH). A
+    payload override wins, for tests and for a non-standard home.
+    """
+
+    override = _text((settings(payload) or {}).get("trace_db"))
+    home = override or _text(payload.get("hermes_home")) or _text(os.environ.get("HERMES_HOME"))
+    if not home:
+        return None
+    candidate = Path(home).expanduser()
+    db = candidate if candidate.name == "state.db" else candidate / "state.db"
+    return db if db.is_file() else None
+
+
+def read_trace(db_path: Path, session_id: str, full: bool) -> list[dict[str, Any]]:
+    """One session's turns from state.db, oldest first, normalized. Best effort -> [] on any error.
+
+    A skill read's body is replaced with a short marker unless ``full``: it is
+    already hashed under the run's ``skills`` (run.json), so the default trace is
+    the reasoning/tool spine, not a second copy of the skill library.
+    """
+
+    import sqlite3
+
+    if not session_id:
+        return []
+    try:
+        # Read-only: the live campaign may still hold the write lock (WAL).
+        connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
+    except sqlite3.Error:
+        return []
+    rows: list[dict[str, Any]] = []
+    try:
+        connection.row_factory = sqlite3.Row
+        cursor = connection.execute(
+            f"SELECT {', '.join(_TRACE_COLUMNS)} FROM messages "
+            "WHERE session_id = ? ORDER BY timestamp, id",
+            (session_id,),
+        )
+        for index, record in enumerate(cursor, start=1):
+            rows.append(_trace_row(index, record, full))
+    except sqlite3.Error:
+        return []
+    finally:
+        connection.close()
+    return rows
+
+
+def _trace_row(seq: int, record: Mapping[str, Any], full: bool) -> dict[str, Any]:
+    role = _text(record["role"])
+    tool = _text(record["tool_name"])
+    entry: dict[str, Any] = {"seq": seq, "role": role}
+    timestamp = record["timestamp"]
+    if isinstance(timestamp, (int, float)):
+        entry["ts"] = datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
+    content = _text(record["content"])
+    if content:
+        if not full and role == "tool" and tool in SKILL_READ_TOOLS:
+            # The body is already pinned by its sha256 under run.json `skills`.
+            entry["content"] = f"<{tool} body omitted; {len(content)} chars, hashed under skills>"
+        else:
+            entry["content"] = content
+    for key in ("tool_name", "tool_call_id", "tool_calls", "reasoning", "reasoning_content", "finish_reason"):
+        value = _text(record[key])
+        if value:
+            entry[key] = value
+    return entry
+
+
+def write_trace(dest_dir: Path, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Write trace.jsonl into ``dest_dir`` and return its {path, sha256, bytes, rows} pointer.
+
+    ``path`` is relative to the workspace root (dest_dir's parent chain), so the
+    pointer reads like a manifest entry. None when there is nothing to write.
+    """
+
+    if not rows:
+        return None
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    target = dest_dir / TRACE_FILE
+    body = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows)
+    data = body.encode("utf-8")
+    tmp = target.with_name(f".{target.name}.tmp")
+    with tmp.open("wb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, target)
+    return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data), "rows": len(rows)}
+
+
+def capture_trace(payload: Mapping[str, Any], start: Mapping[str, Any]) -> bool:
+    """Copy a stopped agent's conversation out of state.db into its workspace dir.
+
+    Linked into the record like everything else: the trace file is referenced by
+    a {path, sha256, bytes, rows} pointer on the hub (run.json for a
+    code-generator, experiment.json for a validator) and announced in the chain.
+    The reasoner is plan-level and handled with its own record in a later group.
+    Best effort: a provenance copy must never raise into the stop path.
+    """
+
+    db_path = trace_db_path(payload)
+    session_id = _text(start.get("child_session_id"))
+    if db_path is None or not session_id:
+        return False
+    root = Path(_text(start.get("workspace")))
+    role = _text(start.get("role"))
+    full = (settings(payload) or {}).get("trace_full") is True
+    spec = _trace_destination(root, role, _text(start.get("run")))
+    if spec is None:
+        return False
+    dest, where, log_extra = spec
+    return _persist_trace(root, dest, where, log_extra, session_id, db_path, full)
+
+
+def _trace_destination(root: Path, role: str, run_id: str) -> tuple[Path, Path, dict[str, Any]] | None:
+    """(trace dir, hub file, log fields) for a role, or None when it has no record."""
+
+    if role == "code-generator":
+        if not _RUN_ID.fullmatch(run_id or ""):
+            return None
+        return root / "runs" / run_id, root / "runs" / run_id / RUN_FILE, {"run": run_id}
+    if role == "hypothesis-validator":
+        return root / "validator", root / EXPERIMENT_FILE, {}
+    if role == "reasoner":
+        # root IS the reasoner dir; its trace sits in it, pointer on reasoner.json.
+        return root, root / REASONER_FILE, {}
+    return None
+
+
+def _persist_trace(
+    root: Path, dest: Path, where: Path, log_extra: dict[str, Any],
+    session_id: str, db_path: Path, full: bool,
+) -> bool:
+    """Read a session's trace, write trace.jsonl, and link its pointer into the hub record."""
+
+    pointer = write_trace(dest, read_trace(db_path, session_id, full))
+    if pointer is None:
+        return False
+    pointer["path"] = (dest / TRACE_FILE).relative_to(root).as_posix()
+    with _locked(root):
+        record = read_json(where)
+        if not record:
+            return False
+        record["trace"] = pointer
+        _write_json(where, record)
+        _append_log_unlocked(root, "trace", {**log_extra, "trace": pointer})
+    return True
+
+
+def backfill_traces(root: Path, db_path: Path, full: bool) -> list[str]:
+    """Fill any MISSING trace in one hypothesis workspace, for the validator and each run.
+
+    The stop-time capture (capture_trace) covers an agent that stopped cleanly;
+    an agent whose subagent_stop never fired -- a crash, an Argo drop -- leaves
+    its trace uncaptured though its turns are still in state.db. This re-reads
+    them from the session ids the records already hold. Returns what it filled.
+    """
+
+    filled: list[str] = []
+    experiment = read_json(root / EXPERIMENT_FILE)
+    if experiment and not experiment.get("trace"):
+        session_id = _text(experiment.get("validator_session_id"))
+        if session_id and _persist_trace(root, root / "validator", root / EXPERIMENT_FILE, {}, session_id, db_path, full):
+            filled.append("validator")
+    runs_dir = root / "runs"
+    for run_path in sorted(runs_dir.iterdir()) if runs_dir.is_dir() else []:
+        run_id = run_path.name
+        if not _RUN_ID.fullmatch(run_id):
+            continue
+        run = read_json(run_path / RUN_FILE)
+        if not run or run.get("trace"):
+            continue
+        session_id = _text(run.get("child_session_id"))
+        if session_id and _persist_trace(root, run_path, run_path / RUN_FILE, {"run": run_id}, session_id, db_path, full):
+            filled.append(run_id)
+    return filled
+
+
+def backfill_reasoner_trace(reasoner_dir: Path, db_path: Path, full: bool) -> bool:
+    """Fill a missing reasoner trace from the session id its record holds."""
+
+    record = read_json(reasoner_dir / REASONER_FILE)
+    if not record or record.get("trace"):
+        return False
+    session_id = _text(record.get("session_id"))
+    return bool(session_id and _persist_trace(reasoner_dir, reasoner_dir, reasoner_dir / REASONER_FILE, {}, session_id, db_path, full))
+
+
 def on_agent_stopped(
     payload: Mapping[str, Any], start: Mapping[str, Any], completion: Mapping[str, Any] | None
 ) -> list[str]:
@@ -1699,6 +2185,8 @@ def on_agent_stopped(
         run = finalize_run(
             root, run_id, _text(payload.get("child_status")) or "error", _text(payload.get("child_summary")), remote
         )
+        # After finalize_run, so the trace pointer lands on the frozen run record.
+        _capture_trace_safe(payload, start)
         if remote and run is not None and run.get("state") == "completed" and run.get("manifest_status") not in VERIFIED_MANIFESTS:
             _launch_verifier(payload, start, root, ["fill", "--run", run_id])
         if remote and run is not None and run.get("batches"):
@@ -1706,10 +2194,24 @@ def on_agent_stopped(
         return []
     if role == "hypothesis-validator" and completion is not None:
         problems = close_workspace(root, completion, remote)
+        _capture_trace_safe(payload, start)
         if remote:
             _launch_verifier(payload, start, root, ["recheck"])
         return problems
+    if role == "reasoner":
+        close_reasoner(root, _text(payload.get("child_summary")))
+        _capture_trace_safe(payload, start)
+        return []
     return []
+
+
+def _capture_trace_safe(payload: Mapping[str, Any], start: Mapping[str, Any]) -> None:
+    """capture_trace, isolated: a trace copy must never fail the stop path."""
+
+    try:
+        capture_trace(payload, start)
+    except Exception as exc:
+        print(f"loam workspace: trace capture failed: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
 VERIFIER = Path(__file__).resolve().parents[1] / "reconcile" / "verify_workspace.py"

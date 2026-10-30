@@ -308,6 +308,92 @@ class HypothesisOrchestrationTests(unittest.TestCase):
         self.assertEqual(wrong_execution_tool["action"], "block")
         self.assertIsNone(remote_execution)
 
+    def test_empty_tasks_array_is_single_task_not_a_blocked_batch(self) -> None:
+        """A tagged goal beside tasks:[] must dispatch, not block.
+
+        Live, gpt-6.1-sol filled every optional field and emitted tasks:[] next
+        to a correctly tagged top-level goal. Hermes runs that as single mode;
+        Loam was reading the empty list as a zero-task batch and blocking every
+        dispatch, so no code-generator ever ran. Both the gate and the repair
+        must now treat an empty list as single mode.
+        """
+
+        orchestration = _load("loam_orch_empty_tasks")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            orchestration.record_start({**payload, "child_session_id": "validator-session",
+                "child_subagent_id": "validator-1",
+                "child_goal": "Validate [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1]"})
+            base = {**payload, "loam_hypothesis_orchestration": True, "session_id": "validator-session"}
+            tagged_goal = "Audit prerequisites [loam-agent-role=code-generator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1]"
+            args = {"goal": tagged_goal, "context": "", "tasks": [], "role": "leaf", "background": True}
+            # The gate must allow it (not "may delegate only tagged ...").
+            self.assertIsNone(orchestration.tool_policy({**base, "tool_name": "delegate_task", "arguments": args}))
+            # The repair must build exactly one child, not an empty batch.
+            repaired = orchestration.canonical_delegation_args({**base, "arguments": args})
+            self.assertIsNotNone(repaired)
+            self.assertEqual(len(repaired["tasks"]), 1)
+            self.assertIn("[loam-agent-role=code-generator]", repaired["tasks"][0]["goal"])
+
+    def test_every_role_may_record_a_decision(self) -> None:
+        """loam_record_decision is provenance, not execution: no role gate may block it.
+
+        A live campaign showed tool_policy refusing every validator's
+        loam_record_decision call, so no decision was ever recorded though the
+        validators were calling it with real content. This goes through
+        tool_policy, the boundary the workspace unit tests never cross.
+        """
+
+        orchestration = _load("loam_orchestration_decision_tool")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            roles = {
+                "validator-session": "Validate [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1]",
+                "codegen-session": "Execute [loam-agent-role=code-generator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1]",
+                "reasoner-session": "Synthesize [loam-agent-role=reasoner] [loam-plan-id=plan-1]",
+            }
+            for session, goal in roles.items():
+                orchestration.record_start({**payload, "child_session_id": session,
+                                            "child_subagent_id": session, "child_goal": goal})
+            base = {**payload, "loam_hypothesis_orchestration": True}
+            for session in roles:
+                verdict = orchestration.tool_policy({
+                    **base, "session_id": session, "tool_name": "loam_record_decision",
+                    "arguments": {"what": "x", "why": "y"},
+                })
+                self.assertIsNone(verdict, f"{session} was blocked from recording a decision")
+
+    def test_runbatch_nudge_fires_only_on_serial_run_code_without_a_batch(self) -> None:
+        """L2 warn-only: a code-generator looping run_code with no run_batch gets
+        an advisory nudge; it stays silent under the threshold, once a batch
+        exists, and for other roles."""
+        module = _load("ho_nudge")
+        import hypothesis_workspace as hw
+        RC, RB, SK = "mcp__hpc__run_code", "mcp__hpc__run_batch", "skill_view"
+
+        def nudge(role, tools):
+            with tempfile.TemporaryDirectory() as tmp:
+                sd = Path(tmp) / "state"
+                sd.mkdir(parents=True)
+                # Match the real agent_started schema: the run DIR is named by
+                # "run" ("r1"), while "run_id" is the campaign uuid and must NOT
+                # name the dir. A distinct run_id here fails the nudge if it ever
+                # reverts to reading run_id instead of run.
+                ws = Path(tmp) / "ws"
+                (ws / "runs" / "r1").mkdir(parents=True)
+                row = {"event": "agent_started", "role": role, "child_session_id": "S1",
+                       "run": "r1", "run_id": "campaign-run-uuid-9999",
+                       "workspace": str(ws), "plan_id": "p1"}
+                (sd / module.STATE_FILENAME).write_text(json.dumps(row) + "\n")
+                calls = [{"tool": t, "ts": "x"} for t in tools]
+                (ws / "runs" / "r1" / hw.RUN_FILE).write_text(json.dumps({"calls": calls}))
+                return module.runbatch_nudge_for({"session_id": "S1", "loam_state_dir": str(sd)})
+
+        self.assertIn("RUN_BATCH REMINDER", nudge("code-generator", [SK, SK, RC, RC, RC, RC, RC]))
+        self.assertEqual(nudge("code-generator", [RC, RC, RC, RC]), "")
+        self.assertEqual(nudge("code-generator", [RC, RC, RC, RB, RC, RC, RC]), "")
+        self.assertEqual(nudge("hypothesis-validator", [RC, RC, RC, RC, RC, RC]), "")
+
     def test_local_execution_mode_allows_local_tools(self) -> None:
         orchestration = _load("loam_orchestration_local_execution")
         with tempfile.TemporaryDirectory() as temporary:

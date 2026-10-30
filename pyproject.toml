@@ -17,6 +17,12 @@ dependencies = [
     "pyyaml>=6,<7",
 ]
 
+[project.optional-dependencies]
+# The W&B metrics exporter (`metrics:` profile block) is optional: without
+# wandb installed the exporter stays inert, so it is not a runtime dependency.
+# Install with `pip install -e .[metrics]` in the environment that runs Hermes.
+metrics = ["wandb>=0.16"]
+
 [tool.setuptools]
 py-modules = []
 

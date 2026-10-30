@@ -172,25 +172,64 @@ def mcp_batch_status(url: str, tool: str = "batch_status") -> BatchStatus:
     return lambda batch_id: mcp_call(url, tool, {"batch_id": batch_id})
 
 
+def traces(path: Path, db_path: Path, full: bool) -> dict[str, list[str]]:
+    """Backfill missing per-agent traces under ``path`` from a LOCAL state.db.
+
+    Unlike the other commands this needs no MCP: Hermes and its state.db are on
+    the same machine as the workspace. ``path`` may be one hypothesis folder, the
+    reasoner folder, or a whole <plan_id>/ (every hypothesis plus the reasoner).
+    Covers agents whose subagent_stop never fired, so their trace was never
+    captured live. Returns what was filled, per record.
+    """
+
+    out: dict[str, list[str]] = {}
+    if (path / workspace.EXPERIMENT_FILE).is_file():
+        out[path.name] = workspace.backfill_traces(path, db_path, full)
+    elif (path / workspace.REASONER_FILE).is_file():
+        out["reasoner"] = ["reasoner"] if workspace.backfill_reasoner_trace(path, db_path, full) else []
+    else:
+        for child in sorted(path.iterdir()) if path.is_dir() else []:
+            if (child / workspace.EXPERIMENT_FILE).is_file():
+                out[child.name] = workspace.backfill_traces(child, db_path, full)
+            elif child.name == workspace.REASONER_DIR and (child / workspace.REASONER_FILE).is_file():
+                out["reasoner"] = ["reasoner"] if workspace.backfill_reasoner_trace(child, db_path, full) else []
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    parser.add_argument("command", choices=("fill", "recheck", "batches", "seed"))
-    parser.add_argument("--workspace", type=Path, required=True, help="local hypothesis folder")
+    parser.add_argument("command", choices=("fill", "recheck", "batches", "seed", "traces"))
+    parser.add_argument("--workspace", type=Path, required=True, help="local hypothesis or plan folder")
     # Not required for "batches", which only asks the server about batch ids.
     parser.add_argument("--remote-root", default="", help="the same hypothesis's folder on HPC")
-    parser.add_argument("--mcp-url", required=True, help="HPC MCP server, e.g. http://127.0.0.1:8000/mcp")
+    # Required only for the MCP commands; "traces" is local.
+    parser.add_argument("--mcp-url", default="", help="HPC MCP server, e.g. http://127.0.0.1:8000/mcp")
     parser.add_argument("--tool", default="run_code", help="the server's run_code tool name")
     parser.add_argument("--run", help="run id, for fill and batches")
     parser.add_argument("--source", help="staged HPC inputs directory, for seed")
     parser.add_argument("--max-bytes", type=int, default=workspace.DEFAULT_MAX_INPUT_BYTES,
                         help="refuse a seed larger than this")
+    parser.add_argument("--hermes-home", type=Path, help="Hermes home holding state.db, for traces")
+    parser.add_argument("--trace-full", action="store_true", help="keep full trace bodies (traces)")
     args = parser.parse_args(argv)
     if args.command in {"fill", "batches"} and not args.run:
         parser.error(f"{args.command} needs --run")
     if args.command == "seed" and not args.source:
         parser.error("seed needs --source")
-    if args.command != "batches" and not args.remote_root:
+    if args.command in {"fill", "recheck", "seed"} and not args.remote_root:
         parser.error(f"{args.command} needs --remote-root")
+    if args.command in {"fill", "recheck", "seed", "batches"} and not args.mcp_url:
+        parser.error(f"{args.command} needs --mcp-url")
+    if args.command == "traces":
+        import os
+
+        home = str(args.hermes_home) if args.hermes_home else os.environ.get("HERMES_HOME", "")
+        db_path = Path(home) / "state.db" if home else None
+        if db_path is None or not db_path.is_file():
+            parser.error("traces needs --hermes-home (or $HERMES_HOME) with a state.db")
+        print(json.dumps({"command": "traces", "workspace": str(args.workspace),
+                          "filled": traces(args.workspace, db_path, args.trace_full)}))
+        return 0
     if args.command == "batches":
         unfinished = batches(args.workspace, args.run, mcp_batch_status(args.mcp_url))
         print(json.dumps({"command": "batches", "workspace": str(args.workspace), "run": args.run, "unfinished": unfinished}))
