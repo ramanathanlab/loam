@@ -112,8 +112,13 @@ Overrides, for a scratch or diagnostic launch:
 
 ```bash
 LOAM_SKIP_PREFLIGHT=1 ./run-campaign    # no readiness gate; never for a real run
-LOAM_PRE_LLM_EVERY=3 ./run-campaign     # run the tournament every third turn
+ALCF_PROXY=0 ./run-campaign             # ranking model served some other way
+LOAM_REPO=/path/to/loam ./run-campaign  # required when the script was copied out
 ```
+
+`run-campaign`'s header documents every variable it reads, including which ones
+it deliberately discards — the tournament cadence is a profile setting
+(`pre_llm_every`), not an environment override.
 
 **7. Drive it.** A launch leaves you at an interactive prompt with nothing
 started: the pre-LLM hook fires on a turn, so the campaign begins when you take

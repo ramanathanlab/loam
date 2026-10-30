@@ -245,6 +245,14 @@ HPC server is not up it will start a bounded one-node debug allocation and wait
 up to `LOAM_HPC_WAIT_SECONDS` (default 900) — but for a real run, have Step 2
 already live.
 
+**`run-campaign`'s header is the reference for the environment**: every variable
+it reads, the ones it passes through to the preflight (`ALCF_PROXY*`,
+`HPC_ENV_FILE`), and — the part worth reading before you try to override
+anything — the ones it deliberately discards, so that no parent shell can
+redirect or merge a run. Two in particular are not knobs: the tournament cadence
+comes from the profile's `pre_llm_every`, not `LOAM_PRE_LLM_EVERY`, and the
+active profile from `active_profile` in `loam.yaml`, not `LOAM_PROFILE`.
+
 ### Validate the plumbing without a cluster first
 
 Run the five-round arithmetic campaign in `CAMPAIGN_TEST.md` with
