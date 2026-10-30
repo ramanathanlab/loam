@@ -60,8 +60,10 @@ profiles:
       # examples/campaign-starter you are working in. Absolute; `~` is expanded.
       dir: <ABS_PATH_TO_CAMPAIGN_DIR>
 
-      # <dir>/campaigns/<goal>.md. Rename the shipped file and match it here.
-      # Named-but-missing raises at startup and lists every directory searched.
+      # <dir>/campaigns/<goal>.md. Rename the shipped file and match it both
+      # here and in that file's own `name:` front matter. A missing file, or a
+      # `name:` that disagrees, raises on the first turn (when the hook loads
+      # the file), listing every directory searched.
       goal: example-campaign
 
       # <dir>/rules/<name>.md, each. Delete what you do not want rather than

@@ -1,3 +1,7 @@
+---
+name: example-campaign
+---
+
 # <CAMPAIGN TITLE>
 
 ## Objective

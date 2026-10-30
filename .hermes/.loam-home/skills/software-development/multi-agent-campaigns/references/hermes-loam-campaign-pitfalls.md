@@ -7,7 +7,7 @@ A repository launcher may reset `HERMES_HOME` to a project default. This makes a
 Preflight proof:
 
 ```bash
-HERMES_HOME="$campaign/hermes-home" .loam/run-hermes config path
+HERMES_HOME="$campaign/hermes-home" hermes config path
 # must print: $campaign/hermes-home/config.yaml
 ```
 

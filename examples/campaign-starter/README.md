@@ -32,9 +32,10 @@ Each item is something no script can do for you.
 1. **`~/.hermes/loam.yaml`** — every `<PLACEHOLDER>` in `loam.yaml`, especially
    `campaign.dir` (the absolute path of *this* directory), `jnana_root`, and the
    `execution.setup` recipe.
-2. **`campaigns/<goal>.md`** — your objective. Rename the file and update
-   `campaign.goal` to match. A named-but-missing goal raises at startup and lists
-   every directory it searched.
+2. **`campaigns/<goal>.md`** — your objective. Rename the file, then set both
+   `campaign.goal` and the file's own `name:` front matter to the new basename;
+   all three must agree or the first turn raises a name mismatch. A
+   named-but-missing goal raises the same way, listing every directory searched.
 3. **`rules/<name>.md`** — optional. Keep the ones you want, delete the rest, and
    list the survivors in `campaign.rules`. A campaign with no rules of its own
    still runs under the invariant rules the repo ships.
@@ -65,8 +66,9 @@ conflicting instruction. Two consequences:
   a long one crowds out the round's actual instructions.
 
 **The goal** reaches all three tiers, so write it for an agent with no other
-context about why it is working. Rename the file and set `campaign.goal` to the
-new basename.
+context about why it is working. Its front matter carries one key, `name:`,
+which must match both the filename and `campaign.goal` — so renaming the file
+means editing two other places.
 
 **A rule** declares the tiers it reaches in `scope:` — `validator`,
 `code-generator`, `reasoner`, a comma-separated combination, or `all`:
@@ -138,15 +140,26 @@ See `ONBOARDING.md` in the repo for the full version of any step here.
 The loader rejects some mistakes and silently accepts others. Check both:
 
 ```bash
-# 1. The profile parses and the goal/rules resolve. Raises if a name is missing,
-#    listing every directory searched.
+# 1. The profile parses and every name in it is well formed. This does NOT open
+#    the goal or rule files -- a missing or mis-named one still parses here.
 LOAM_CONFIG_PATH=~/.hermes/loam.yaml python3 -c "
 import sys; sys.path.insert(0, '<loam-repo>/.loam/adapters/hermes/plugin')
 import loam_config as c; p = c.load_profile()
 print(p.campaign.goal, list(p.campaign.rules), list(p.campaign.skills))"
 
-# 2. Every skill you named actually resolves. A name that does not is NOT
-#    caught above -- it fails inside a code-generator mid-round.
+# 2. The goal and rules actually resolve and load -- the check the first turn
+#    would otherwise be the first to run. Raises on a missing file (listing every
+#    directory searched) or a goal whose `name:` disagrees with campaign.goal.
+#    Run it from the repo root: that is where the invariant rules are found from.
+cd <loam-repo> && LOAM_CONFIG_PATH=~/.hermes/loam.yaml python3 -c "
+import sys; sys.path.insert(0, '<loam-repo>/.loam/adapters/hermes/plugin')
+sys.path.insert(0, '<loam-repo>/.loam/hooks')
+import loam_config as c, hypothesis_orchestration as o
+ctx = o.campaign_context({'loam_campaign': c.payload_values(c.load_profile())['loam_campaign']})
+print(ctx.goal_name, [r.name for r in ctx.rules])"
+
+# 3. Every skill you named actually resolves. A name that does not is NOT caught
+#    by either check above -- it fails inside a code-generator mid-round.
 hermes skills list | grep -E 'chai|proteinmpnn'
 ```
 

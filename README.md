@@ -111,7 +111,8 @@ one real completion per model role and one returned `run_code` probe — before
 Overrides, for a scratch or diagnostic launch:
 
 ```bash
-LOAM_SKIP_PREFLIGHT=1 ./run-campaign    # no readiness gate; never for a real run
+LOAM_SKIP_PREFLIGHT=1 ./run-campaign    # no readiness gate, and no proxy or
+                                        # allocation auto-start; never a real run
 ALCF_PROXY=0 ./run-campaign             # ranking model served some other way
 LOAM_REPO=/path/to/loam ./run-campaign  # required when the script was copied out
 ```

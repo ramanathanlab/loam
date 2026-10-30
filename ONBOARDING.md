@@ -203,6 +203,10 @@ In a directory you own — the one `campaign.dir` points at — you need:
 <campaign.dir>/rules/<name>.md       # rules specific to this campaign
 ```
 
+Both file kinds carry `---` front matter. The goal's names itself — `name:` must
+equal the filename and `campaign.goal`, so renaming the goal means editing two
+other places — and a rule adds `scope:`.
+
 The goal reaches all three tiers. A rule is policy injected into the tiers its
 `scope:` front matter names; often a few lines is enough — which measurement
 decides a hypothesis, or which hypotheses and tool categories are out of bounds.
@@ -211,7 +215,9 @@ can shadow a shipped rule with your own text.
 
 A named-but-missing file **raises**, listing every directory searched: a run that
 quietly lost its objective while still looking governed is the failure this
-avoids. A campaign with no rules of its own still runs governed by the invariant
+avoids. It raises on the **first turn**, not at launch — the hook is what opens
+these files, so the preflight passing says nothing about them. The starter kit's
+README has a one-liner that forces the check before you spend an allocation. A campaign with no rules of its own still runs governed by the invariant
 rules the repo ships (`evidence-integrity`, `experiment-discipline`), which load
 whether or not a profile names them.
 

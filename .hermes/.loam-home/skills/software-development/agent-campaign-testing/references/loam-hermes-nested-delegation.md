@@ -29,7 +29,7 @@ An unconditional assignment to the repository default home silently defeats isol
 - Stable `LOAM_RUN_ID` and one temporary `LOAM_STATE_DIR` for all campaign turns.
 - Persistent coordinator, not one-shot invocation.
 - Isolated Hermes config enables `loam-hooks` and `delegation.max_spawn_depth: 2`.
-- Validate `bash -n .loam/run-hermes` and confirm `HERMES_HOME=<temp> .loam/run-hermes config path` resolves to `<temp>/config.yaml` before launch.
+- Confirm `HERMES_HOME=<temp> hermes config path` resolves to `<temp>/config.yaml` before launch; invoke `hermes` directly rather than through a launcher that would reset the home.
 - Ensure the local endpoint/model works with the campaign request shape.
 
 ## Fail-closed lifecycle checks

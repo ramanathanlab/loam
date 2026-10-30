@@ -89,7 +89,7 @@ def install(repo: Path, home: Path, copy: bool, force: bool) -> int:
         print(f"install_skills: {source_root} holds no skills", file=sys.stderr)
         return 1
 
-    installed, skipped, blocked = [], [], []
+    installed, blocked = [], []
     for entry in entries:
         target = library / entry.name
         if target.exists() or target.is_symlink():
@@ -119,8 +119,6 @@ def install(repo: Path, home: Path, copy: bool, force: bool) -> int:
     print(f"install_skills: {verb} {len(installed)} entries into {library}")
     for name in installed:
         print(f"  {name}")
-    if skipped:
-        print(f"  unchanged: {', '.join(skipped)}")
     if blocked:
         print(
             "install_skills: left in place (not ours; pass --force to replace): "

@@ -31,8 +31,10 @@
 #   LOAM_REPO              the loam checkout, for the adapter and the skills
 #                          tree. Defaults to this directory when the script sits
 #                          in a checkout; a COPIED script must be given it.
-#   LOAM_SKIP_PREFLIGHT=1  skip the readiness gate. Launcher diagnostics only --
-#                          never a scientific campaign.
+#   LOAM_SKIP_PREFLIGHT=1  skip the readiness gate. This also skips the two
+#                          auto-starts the gate performs -- the inference proxy
+#                          and the HPC allocation -- so nothing brings them up.
+#                          Launcher diagnostics only, never a scientific campaign.
 #   LOAM_PREFLIGHT_PYTHON  interpreter for the preflight. Default
 #                          ~/.loam-venv-312/bin/python; the launch fails if it
 #                          is not executable.
