@@ -168,12 +168,12 @@ def _ids(value: Any) -> tuple[str, ...]:
     return tuple(_text(item.get("id")) for item in value if isinstance(item, Mapping) and _text(item.get("id")))
 
 
-def _recall_timeout(cfg: Mapping[str, Any]) -> float:
+def _recall_timeout(cfg: Mapping[str, Any], key: str = "recall_timeout_seconds", default: float = 2.0) -> float:
     try:
-        value = float(cfg.get("recall_timeout_seconds") or 2)
+        value = float(cfg.get(key) or default)
     except (TypeError, ValueError):
-        value = 2.0
-    return value if value > 0 else 2.0
+        value = default
+    return value if value > 0 else default
 
 
 def recall(payload: Mapping[str, Any], query: str, *, consumer: str, budget: int, plan_id: str = "") -> RecallResult:
@@ -183,7 +183,8 @@ def recall(payload: Mapping[str, Any], query: str, *, consumer: str, budget: int
     if cfg is None:
         return RecallResult(ok=False, error="disabled")
     tags = [workflow_tag(payload)]
-    cap = _recall_timeout(cfg)
+    # The reasoner recalls once per round, so it can wait longer than the per-turn generation recall.
+    cap = _recall_timeout(cfg, "reasoner_recall_timeout_seconds", 5.0) if consumer == "reasoner" else _recall_timeout(cfg)
 
     def _call() -> RecallResult:
         ok, error, body, _ = _post(

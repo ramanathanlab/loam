@@ -21,7 +21,8 @@ It is strictly best effort. A slow, overloaded or unreachable FALDA never fails 
   long (at most 5 minutes) before sending again; `falda-status.json` then shows `backing_off`.
   Rows it could not send wait for the next flush. Past 5,000 unsent rows, the oldest are dropped and
   counted.
-- **Recalls** are capped at 2 s of wall clock (`recall_timeout_seconds`). A recall that fails, times out
+- **Recalls** are capped at 2 s of wall clock (`recall_timeout_seconds`), or 5 s for the reasoner's
+  once-per-round recall (`reasoner_recall_timeout_seconds`). A recall that fails, times out
   or comes back empty adds nothing to the prompt; the next one tries again. The reasoner recalls at most
   once per plan.
 - **Reasoner tools** go through Hermes's MCP connection (`timeout: 5` in the Hermes config), so a slow
@@ -52,6 +53,7 @@ falda:
   auto_flush: true                             # spawn a detached flusher at each validator stop
   recall_budget_chars: 1500
   recall_timeout_seconds: 2                    # wall-clock cap for recalls (agent's path)
+  reasoner_recall_timeout_seconds: 5           # the reasoner's once-per-round recall
   timeout_seconds: 60                          # writes (detached flusher; FALDA takes ~1 s/atom); mint capped at 15
 ```
 

@@ -66,6 +66,8 @@ class FaldaConfigTests(unittest.TestCase):
         self.assertEqual(falda["pool"], POOL)
         self.assertEqual(falda["base_url"], "https://falda.cairnscore.ai")
         self.assertEqual(falda["recall_timeout_seconds"], 2)
+        # The reasoner recalls once per round with a longer query; FALDA answered it in 1.2-2.6 s (2026-10-31).
+        self.assertEqual(falda["reasoner_recall_timeout_seconds"], 5)
         # Writes run in the detached flusher; FALDA takes ~1 s per atom, so the write timeout is generous.
         self.assertEqual((falda["recall_budget_chars"], falda["timeout_seconds"]), (1500, 60))
         self.assertEqual((falda["token_env"], falda["key_dir"]), ("FALDA_TOKEN", "~/.falda/keys"))
@@ -124,6 +126,8 @@ class FaldaConfigTests(unittest.TestCase):
 
     def test_timeouts_must_be_positive(self) -> None:
         profile, _ = self._profile(_block(recall_timeout_seconds=0))
+        self.assertEqual(profile.falda_status, "rejected:bad_timeout")
+        profile, _ = self._profile(_block(reasoner_recall_timeout_seconds=0))
         self.assertEqual(profile.falda_status, "rejected:bad_timeout")
 
     def test_payload_values_carry_env_names_not_secrets(self) -> None:

@@ -21,6 +21,8 @@ DEFAULT_KEY_DIR = "~/.falda/keys"
 DEFAULT_RECALL_BUDGET_CHARS = 1500
 # Recalls sit on the agent's path; writes and the key mint run in a detached flusher.
 DEFAULT_RECALL_TIMEOUT = 2
+# The reasoner recalls once per round with a longer query; FALDA answered it in 1.2-2.6 s (2026-10-31).
+DEFAULT_REASONER_RECALL_TIMEOUT = 5
 # Writes run in the detached flusher; FALDA takes ~1 s per atom (measured 2026-10-30).
 DEFAULT_TIMEOUT = 60
 # .loam/ is three levels above this file (.loam/adapters/hermes/plugin/).
@@ -80,9 +82,10 @@ def falda_config(value: Any) -> tuple[dict[str, Any] | None, str]:
             return None, "rejected:bad_switch"
         switches[name] = flag
     recall_timeout = _positive(value.get("recall_timeout_seconds"), DEFAULT_RECALL_TIMEOUT)
+    reasoner_recall_timeout = _positive(value.get("reasoner_recall_timeout_seconds"), DEFAULT_REASONER_RECALL_TIMEOUT)
     timeout = _positive(value.get("timeout_seconds"), DEFAULT_TIMEOUT)
     budget = _positive(value.get("recall_budget_chars"), DEFAULT_RECALL_BUDGET_CHARS)
-    if recall_timeout is None or timeout is None or budget is None:
+    if recall_timeout is None or reasoner_recall_timeout is None or timeout is None or budget is None:
         return None, "rejected:bad_timeout"
     return (
         {
@@ -93,6 +96,7 @@ def falda_config(value: Any) -> tuple[dict[str, Any] | None, str]:
             "key_dir": _text(value.get("key_dir"), DEFAULT_KEY_DIR),
             "recall_budget_chars": int(budget),
             "recall_timeout_seconds": recall_timeout,
+            "reasoner_recall_timeout_seconds": reasoner_recall_timeout,
             "timeout_seconds": timeout,
             **switches,
         },

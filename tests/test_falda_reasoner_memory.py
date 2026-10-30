@@ -210,7 +210,7 @@ class ReasonerMemoryTests(unittest.TestCase):
             return 200, json.dumps({"context": RECALLED}).encode()
 
         falda_memory.set_transport(_hang)
-        payload = self._payload()
+        payload = self._payload(falda_block(reasoner_recall_timeout_seconds=1))
         self._complete_validators(payload)
         start = time.monotonic()
         directive = self.orchestration.context_for(payload)
@@ -218,6 +218,19 @@ class ReasonerMemoryTests(unittest.TestCase):
         self.assertIn("Memory interface:", directive)
         self.assertNotIn("[m1]", directive)
         self.assertNotIn("Recalled campaign memory", directive)
+
+    def test_reasoner_recall_has_its_own_longer_cap(self) -> None:
+        # The 2 s generation cap timed out every reasoner recall on Aurora (FALDA took 1.2-2.6 s).
+        import time
+
+        def _slow(url, headers, body, timeout):
+            time.sleep(1.5)
+            return 200, json.dumps({"context": RECALLED, "items": [{"id": "a"}]}).encode()
+
+        falda_memory.set_transport(_slow)
+        payload = self._payload(falda_block(recall_timeout_seconds=1, reasoner_recall_timeout_seconds=3))
+        self._complete_validators(payload)
+        self.assertIn("[m1] prior negative result", self.orchestration.context_for(payload))
 
     def test_no_mcp_key_at_launch_means_no_tool_lines(self) -> None:
         falda_memory.set_transport(FakeTransport())
