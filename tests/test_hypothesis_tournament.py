@@ -583,15 +583,25 @@ class HypothesisTournamentTests(unittest.TestCase):
     @unittest.skipUnless(HAVE_JNANA, "jnana checkout required")
     def test_a_brief_already_carried_by_the_turns_message_is_not_added_twice(self) -> None:
         """`prepare_payload` appends it there too, and that message is the goal
-        for a profile that names no campaign."""
+        for a profile that names no campaign.
+
+        The brief is a multi-line synthesis, and the message it is appended to
+        is whitespace-collapsed into the goal, so the two only compare equal
+        collapsed. A raw comparison sent the whole brief twice.
+        """
 
         hook = _load("loam_hypothesis_tournament_dedupe", HOOKS / "hypothesis_tournament.py")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            brief = "Round 8: the 12-residue binders all fell apart in MD."
+            brief = (
+                "Round 8 synthesis:\n"
+                "- the 12-residue binders all fell apart in MD.\n"
+                "- next: longer scaffolds."
+            )
             payload = self._campaign_payload(root, turn=9, user_message=f"Dispatch the next round.\n\n{brief}")
             payload.pop("loam_campaign")
             payload["loam_reasoner_brief"] = brief
+            generated: list[object] = []
             goals: list[str] = []
             metadata: dict[str, object] = {}
 
@@ -605,13 +615,149 @@ class HypothesisTournamentTests(unittest.TestCase):
                     metadata["research_goal"] = goal
 
                 def get_all_hypotheses(self):
-                    return [object(), object(), object()]
+                    return generated
+
+                def generate_hypotheses(self, count):
+                    generated.extend(range(count))
 
             self._run(hook, FakeCoScientist, payload)
             generation = json.loads(self._latest_report(root).read_text())["result"]["generation"]
 
         self.assertEqual(generation["goal_source"], "user_message")
         self.assertEqual(goals[0].count("12-residue binders all fell apart"), 1)
+
+    @unittest.skipUnless(HAVE_JNANA, "jnana checkout required")
+    def test_a_turn_message_goal_is_never_re_goaled_or_refreshed(self) -> None:
+        """A profile with no campaign has no stable goal to measure movement.
+
+        Its goal is the turn's own request, which differs every turn, so
+        treating a difference as news would re-parse the plan -- an LLM call --
+        and generate `refresh_hypotheses` more hypotheses on every single turn.
+        """
+
+        hook = _load("loam_hypothesis_tournament_volatile", HOOKS / "hypothesis_tournament.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = self._campaign_payload(root, turn=9, user_message="Dispatch round 9.")
+            payload.pop("loam_campaign")
+            payload["loam_hypothesis_tournament"]["refresh_hypotheses"] = 4
+            goals: list[str] = []
+            metadata: dict[str, object] = {"research_goal": "an earlier turn's request"}
+            requests: list[int] = []
+
+            class FakeCoScientist(_FakeCoScientist):
+                def __init__(self, **kwargs):
+                    super().__init__(**kwargs)
+                    self.memory.metadata = metadata
+
+                def set_research_goal(self, goal):
+                    goals.append(goal)
+                    metadata["research_goal"] = goal
+
+                def get_all_hypotheses(self):
+                    return [object(), object(), object()]
+
+                def generate_hypotheses(self, count):
+                    requests.append(count)
+
+            self._run(hook, FakeCoScientist, payload)
+            payload["loam_turn"] = 10
+            payload["user_message"] = "Dispatch round 10."
+            self._run(hook, FakeCoScientist, payload)
+            generation = json.loads(self._latest_report(root).read_text())["result"]["generation"]
+
+        self.assertEqual(generation, {"status": "not_needed", "generated_hypotheses": 0,
+                                      "goal_source": "user_message",
+                                      "goal_sync": "skipped_volatile_goal"})
+        self.assertEqual(goals, [])
+        self.assertEqual(requests, [])
+
+    @unittest.skipUnless(HAVE_JNANA, "jnana checkout required")
+    def test_the_knowledge_prepass_brief_survives_a_later_re_goal(self) -> None:
+        """The pre-pass runs once, at seeding, and its brief is part of the goal.
+
+        Dropping it on a later turn both narrowed the text the pairwise judge
+        reads and looked like a goal that had moved -- spending a refresh on the
+        absence of knowledge, with nothing new to aim at.
+        """
+
+        hook = _load("loam_hypothesis_tournament_knowledge", HOOKS / "hypothesis_tournament.py")
+        import knowledge_brief
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = self._campaign_payload(root, turn=1, user_message="Begin the campaign.")
+            payload["loam_hypothesis_tournament"]["knowledge"] = {"enabled": True}
+            payload["loam_hypothesis_tournament"]["refresh_hypotheses"] = 4
+            pool: list[object] = []
+            goals: list[str] = []
+            metadata: dict[str, object] = {}
+            requests: list[int] = []
+
+            class FakeCoScientist(_FakeCoScientist):
+                def __init__(self, **kwargs):
+                    super().__init__(**kwargs)
+                    self.memory.metadata = metadata
+
+                def set_research_goal(self, goal):
+                    goals.append(goal)
+                    metadata["research_goal"] = goal
+
+                def get_all_hypotheses(self):
+                    return pool
+
+                def generate_hypotheses(self, count):
+                    requests.append(count)
+                    pool.extend(object() for _ in range(count))
+
+            brief_for = {"status": "ok", "brief": "KNOWLEDGE: the target is an Fe/2OG dioxygenase.",
+                         "tool_calls": 1, "tools_used": [], "cached": False, "seconds": 0.1}
+            with patch.object(knowledge_brief, "brief_for", return_value=brief_for):
+                self._run(hook, FakeCoScientist, payload)
+                payload["loam_turn"] = 2
+                self._run(hook, FakeCoScientist, payload)
+                quiet = json.loads(self._latest_report(root).read_text())["result"]["generation"]
+
+                # A real change still re-goals, and still carries the pre-pass's
+                # brief rather than re-running the research loop for it.
+                (root / "campaigns" / "fixture-goal.md").write_text(
+                    GOAL.replace("a fixture target", "a different fixture target"), encoding="utf-8"
+                )
+                payload["loam_turn"] = 3
+                self._run(hook, FakeCoScientist, payload)
+                changed = json.loads(self._latest_report(root).read_text())["result"]["generation"]
+
+        self.assertIn("KNOWLEDGE:", goals[0])
+        self.assertEqual(quiet, {"status": "not_needed", "generated_hypotheses": 0,
+                                 "goal_source": "campaign:fixture-goal", "goal_sync": "unchanged"})
+        self.assertEqual(changed["status"], "refreshed")
+        self.assertIn("KNOWLEDGE:", goals[-1])
+        self.assertIn("a different fixture target", goals[-1])
+        self.assertEqual(requests, [3, 4])
+
+    @unittest.skipUnless(HAVE_JNANA, "jnana checkout required")
+    def test_a_memory_without_metadata_cannot_license_a_refresh(self) -> None:
+        """No digest to compare means every turn looks like a change."""
+
+        hook = _load("loam_hypothesis_tournament_nometa", HOOKS / "hypothesis_tournament.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = self._campaign_payload(root, turn=9, user_message="Dispatch the next round.")
+            payload["loam_hypothesis_tournament"]["refresh_hypotheses"] = 4
+            requests: list[int] = []
+
+            class FakeCoScientist(_FakeCoScientist):
+                def get_all_hypotheses(self):
+                    return [object(), object(), object()]
+
+                def generate_hypotheses(self, count):
+                    requests.append(count)
+
+            self._run(hook, FakeCoScientist, payload)
+            generation = json.loads(self._latest_report(root).read_text())["result"]["generation"]
+
+        self.assertEqual(generation["goal_sync"], "set_unverified")
+        self.assertEqual(requests, [])
 
     @unittest.skipUnless(HAVE_JNANA, "jnana checkout required")
     def test_without_refresh_configured_a_brief_only_re_goals(self) -> None:

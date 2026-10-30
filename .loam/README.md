@@ -114,7 +114,10 @@ policy as it is designed.
   judging against the first round's text. `refresh_hypotheses` (default `0`,
   off) then lets that new knowledge enter the pool as candidates: N
   brief-informed hypotheses per *new brief*, not per turn. Left at `0`, a
-  seeded state is only ever re-ranked, never added to. The hook persists Jnana
+  seeded state is only ever re-ranked, never added to. Both of those need a
+  campaign goal to measure movement against; a profile that names none keeps
+  the earlier behaviour, seeding once from the turn's request and then only
+  re-ranking, because that request differs every turn. The hook persists Jnana
   JSON state and an immutable Loam report, and injects only a compact Elo
   ranking. Generation and rankings are advisory rather than empirical
   validation. The hook uses a nonblocking state lock and fails open on

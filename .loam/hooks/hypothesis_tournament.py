@@ -239,9 +239,14 @@ def _brief_block(brief: str, goal: str) -> str:
     Dropped when the goal already carries it: `prepare_payload` appends the
     brief to the turn's message as well, and that message is the goal for a
     profile that names no campaign. Twice is padding, not emphasis.
+
+    The membership test is made on both texts collapsed, because the goal that
+    may already carry the brief is the turn's message, which `_research_goal`
+    collapses. A real brief is a multi-line synthesis, so comparing it raw would
+    never match it there and would append it a second time.
     """
 
-    if not brief or brief in goal:
+    if not brief or " ".join(brief.split()) in " ".join(goal.split()):
         return ""
     return (
         "Latest round synthesis from the campaign's reasoner (advisory, and "
@@ -253,6 +258,39 @@ def _goal_with(goal: str, *blocks: str) -> str:
     """The goal plus whichever already-headed blocks have text, in order."""
 
     return "\n\n".join([goal, *(block for block in blocks if block)])
+
+
+def _metadata(coscientist: Any) -> dict[str, Any] | None:
+    """Jnana's memory metadata, or None for a stub that has none.
+
+    A Jnana memory always has one and persists it inside the state file; an
+    advisory hook should not fail over introspecting a double that does not.
+    """
+
+    metadata = getattr(getattr(coscientist, "memory", None), "metadata", None)
+    return metadata if isinstance(metadata, dict) else None
+
+
+def _stored_knowledge(coscientist: Any) -> str:
+    """The knowledge pre-pass's brief as the seeding turn recorded it.
+
+    The pre-pass is a tool-calling research loop, run once when the state is
+    seeded, and its brief is part of the goal the pool was generated against. A
+    later turn that re-sets the goal has to carry it forward: re-running the
+    loop would cost minutes, while leaving it out would both narrow the text the
+    pairwise judge reads and register as a goal that moved -- buying a pool
+    refresh that no new knowledge asked for.
+    """
+
+    return str((_metadata(coscientist) or {}).get("loam_knowledge_brief") or "")
+
+
+def _remember_knowledge(coscientist: Any, brief: str) -> None:
+    """Record the pre-pass's brief, or its absence, beside the stored goal."""
+
+    metadata = _metadata(coscientist)
+    if metadata is not None:
+        metadata["loam_knowledge_brief"] = brief
 
 
 def _sync_research_goal(coscientist: Any, goal: str) -> str:
@@ -272,12 +310,14 @@ def _sync_research_goal(coscientist: Any, goal: str) -> str:
     """
 
     digest = hashlib.sha256(goal.encode("utf-8")).hexdigest()
-    metadata = getattr(coscientist.memory, "metadata", None)
-    if not isinstance(metadata, dict):
-        # A Jnana memory always has one; a stub might not, and an advisory hook
-        # should not fail over introspection.
+    metadata = _metadata(coscientist)
+    if metadata is None:
+        # Nowhere to record the digest, so nothing can be compared against it
+        # next turn. Reported distinctly from "set" because the refresh is gated
+        # on a goal that demonstrably moved: without a digest every turn would
+        # look like a move, and the fallback should be the safe reading.
         coscientist.set_research_goal(goal)
-        return "set"
+        return "set_unverified"
     if metadata.get("loam_goal_sha256") == digest and metadata.get("research_goal"):
         return "unchanged"
     coscientist.set_research_goal(goal)
@@ -295,7 +335,8 @@ def _ensure_initial_hypotheses(
     more, but only when the goal has actually moved -- a fresh reasoner brief or
     an edited campaign file -- so a quiet round costs nothing and a round of
     synthesis enters the pool as candidates that compete rather than as prose
-    nobody reads.
+    nobody reads. "Moved" is only measurable against a campaign goal, so a
+    profile that names none keeps the old behaviour: seed once, then rank.
     """
 
     global CoScientist
@@ -308,7 +349,9 @@ def _ensure_initial_hypotheses(
     coscientist = CoScientist(
         llm_config=llm_config,
         storage_path=str(Path(str(config["state_file"])).expanduser()),
-        max_workers=initial_hypotheses,
+        # Either generation path runs through these workers, and a refresh is
+        # usually the larger of the two, so it sizes the pool as well.
+        max_workers=max(initial_hypotheses, _count(config.get("refresh_hypotheses"))),
     )
     coscientist.start()
     try:
@@ -320,9 +363,21 @@ def _ensure_initial_hypotheses(
             if not goal:
                 return outcome
             outcome["goal_source"] = goal_source
+            if not goal_source.startswith("campaign:"):
+                # Only a campaign goal is stable enough to track. The turn's own
+                # message -- the fallback for a profile that names no campaign --
+                # differs every turn, so "moved" carries no signal there: syncing
+                # would re-parse the plan, an LLM call, and refresh the pool on
+                # every single turn. A seeded pool is left ranked, as before.
+                outcome["goal_sync"] = "skipped_volatile_goal"
+                return outcome
             # The pool is seeded, but the stored goal still steers every pairwise
             # match, so it is kept in step with the campaign's and the round's.
-            outcome["goal_sync"] = _sync_research_goal(coscientist, _goal_with(goal, _brief_block(brief, goal)))
+            # The pre-pass's brief is carried forward rather than re-researched
+            # or dropped; see `_stored_knowledge`.
+            outcome["goal_sync"] = _sync_research_goal(
+                coscientist, _goal_with(goal, _stored_knowledge(coscientist), _brief_block(brief, goal))
+            )
             refresh = _count(config.get("refresh_hypotheses"))
             if refresh and outcome["goal_sync"] == "set":
                 coscientist.generate_hypotheses(count=refresh)
@@ -336,9 +391,11 @@ def _ensure_initial_hypotheses(
             return {"status": "skipped", "reason": "missing_research_goal", "generated_hypotheses": 0}
         requested = max(initial_hypotheses, 2 - existing)
         knowledge = _knowledge_brief(config, goal, llm_config)
-        _sync_research_goal(
-            coscientist, _goal_with(goal, knowledge.get("brief") or "", _brief_block(brief, goal))
-        )
+        knowledge_block = str(knowledge.get("brief") or "")
+        # Recorded, including as absent, so a later re-goal carries exactly what
+        # the pre-pass produced for this pool rather than a stale brief.
+        _remember_knowledge(coscientist, knowledge_block)
+        _sync_research_goal(coscientist, _goal_with(goal, knowledge_block, _brief_block(brief, goal)))
         coscientist.generate_hypotheses(count=requested)
         coscientist.wait_for_completion()
         coscientist.memory.save()

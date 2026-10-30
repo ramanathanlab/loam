@@ -61,7 +61,11 @@ profiles:
       # frozen at the first round's thinking: later rounds only re-rank it.
       #
       # Spent once per NEW brief, not once per turn, so a quiet round costs
-      # nothing. Keep it small relative to matches_per_run: an entrant starts at
+      # nothing -- which needs the campaign goal below to measure against. A
+      # profile with no campaign seeds once and then only re-ranks, whatever
+      # this is set to, because its goal is the turn's own request.
+      #
+      # Keep it small relative to matches_per_run: an entrant starts at
       # 1200.0 Elo and is unranked until it has played, so a round that adds
       # more hypotheses than it plays matches fills top_k with unplayed ties.
       refresh_hypotheses: 0
