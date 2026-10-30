@@ -308,6 +308,34 @@ class HypothesisOrchestrationTests(unittest.TestCase):
         self.assertEqual(wrong_execution_tool["action"], "block")
         self.assertIsNone(remote_execution)
 
+    def test_every_role_may_record_a_decision(self) -> None:
+        """loam_record_decision is provenance, not execution: no role gate may block it.
+
+        A live campaign showed tool_policy refusing every validator's
+        loam_record_decision call, so no decision was ever recorded though the
+        validators were calling it with real content. This goes through
+        tool_policy, the boundary the workspace unit tests never cross.
+        """
+
+        orchestration = _load("loam_orchestration_decision_tool")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            roles = {
+                "validator-session": "Validate [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1]",
+                "codegen-session": "Execute [loam-agent-role=code-generator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1]",
+                "reasoner-session": "Synthesize [loam-agent-role=reasoner] [loam-plan-id=plan-1]",
+            }
+            for session, goal in roles.items():
+                orchestration.record_start({**payload, "child_session_id": session,
+                                            "child_subagent_id": session, "child_goal": goal})
+            base = {**payload, "loam_hypothesis_orchestration": True}
+            for session in roles:
+                verdict = orchestration.tool_policy({
+                    **base, "session_id": session, "tool_name": "loam_record_decision",
+                    "arguments": {"what": "x", "why": "y"},
+                })
+                self.assertIsNone(verdict, f"{session} was blocked from recording a decision")
+
     def test_local_execution_mode_allows_local_tools(self) -> None:
         orchestration = _load("loam_orchestration_local_execution")
         with tempfile.TemporaryDirectory() as temporary:

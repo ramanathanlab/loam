@@ -1261,6 +1261,13 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
         return None
     role = _text(starts[-1].get("role"))
     tool_name = _text(payload.get("tool_name"))
+    # Recording a decision is provenance, not execution -- the same carve-out as
+    # the read-only skill tools below. It must precede every role gate, or the
+    # per-role allowlists (which do not list it) refuse it: live, every
+    # validator's loam_record_decision call was blocked here and no decision was
+    # ever recorded, though the validators were calling it with real content.
+    if tool_name == hypothesis_workspace.DECISION_TOOL:
+        return None
     if role == "reasoner":
         return {"action": "block", "message": "reasoner has no tool capability; return the synthesis to the harness"}
     if role == "code-generator":
