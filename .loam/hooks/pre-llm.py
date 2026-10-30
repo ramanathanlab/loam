@@ -15,7 +15,7 @@ from typing import Any
 from hypothesis_recall import context_for as hypothesis_context_for
 from hypothesis_steering_recall import context_for as steering_context_for
 from hypothesis_orchestration import context_for as orchestration_context_for
-from hypothesis_orchestration import is_campaign_child, prepare_payload
+from hypothesis_orchestration import is_campaign_child, prepare_payload, runbatch_nudge_for
 from hypothesis_tournament import context_for as tournament_context_for
 from memory_recall import context_for as memory_context_for
 from run_manifest import ensure as ensure_run_manifest
@@ -36,6 +36,7 @@ def main() -> int:
             memory_context_for(payload),
             hypothesis_context_for(payload),
             steering_context_for(payload),
+            runbatch_nudge_for(payload),
         ]
         if payload.get("loam_hypothesis_orchestration") is True and not is_campaign_child(payload):
             prepare_payload(payload)

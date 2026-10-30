@@ -363,6 +363,30 @@ class HypothesisOrchestrationTests(unittest.TestCase):
                 })
                 self.assertIsNone(verdict, f"{session} was blocked from recording a decision")
 
+    def test_runbatch_nudge_fires_only_on_serial_run_code_without_a_batch(self) -> None:
+        """L2 warn-only: a code-generator looping run_code with no run_batch gets
+        an advisory nudge; it stays silent under the threshold, once a batch
+        exists, and for other roles."""
+        module = _load("ho_nudge")
+        import hypothesis_workspace as hw
+        RC, RB, SK = "mcp__hpc__run_code", "mcp__hpc__run_batch", "skill_view"
+
+        def nudge(role, tools):
+            with tempfile.TemporaryDirectory() as tmp:
+                sd = Path(tmp) / "state"; sd.mkdir(parents=True)
+                ws = Path(tmp) / "ws"; (ws / "runs" / "R1").mkdir(parents=True)
+                row = {"event": "agent_started", "role": role, "child_session_id": "S1",
+                       "run_id": "R1", "workspace": str(ws), "plan_id": "p1"}
+                (sd / module.STATE_FILENAME).write_text(json.dumps(row) + "\n")
+                calls = [{"tool": t, "ts": "x"} for t in tools]
+                (ws / "runs" / "R1" / hw.RUN_FILE).write_text(json.dumps({"calls": calls}))
+                return module.runbatch_nudge_for({"session_id": "S1", "loam_state_dir": str(sd)})
+
+        self.assertIn("RUN_BATCH REMINDER", nudge("code-generator", [SK, SK, RC, RC, RC, RC, RC]))
+        self.assertEqual(nudge("code-generator", [RC, RC, RC, RC]), "")
+        self.assertEqual(nudge("code-generator", [RC, RC, RC, RB, RC, RC, RC]), "")
+        self.assertEqual(nudge("hypothesis-validator", [RC, RC, RC, RC, RC, RC]), "")
+
     def test_local_execution_mode_allows_local_tools(self) -> None:
         orchestration = _load("loam_orchestration_local_execution")
         with tempfile.TemporaryDirectory() as temporary:

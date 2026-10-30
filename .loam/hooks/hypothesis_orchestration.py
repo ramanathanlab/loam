@@ -1484,6 +1484,54 @@ def is_campaign_child(payload: Mapping[str, Any]) -> bool:
     )
 
 
+# L2 (warn-only, no block): nudge a code-generator toward run_batch once it has
+# looped run_code. Injected each pre-LLM turn by pre-llm.py; it self-gates and
+# returns "" for everything else. Rationale: each serial run_code re-sends the
+# child's whole growing context (skills + CAMPAIGN.md + accumulated tool output),
+# which measurement showed is the dominant driver of the per-minute token-rate
+# limit -- one child's 17 serial run_code calls re-sent ~45K tokens apiece.
+# run_batch collapses the fan-out to one submit + batch_status polling and runs
+# the rows on HPC tiles, so it is both the scale-out path and the rate-limit fix.
+RUNBATCH_NUDGE_THRESHOLD = 5
+
+
+def runbatch_nudge_for(payload: Mapping[str, Any]) -> str:
+    """Advisory run_batch reminder for a code-generator that is looping run_code."""
+    session_id = _text(payload.get("session_id"))
+    if not session_id:
+        return ""
+    start = None
+    for row in _read_rows(_state_path(payload)):
+        if row.get("event") == "agent_started" and _text(row.get("child_session_id")) == session_id:
+            start = row  # last start for this session wins
+    if start is None or _text(start.get("role")) != "code-generator":
+        return ""
+    workspace = _text(start.get("workspace"))
+    run_id = _text(start.get("run_id"))
+    if not workspace or not run_id:
+        return ""
+    try:
+        run = hypothesis_workspace.read_json(
+            Path(workspace) / "runs" / run_id / hypothesis_workspace.RUN_FILE
+        )
+    except Exception:
+        return ""
+    calls = run.get("calls") or []
+    n_run_code = sum(1 for c in calls if hypothesis_workspace._hpc_function(_text(c.get("tool"))) == "run_code")
+    n_run_batch = sum(1 for c in calls if hypothesis_workspace._hpc_function(_text(c.get("tool"))) == "run_batch")
+    if n_run_code >= RUNBATCH_NUDGE_THRESHOLD and n_run_batch == 0:
+        return (
+            f"RUN_BATCH REMINDER: this run has {n_run_code} serial run_code calls and no run_batch. "
+            "A design tier's per-candidate fan-out (generate / fold / score many candidates) MUST go "
+            "through run_batch -- one JSONL row per candidate, one submit, then poll batch_status until "
+            "unfinished == 0 -- NOT a run_code loop. Each serial run_code resends your whole growing "
+            "context and is the main cause of the model token-rate-limit failures that abort runs; "
+            "run_batch executes the rows on HPC tiles without that per-call cost. Keep run_code only for "
+            "setup, a single probe fold, and post-batch aggregation."
+        )
+    return ""
+
+
 def _latest_report(payload: Mapping[str, Any]) -> tuple[Path, Mapping[str, Any]] | None:
     raw_config = payload.get("loam_hypothesis_tournament")
     if not isinstance(raw_config, Mapping):
