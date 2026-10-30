@@ -1542,11 +1542,12 @@ def record_dispatch(
         experiment_path = root / EXPERIMENT_FILE
         experiment = read_json(experiment_path)
         if experiment:
+            already = any(isinstance(c, Mapping) and c.get("run") == run_id for c in experiment.get("children", []))
             others = [c for c in experiment.get("children", []) if isinstance(c, Mapping) and c.get("run") != run_id]
             child = {"run": run_id, "instruction_sha256": instruction_sha256, "rewritten": rewritten}
             experiment["children"] = sorted([*others, child], key=lambda c: c.get("run", ""))
             _write_json(experiment_path, experiment)
-            if run_id not in {c.get("run") for c in others}:
+            if not already:
                 _append_log_unlocked(
                     root,
                     "note",

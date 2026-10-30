@@ -374,12 +374,17 @@ class HypothesisOrchestrationTests(unittest.TestCase):
         def nudge(role, tools):
             with tempfile.TemporaryDirectory() as tmp:
                 sd = Path(tmp) / "state"; sd.mkdir(parents=True)
-                ws = Path(tmp) / "ws"; (ws / "runs" / "R1").mkdir(parents=True)
+                # Match the real agent_started schema: the run DIR is named by
+                # "run" ("r1"), while "run_id" is the campaign uuid and must NOT
+                # name the dir. A distinct run_id here fails the nudge if it ever
+                # reverts to reading run_id instead of run.
+                ws = Path(tmp) / "ws"; (ws / "runs" / "r1").mkdir(parents=True)
                 row = {"event": "agent_started", "role": role, "child_session_id": "S1",
-                       "run_id": "R1", "workspace": str(ws), "plan_id": "p1"}
+                       "run": "r1", "run_id": "campaign-run-uuid-9999",
+                       "workspace": str(ws), "plan_id": "p1"}
                 (sd / module.STATE_FILENAME).write_text(json.dumps(row) + "\n")
                 calls = [{"tool": t, "ts": "x"} for t in tools]
-                (ws / "runs" / "R1" / hw.RUN_FILE).write_text(json.dumps({"calls": calls}))
+                (ws / "runs" / "r1" / hw.RUN_FILE).write_text(json.dumps({"calls": calls}))
                 return module.runbatch_nudge_for({"session_id": "S1", "loam_state_dir": str(sd)})
 
         self.assertIn("RUN_BATCH REMINDER", nudge("code-generator", [SK, SK, RC, RC, RC, RC, RC]))

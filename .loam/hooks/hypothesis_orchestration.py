@@ -1506,17 +1506,21 @@ def runbatch_nudge_for(payload: Mapping[str, Any]) -> str:
             start = row  # last start for this session wins
     if start is None or _text(start.get("role")) != "code-generator":
         return ""
+    # The workspace run id is start["run"] (e.g. "r2"); start["run_id"] is the
+    # campaign LOAM_RUN_ID (a uuid) and does NOT name the run dir. record_decision
+    # and every other consumer read start["run"] -- mirror them or the path never
+    # resolves and this nudge silently no-ops.
     workspace = _text(start.get("workspace"))
-    run_id = _text(start.get("run_id"))
-    if not workspace or not run_id:
+    run = _text(start.get("run"))
+    if not workspace or not run:
         return ""
     try:
-        run = hypothesis_workspace.read_json(
-            Path(workspace) / "runs" / run_id / hypothesis_workspace.RUN_FILE
+        rec = hypothesis_workspace.read_json(
+            Path(workspace) / "runs" / run / hypothesis_workspace.RUN_FILE
         )
     except Exception:
         return ""
-    calls = run.get("calls") or []
+    calls = rec.get("calls") or []
     n_run_code = sum(1 for c in calls if hypothesis_workspace._hpc_function(_text(c.get("tool"))) == "run_code")
     n_run_batch = sum(1 for c in calls if hypothesis_workspace._hpc_function(_text(c.get("tool"))) == "run_batch")
     if n_run_code >= RUNBATCH_NUDGE_THRESHOLD and n_run_batch == 0:
