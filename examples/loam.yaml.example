@@ -78,6 +78,11 @@ profiles:
     workspace:
       enabled: false
       strict: true
+      # Provenance tracing (decision log, per-run traces, dispatch edges) is part
+      # of the workspace -- on whenever enabled is true; there is no separate
+      # switch. trace_full keeps full tool-result bodies in the trace; the default
+      # false strips already-hashed skill reads. See ONBOARDING.md Step 4c.
+      # trace_full: false
       # Hashes remote outputs a child didn't report; needs fastmcp.
       verifier_python: /ABS/PATH/TO/.loam-venv-312/bin/python
       verifier_mcp_url: http://127.0.0.1:8000/mcp
@@ -113,6 +118,11 @@ profiles:
       # a decisive measurement; invoke tools as a bash activation + CLI call, not
       # by importing them as a library. Fetch published reference data at run
       # time rather than pasting it from memory.
+      #
+      # Weights & Biases is toggled here too, the standard way (not a Loam key):
+      # if a tool logs to W&B, export WANDB_MODE (online/offline/disabled) and
+      # WANDB_API_KEY in its activation below. WANDB_MODE=disabled is the off
+      # switch; absent, nothing logs. See ONBOARDING.md Step 4c.
       setup: |
         Run every tool by activating its venv in a bash command inside run_code
         (subprocess.run(["bash","-lc", CMD])), never by importing it as a Python

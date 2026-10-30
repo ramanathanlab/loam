@@ -489,6 +489,24 @@ def _inspect(operation: str, raw_path: str, offset: int, limit: int,
             "lines": [{"number": first + i, "text": text} for i, text in enumerate(selected)]}
 
 
+def _copper_venv(venv_path: str) -> str:
+    """Route an absolute venv path through Copper's read-only mount when enabled.
+
+    When the worker exported ``HPC_COPPER_MOUNT`` (Copper is up on this node --
+    see ``set_env.sh``'s ``HPC_USE_COPPER`` toggle), reads of the venv are served
+    through ``/tmp/$USER/copper/<original absolute path>`` so importing it does
+    not hammer Lustre at scale. A no-op when Copper is off, when the path is not
+    absolute, or when it is already under the mount.
+    """
+
+    mount = os.environ.get("HPC_COPPER_MOUNT", "").strip().rstrip("/")
+    if not mount or not venv_path.startswith("/"):
+        return venv_path
+    if venv_path == mount or venv_path.startswith(mount + "/"):
+        return venv_path
+    return mount + venv_path
+
+
 def _run_subprocess(payload: str, workdir: str | None, timeout: float, venv_path: str | None = None) -> dict[str, str]:
     import subprocess
     import sys
@@ -500,7 +518,7 @@ def _run_subprocess(payload: str, workdir: str | None, timeout: float, venv_path
         handle.write(payload)
         script = Path(handle.name)
     if venv_path is not None:
-        exec = str(Path(venv_path, "bin/python"))
+        exec = str(Path(_copper_venv(venv_path), "bin/python"))
     else:
         exec = sys.executable
 
@@ -776,7 +794,7 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
     attempt.mkdir(parents=True, exist_ok=True)
     (folder / "input.json").write_text(json.dumps(row))
     (attempt / "input.json").write_text(json.dumps(row))
-    python = str(Path(venv_path, "bin/python")) if venv_path else sys.executable
+    python = str(Path(_copper_venv(venv_path), "bin/python")) if venv_path else sys.executable
     args = _argv(row, order) if call == "argv" else ["input.json"]
     started = time.time()
     with open(folder / "stdout.txt", "wb") as out, open(folder / "stderr.txt", "wb") as err:

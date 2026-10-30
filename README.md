@@ -156,6 +156,25 @@ python -m pytest tests/           # use the interpreter with `pip install -e .`
 PyYAML in particular is required — without it `load_profile` returns `None` and
 the profile-parsing tests fail.
 
+## Optional features and their toggles
+
+Three capabilities are off (or external) by default, and each is turned on where
+the thing it governs already lives — there is no single global switch. The exact
+keys and the reasoning are in [ONBOARDING.md](ONBOARDING.md) Step 4c; the
+annotated `workspace:` block is in
+[`examples/loam.yaml.example`](examples/loam.yaml.example).
+
+| Feature | Turn on | Turn off (default) |
+| --- | --- | --- |
+| **Hypothesis workspace** — a Pando-style folder per hypothesis (see `.loam/README.md`, "Hypothesis workspace") | `workspace.enabled: true` in the profile; needs `hypothesis_orchestration.enabled: true` | `workspace.enabled: false`, or omit the block |
+| **Provenance tracing** — hash-chained decision log, per-run traces, reasoner→validator→code-generator dispatch edges | comes **with** the workspace; no separate switch. `workspace.trace_full: true` keeps full tool-result bodies | disable the workspace. `trace_full: false` strips already-hashed skill reads from traces |
+| **Weights & Biases** — experiment tracking from a campaign's own code | not a Loam key: `wandb login` once, then export `WANDB_MODE=online` (or `wandb.init(mode=...)`) in `execution.setup:` so the generators' code picks it up | `WANDB_MODE=disabled`, and the default when no code calls `wandb` |
+
+Provenance tracing has one piece that is always on and not configurable: every
+run manifest records the goal and rule files' SHA-256 digest by name, so a
+result is attributable to the policy that produced it even with the workspace
+off.
+
 ## Run enzyme reactions with Reactra
 
 The [Reactra skill](skills/qm/reactra/SKILL.md) covers YAML-driven enzyme-reaction
