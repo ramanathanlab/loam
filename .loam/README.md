@@ -10,7 +10,6 @@ canonical lifecycle-event contract and its adapters; it is not Hermes-specific.
   standard input and may emit one JSON object on standard output.
 - `adapters/hermes/plugin/` — thin Hermes plugin that converts Hermes callback
   kwargs into the Loam payload and executes the canonical scripts.
-- `run-hermes` — launches Hermes with project-plugin discovery enabled.
 
 ## Hermes setup (one-time, per user)
 
@@ -18,10 +17,13 @@ Hermes discovers project plugins only at `.hermes/plugins/`, so this repository
 contains a tiny tracked discovery shim at `.hermes/plugins/loam-hooks/`. The
 actual adapter lives here under `.loam/`.
 
-To activate the adapter only while working in this repository:
+To activate the adapter, launch through `run-campaign` from a campaign
+directory. It exports `HERMES_ENABLE_PROJECT_PLUGINS=1` and generates the
+discovery shim beside itself, so the adapter is found wherever the campaign
+lives:
 
 ```bash
-.loam/run-hermes
+cd ~/campaigns/my-campaign && ./run-campaign
 ```
 
 Hermes additionally requires an explicit plugin allow-list. Add `loam-hooks`
@@ -35,13 +37,15 @@ plugins:
 ```
 
 This allow-list entry alone does not activate Loam anywhere else: discovery is
-limited to this repository and only when `HERMES_ENABLE_PROJECT_PLUGINS=1`,
-which `run-hermes` sets.
+limited to a directory with the shim, and only when
+`HERMES_ENABLE_PROJECT_PLUGINS=1`, which `run-campaign` sets.
 
-To avoid any global Hermes configuration at all, set `HERMES_HOME` to a
-Loam-specific Hermes home before invoking `run-hermes` and place the same
-`plugins.enabled` entry in `$HERMES_HOME/config.yaml`. That isolated home needs
-its own model/credential configuration.
+`run-campaign` already avoids global Hermes configuration: it builds an
+isolated `HERMES_HOME` per campaign from the repo's shared home, so the
+`plugins.enabled` entry belongs in that shared `config.yaml`. To point somewhere
+else entirely, set `HERMES_HOME` before invoking it and put the same entry in
+`$HERMES_HOME/config.yaml`. An isolated home needs its own model and credential
+configuration.
 
 ### Global Hermes installation
 
@@ -56,7 +60,7 @@ hermes plugins enable loam-hooks
 
 The plugin remains inert unless `LOAM_ENABLED=1` or a Loam runtime variable such
 as `LOAM_STATE_DIR`, `LOAM_LEDGER_PATH`, `LOAM_PARENT_MEMORY_PATH`, or
-`LOAM_WORKFLOW_ID` is set. `run-hermes` sets `LOAM_ENABLED=1` automatically.
+`LOAM_WORKFLOW_ID` is set. `run-campaign` sets `LOAM_ENABLED=1` automatically.
 
 ## Hook contract
 
@@ -77,8 +81,13 @@ policy as it is designed.
   tournament artifacts for that run:
 
   ```bash
-  LOAM_STATE_DIR=/var/tmp/loam/${DEPLOYMENT_ID} .loam/run-hermes
+  LOAM_STATE_DIR=/var/tmp/loam/${DEPLOYMENT_ID} ./run-campaign
   ```
+
+  `run-campaign` normally assigns this itself, to the campaign directory's
+  `state/`, and unsets an inherited value so a parent shell cannot redirect a
+  run. Setting it on the command line is for a deployment that needs to place
+  the artifacts elsewhere.
 
   This runtime setting overrides profile `state_dir`; for an enabled tournament,
   it also writes Jnana state to `jnana-memory.json` and reports to

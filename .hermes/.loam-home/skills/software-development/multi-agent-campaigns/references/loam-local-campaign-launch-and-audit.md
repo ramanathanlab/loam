@@ -16,7 +16,7 @@ Do not describe it as an accepted remote-MCP campaign or mix its artifacts with 
 
 ## Isolated invocation pattern
 
-The repository launcher is top-level `run-hermes`. It must preserve an explicit `HERMES_HOME`; do not use a stale historical `.loam/run-hermes` path.
+There is no launcher wrapper for this pattern. `run-hermes` was retired, and `run-campaign` is the wrong tool here: it assigns `HERMES_HOME`, `LOAM_STATE_DIR` and `LOAM_RUN_ID` itself and discards inherited values, which is exactly the isolation this acceptance run has to control. Invoke `hermes` directly from the repository root — that is where Hermes finds `.hermes/plugins` — with every variable set explicitly.
 
 ```bash
 REPO=/path/to/loam
@@ -35,13 +35,13 @@ env \
   LOAM_ENABLED=1 \
   HERMES_ENABLE_PROJECT_PLUGINS=1 \
   LOAM_PRE_LLM_EVERY=1 \
-  ./run-hermes --cli
+  hermes --cli
 ```
 
 Preflight the effective config path without launching a campaign:
 
 ```bash
-HERMES_HOME="$ROOT_CAMPAIGN/hermes-home" ./run-hermes config path
+HERMES_HOME="$ROOT_CAMPAIGN/hermes-home" hermes config path
 ```
 
 It must print `$ROOT_CAMPAIGN/hermes-home/config.yaml`.

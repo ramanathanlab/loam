@@ -9,18 +9,67 @@
 #     cd ~/campaigns/my-campaign && ./run-campaign
 #
 # The campaign name is the directory name, so renaming or copying the directory
-# starts a separate campaign. Unlike run-hermes (which must run from the repo
-# root so Hermes finds ./.hermes/plugins), this script works from anywhere: it
-# keeps LOAM_REPO for the adapter and generates a local plugin shim pointing at
-# it, because Hermes discovers project plugins relative to the working directory.
+# starts a separate campaign. This script works from anywhere: it keeps
+# LOAM_REPO for the adapter and generates a local plugin shim pointing at it,
+# because Hermes discovers project plugins relative to the working directory.
 #
 # Startup runs a fail-closed readiness check: one real completion per configured
 # model role (reasoner, subagents, tournament generation, tournament ranking) and
-# one returned Aurora run_code probe with hostname, PBS job ID, and device pin. If
-# the HPC server is stopped, it starts a one-node debug allocation and waits up
-# to LOAM_HPC_WAIT_SECONDS (default 900). It never restarts a listening server.
-# Set LOAM_SKIP_PREFLIGHT=1 only for focused launcher diagnostics, never for a
-# scientific campaign.
+# one returned Aurora run_code probe with hostname, PBS job ID, and device pin. It
+# starts the local inference proxy if nothing is listening, and -- if the HPC
+# server is stopped -- a one-node debug allocation. It never restarts a listening
+# server.
+#
+# ----------------------------------------------------------------------------
+# Environment
+#
+# Everything a campaign needs comes from files, not variables: the profile at
+# ~/.hermes/loam.yaml, the goal and rules it names, and the Hermes config in the
+# shared home. The variables below only change HOW this launch runs.
+#
+# Read by this script:
+#   LOAM_REPO              the loam checkout, for the adapter and the skills
+#                          tree. Defaults to this directory when the script sits
+#                          in a checkout; a COPIED script must be given it.
+#   LOAM_SKIP_PREFLIGHT=1  skip the readiness gate. This also skips the two
+#                          auto-starts the gate performs -- the inference proxy
+#                          and the HPC allocation -- so nothing brings them up.
+#                          Launcher diagnostics only, never a scientific campaign.
+#   LOAM_PREFLIGHT_PYTHON  interpreter for the preflight. Default
+#                          ~/.loam-venv-312/bin/python; the launch fails if it
+#                          is not executable.
+#   LOAM_PREFLIGHT_TIMEOUT seconds per readiness probe (default 300; the script
+#                          raises the preflight's own 120 because a freshly
+#                          built EL cluster is slow on its first task).
+#   LOAM_HPC_WAIT_SECONDS  how long to wait for a started allocation to listen
+#                          (default 900).
+#   LOAM_ENABLED           defaults to 1. Set 0 to launch Hermes with the Loam
+#                          plugin inert.
+#
+# Passed through to the preflight (see scripts/campaign_preflight.py):
+#   ALCF_PROXY=0           do not auto-start the local inference proxy.
+#   ALCF_PROXY_PORT        proxy port (default 51911).
+#   ALCF_PROXY_PYTHON      proxy interpreter (default ~/.loam-venv-312).
+#   ALCF_PROXY_LOG         proxy log (default ~/.loam-hpc/alcf_proxy_minerva.log).
+#   HPC_ENV_FILE           the env file the HPC auto-start sources. Defaults to
+#                          skills/hpc-deployment/set_env.sh, which is NOT the
+#                          set_env_akv.sh that ONBOARDING tells you to edit --
+#                          set this if you edited the other one.
+#
+# Assigned here, and an inherited value is DISCARDED, so a parent shell cannot
+# redirect or merge a run: LOAM_STATE_DIR (always <campaign>/state), LOAM_RUN_ID
+# (fresh per launch), LOAM_LEDGER_PATH, LOAM_PARENT_MEMORY_PATH,
+# LOAM_WORKFLOW_ID, LOAM_PROFILE, LOAM_CONFIG_PATH, HERMES_ACCEPT_HOOKS,
+# HERMES_ENABLE_PROJECT_PLUGINS (=1; without it Hermes ignores the shim and no
+# hook fires at all),
+# HERMES_HOME (always <campaign>/.hermes/home).
+#
+# Deliberately NOT a knob: the tournament cadence. LOAM_PRE_LLM_EVERY is read
+# only by the emergency no-config path, so with a real profile it does nothing;
+# set `pre_llm_every` in the profile instead. Likewise the active profile is
+# chosen by `active_profile` in loam.yaml, not by LOAM_PROFILE, which is unset
+# above.
+# ----------------------------------------------------------------------------
 set -euo pipefail
 
 CAMPAIGN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -99,6 +148,19 @@ if [[ ! -f "$SHARED_HERMES_HOME/config.yaml" ]]; then
 fi
 cp "$SHARED_HERMES_HOME/config.yaml" "$HERMES_HOME/config.yaml"
 
+# Register the checkout's skills/ tree in the shared library before the home is
+# assembled. Hermes resolves `campaign.skills` names against the library, so a
+# clone whose library lacks them fails inside a code-generator mid-round rather
+# than here. Idempotent and stdlib-only, so every launch keeps the library in
+# step with the checkout -- including skills a `git pull` just added. It never
+# replaces a library entry it does not own, and a conflict there is not worth
+# aborting a launch over, so this reports and continues.
+if [[ -f "$LOAM_REPO/scripts/install_skills.py" ]]; then
+  python3 "$LOAM_REPO/scripts/install_skills.py" \
+    --repo "$LOAM_REPO" --hermes-home "$SHARED_HERMES_HOME" >/dev/null ||
+    echo "run-campaign: some skills were not registered; run scripts/install_skills.py" >&2
+fi
+
 # Shared, read-mostly: credentials, persona, tool library, binaries, plugins.
 for shared_entry in auth.json SOUL.md skills bin plugins hooks; do
   [[ -e "$SHARED_HERMES_HOME/$shared_entry" ]] &&
@@ -119,8 +181,12 @@ mkdir -p "$HERMES_HOME/memories" "$HERMES_HOME/memory" "$HERMES_HOME/sessions" \
 # the orchestration ledger and the run manifest. These values are assigned, not
 # defaulted, so stale parent-shell state cannot redirect the run.
 export LOAM_STATE_DIR="$CAMPAIGN_DIR/state"
-export LOAM_PRE_LLM_EVERY=1
 export LOAM_RUN_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+# Only the emergency no-config path reads this; with a profile loaded, cadence
+# comes from its `pre_llm_every`. Pinned to 1 so a campaign that somehow lands on
+# that path still runs the tournament every turn rather than silently drifting to
+# the built-in default.
+export LOAM_PRE_LLM_EVERY=1
 mkdir -p "$LOAM_STATE_DIR"
 
 # Fail closed on actual inference and returned Aurora execution, not merely open

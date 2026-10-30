@@ -583,5 +583,44 @@ class RuleLayeringTests(unittest.TestCase):
         self.assertNotIn("design-provenance", orchestration._base_rule_names({"repo_root": str(ROOT)}))
 
 
+class StarterKitTests(unittest.TestCase):
+    """`examples/campaign-starter/` is copied and launched, so it must load.
+
+    The kit's files are read by the hook on the first turn, long after the
+    preflight has passed, so a malformed template does not surface until an
+    allocation is already running. Loading them here is the only cheap check.
+    """
+
+    KIT = ROOT / "examples" / "campaign-starter"
+
+    def test_the_shipped_goal_and_rules_load(self) -> None:
+        orchestration = _load("loam_starter_kit")
+        payload = {
+            "repo_root": str(ROOT),
+            "loam_campaign": {
+                "goal": "example-campaign",
+                "rules": ["example-protocol", "example-constraint"],
+                "dir": str(self.KIT),
+                "skills": ["chai", "proteinmpnn"],
+            },
+        }
+        context = orchestration.campaign_context(payload)
+        self.assertEqual(context.goal_name, "example-campaign")
+        self.assertTrue(context.goal, "the goal body is empty")
+        names = [rule.name for rule in context.rules]
+        self.assertIn("example-protocol", names)
+        self.assertIn("example-constraint", names)
+        for tier in orchestration.RULE_TIERS:
+            self.assertTrue(context.rules_for(tier), f"no rule reaches {tier}")
+
+    def test_the_profile_names_the_files_the_kit_ships(self) -> None:
+        """A rename that touched only one of the three places would pass above."""
+
+        profile = (self.KIT / "loam.yaml").read_text(encoding="utf-8")
+        self.assertIn("goal: example-campaign", profile)
+        self.assertIn("rules: [example-protocol, example-constraint]", profile)
+        self.assertTrue((self.KIT / "campaigns" / "example-campaign.md").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -43,6 +43,22 @@ Jnana generation/ranking (pre-LLM hook)
   and `pip install -e .` in this repo, then add `fastmcp`, `globus-compute-sdk`,
   `academy-py`, `pyyaml`, and a Jnana checkout.
 - The `hermes` CLI, with a model provider configured.
+- **The skills registered in your Hermes library.** Hermes resolves
+  `campaign.skills` names against the library of the home it runs in, and a
+  checkout does not register its own `skills/` tree. `run-campaign` does this for
+  you on every launch, so you only run it by hand when launching some other way,
+  or to install into a home outside the checkout:
+
+  ```bash
+  python3 scripts/install_skills.py                              # the checkout's shared home
+  python3 scripts/install_skills.py --hermes-home ~/.hermes      # your own home
+  python3 scripts/install_skills.py --hermes-home ~/.hermes --copy   # no link back to the checkout
+  ```
+
+  It symlinks by default, so one tree stays the source of truth and a `git pull`
+  updates the library with it; `--copy` is for a home that must not reference the
+  checkout. Re-running is safe, and it refuses to replace a library entry it does
+  not own. Confirm with `hermes skills list`, or `skill_view(name="chai")`.
 - A **Globus Compute endpoint already running on the HPC login node** (Aurora:
   `~/.globus_compute/loam-aurora-flex`). This is the one piece that lives on the
   cluster, not your laptop. You need its **manager UUID**. See the
@@ -56,8 +72,11 @@ Two OpenAI-compatible bases the campaign talks to:
 - **Argo tunnel on `:51900`** — the Hermes reasoner and every delegated subagent
   (`argo:gpt-5.6-sol`). Bring up this SSH tunnel yourself.
 - **`scripts/alcf_inference_proxy.py` on `:51911`** (Minerva) — Jnana's ranking
-  judge. `run-hermes`/`run-campaign` auto-start this if nothing is listening; on
-  an auth error run `alcf-tokens login inference`.
+  judge. **The preflight starts this** if nothing is listening, and waits for
+  the port — it is the step whose ranking-role completion depends on it. Opt out
+  with `ALCF_PROXY=0` when the ranking model is served another way; override the
+  port, interpreter and log with `ALCF_PROXY_PORT`, `ALCF_PROXY_PYTHON` and
+  `ALCF_PROXY_LOG`. On an auth error run `alcf-tokens login inference`.
 
 ## Step 2 — Bring up the HPC MCP server ("the hpc thing")
 
@@ -66,6 +85,14 @@ This is the `hpc-deployment` skill. From that skill's SKILL.md §Deployment:
 1. **Edit `skills/hpc-deployment/set_env_akv.sh`** (or your own copy of
    `set_env.sh`) — the single definition point. See the hardcoded-value table
    below for everything a new user must change.
+
+   Both files are tracked and they name **different** endpoints and base dirs.
+   This step sources whichever you edited, so the choice is yours — but the
+   preflight's HPC auto-start defaults to `set_env.sh` regardless, so if you
+   edited the other one and intend to let it start an allocation, export
+   `HPC_ENV_FILE=$PWD/skills/hpc-deployment/set_env_akv.sh`. Bringing the server
+   up yourself here avoids the question entirely, which is what a real run should
+   do anyway.
 2. `source skills/hpc-deployment/set_env_akv.sh` — **every later step runs in
    that same shell**; the server reads its configuration from the process
    environment and nowhere else.
@@ -88,8 +115,20 @@ allocation. `kill -9` orphans the EL cluster until walltime.
 
 ## Step 3 — Wire MCP + hooks into the Hermes config
 
-In the Hermes home's `config.yaml` (the shared home is
-`.hermes/.loam-home/config.yaml`):
+**Copy `examples/hermes-config.yaml.example` into the Hermes home as
+`config.yaml`** (the shared home is `.hermes/.loam-home/config.yaml`) and fill in
+every `<PLACEHOLDER>`. Do not hand-write this file from the keys below — the
+example is the complete one, and the pieces most easily missed are the ones that
+are not Loam-specific at all:
+
+- `model:` — the reasoner's model, provider, and `base_url` (the `:51900` tunnel).
+  Without this block there is no campaign parent.
+- `custom_providers:` — one entry per endpoint from Step 1 (Argo and Minerva).
+- `delegation.base_url` / `api_key` / `model` — `delegate_task` ignores per-agent
+  `model:` frontmatter, so this is the **only** place every child
+  (hypothesis-validator and code-generator alike) gets its model.
+
+The Loam-specific keys the example already contains, and what each one does:
 
 ```yaml
 plugins:
@@ -97,13 +136,20 @@ plugins:
 mcp_servers:
   hpc:
     url: http://127.0.0.1:8000/mcp   # (2) connects to the server from Step 2
-    timeout: 300
-    connect_timeout: 60
+    timeout: 300                     # a wedged call blocks the agent loop this
+    connect_timeout: 60              # long; prefer run_code's own `timeout`
+  hpcctl:                            # optional: start/stop/status for the
+    command: /ABS/PATH/.loam-venv/bin/python   # allocation, via hpc_control.py
+    args: [/ABS/PATH/loam/skills/hpc-deployment/scripts/hpc_control.py]
 delegation:
   max_spawn_depth: 2                 # coordinator → validator → code-generator
   orchestrator_enabled: true
   max_concurrent_children: 5
 ```
+
+`hpc` is the one the campaign needs; `hpcctl` is a convenience that lets the
+agent query or cycle the allocation itself instead of you doing it in Step 2's
+shell.
 
 `plugins.enabled: [loam-hooks]` is what makes the hooks fire. The hooks live in
 `.loam/hooks/` (`pre-llm.py` runs the tournament every `pre_llm_every` turns;
@@ -114,10 +160,9 @@ ledgers) and are loaded through the adapter at
 
 See `.loam/README.md` for the full hook contract and the global-install option.
 
-> **Config templates.** Copy `examples/hermes-config.yaml.example` into your
-> Hermes home as `config.yaml` and fill in the `<PLACEHOLDER>`s. **Credentials
-> are not in this file** — they live in `auth.json`, which is user-provided and
-> gitignored; create it with `hermes` login, never commit a filled-in one.
+> **Credentials are not in this file** — they live in `auth.json`, which is
+> user-provided and gitignored; create it with `hermes` login, and never commit a
+> filled-in one.
 
 ## Step 4 — The Loam profile (`~/.hermes/loam.yaml`)
 
@@ -134,18 +179,33 @@ contract. Key blocks:
   `setup:` recipe handed verbatim to every code-generator child (venv
   activation + the exact Chai/MPNN command lines). The child runs on Aurora and
   cannot see local files, so this recipe must be self-contained.
-- `campaign:` — `dir`, `goal`, `rules`. See Step 4b.
+- `campaign:` — `dir`, `goal`, `rules`, and `skills`. See Step 4b. `skills` names
+  the skills a code-generator must consult before writing code; they are names
+  from the Hermes skill library, not files under `dir`. Omit it and children
+  write from recollection, which is what it exists to stop.
 
 ## Step 4b — Write the campaign
 
-Loam ships no campaign content: no goal, and no rule naming a measurement. In a
-directory you own — the one `campaign.dir` points at — write:
+Loam ships no campaign content: no goal, and no rule naming a measurement.
+**Start from `examples/campaign-starter/`** — a copyable skeleton of this step
+and Step 4, with a template goal, two rules scoped to different tiers, and a
+collaborator checklist:
+
+```bash
+cp -r <loam-repo>/examples/campaign-starter ~/campaigns/my-campaign
+```
+
+In a directory you own — the one `campaign.dir` points at — you need:
 
 ```
 <campaign.dir>/campaigns/<goal>.md   # objective, success criteria,
                                      # constraints, the decision it informs
 <campaign.dir>/rules/<name>.md       # rules specific to this campaign
 ```
+
+Both file kinds carry `---` front matter. The goal's names itself — `name:` must
+equal the filename and `campaign.goal`, so renaming the goal means editing two
+other places — and a rule adds `scope:`.
 
 The goal reaches all three tiers. A rule is policy injected into the tiers its
 `scope:` front matter names; often a few lines is enough — which measurement
@@ -155,9 +215,22 @@ can shadow a shipped rule with your own text.
 
 A named-but-missing file **raises**, listing every directory searched: a run that
 quietly lost its objective while still looking governed is the failure this
-avoids. A campaign with no rules of its own still runs governed by the invariant
+avoids. It raises on the **first turn**, not at launch — the hook is what opens
+these files, so the preflight passing says nothing about them. The starter kit's
+README has a one-liner that forces the check before you spend an allocation. A campaign with no rules of its own still runs governed by the invariant
 rules the repo ships (`evidence-integrity`, `experiment-discipline`), which load
 whether or not a profile names them.
+
+Everything past the front matter in these files is injected into agent context
+verbatim — only the front matter is stripped. So keep both files short, since
+they are injected every turn, and leave no editorial notes in them: an HTML
+comment survives, and a rule's body arrives labelled as authoritative over any
+conflicting instruction.
+
+Not symmetrical with `campaign.skills`, which is only shape-checked: a
+`<PLACEHOLDER>` there raises, but a well-formed name for a skill that is not
+installed does not — that one fails inside a code-generator mid-round. Confirm
+your names with `hermes skills list`.
 
 See `.loam/rules/README.md` for the rule layers, the front matter, and what a
 protocol rule has to answer.
@@ -178,6 +251,14 @@ HPC server is not up it will start a bounded one-node debug allocation and wait
 up to `LOAM_HPC_WAIT_SECONDS` (default 900) — but for a real run, have Step 2
 already live.
 
+**`run-campaign`'s header is the reference for the environment**: every variable
+it reads, the ones it passes through to the preflight (`ALCF_PROXY*`,
+`HPC_ENV_FILE`), and — the part worth reading before you try to override
+anything — the ones it deliberately discards, so that no parent shell can
+redirect or merge a run. Two in particular are not knobs: the tournament cadence
+comes from the profile's `pre_llm_every`, not `LOAM_PRE_LLM_EVERY`, and the
+active profile from `active_profile` in `loam.yaml`, not `LOAM_PROFILE`.
+
 ### Validate the plumbing without a cluster first
 
 Run the five-round arithmetic campaign in `CAMPAIGN_TEST.md` with
@@ -186,6 +267,57 @@ hook → validator → code-generator → reasoner → next-round path determini
 and is the fastest way to confirm the hooks and delegation are wired correctly
 before you spend an allocation.
 
+## Step 6 — Drive the campaign
+
+`run-campaign` ends in `exec hermes "$@"`, so a successful launch drops you at an
+interactive Hermes prompt. **Nothing has happened yet.** The pre-LLM hook fires
+on a `pre_llm_call` event, so until you take a turn there is no tournament, no
+validators, and no campaign.
+
+### What to type
+
+Almost anything that produces a turn. The campaign's content does not come from
+your message — the hook injects the goal, the rules, and the round's scheduler
+directive on its own — so the opening prompt only has to start the loop:
+
+```
+Begin the campaign.
+```
+
+Do **not** restate the objective. The goal file already reaches every tier as
+`CAMPAIGN GOAL (what this experiment serves)`, and a retyped-from-memory
+objective in the first message is a second, unversioned copy that can contradict
+the file without the provenance record showing it.
+
+To launch unattended instead — the usual choice for a long allocation —
+`run-campaign` forwards its arguments to `hermes`, which takes a one-shot prompt:
+
+```bash
+./run-campaign -z "Begin the campaign."
+```
+
+### What advances a round
+
+One scheduler step per turn. Each turn the orchestration hook reads the campaign
+ledger, works out where the round is, and injects the next action:
+
+| Turn | Injected directive | What the parent does |
+|---|---|---|
+| 1 | Tournament runs, then: *N validators planned* | calls `loam_dispatch_round` |
+| 2 | (validators still running → nothing) | waits |
+| 3 | all validators complete → reasoner directive | synthesizes the brief |
+| 4 | brief steers a fresh tournament | next round begins |
+
+So a round is roughly two to three turns, and you advance it by giving Hermes
+another turn — `continue` is enough. The directive is self-contained and the
+selected hypotheses deliberately never enter the parent's context in full, so do
+not compose a `delegate_task` batch by hand: a batch you write is a substitute
+for the campaign's work rather than the campaign's work.
+
+Watch progress in `<campaign-dir>/state/` — `hypothesis-campaign.jsonl` is the
+orchestration ledger, `tournament-reports/` holds each round's ranking, and
+`parent-memory.jsonl` accumulates the accepted, source-backed findings.
+
 ---
 
 ## New-user traps (all hardcoded to a prior user — change before first run)
@@ -193,7 +325,7 @@ before you spend an allocation.
 | File | Setting to change |
 |---|---|
 | `run-campaign` | `LOAM_REPO` default; `PREFLIGHT_PYTHON` (`~/.loam-venv-312`) |
-| `run-hermes` | `ALCF_PROXY_PYTHON`, proxy port/log paths |
+| `scripts/campaign_preflight.py` | `ALCF_PROXY_PYTHON` default (`~/.loam-venv-312`), proxy port and log path |
 | `.loam/README.md` global shim | `LOAM_ROOT` default (points at another user's checkout) |
 | `~/.hermes/loam.yaml` | `jnana_root`, all `state_dir` paths, the `:51900` / `:51911` endpoints and model ids |
 | `skills/hpc-deployment/set_env_akv.sh` | `HPC_GLOBUS_ENDPOINT_ID`, `HPC_BASE_DIR`, `HPC_CAMPAIGN_ID`, `HPC_INSPECT_ROOTS`, and the venv/paths inside `worker_init` of `HPC_ENDPOINT_CONFIG_JSON` |

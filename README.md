@@ -30,6 +30,16 @@ execution layer is already live and will abort the launch if it is not.
 
 ## Setup, in order
 
+> **Starting a new campaign, or handing one to a collaborator?** Copy
+> [`examples/campaign-starter/`](examples/campaign-starter/) — a runnable
+> skeleton of the profile, a goal, two scoped rules, and a checklist of what no
+> script can supply. It covers steps 4 and 5 below; the rest of this list is the
+> machine setup it assumes.
+>
+> ```bash
+> cp -r examples/campaign-starter ~/campaigns/my-campaign
+> ```
+
 Each step is detailed in [ONBOARDING.md](ONBOARDING.md); this is the shape.
 
 **1. Stand up the execution layer.** A Globus Compute endpoint running on the
@@ -41,20 +51,23 @@ tools. Do not trust it until `smoke_test_client.py` passes. Shut it down with
 SIGINT, never `kill -9` — a clean exit is what releases the allocation.
 
 **2. Bring up inference.** One OpenAI-compatible base for the harness and its
-subagents, one for the tournament judge. `run-hermes` will start the ALCF
-Minerva proxy if nothing is listening on its port; the rest is yours.
+subagents, one for the tournament judge. The preflight starts the ALCF Minerva
+proxy if nothing is listening on its port (`ALCF_PROXY=0` to opt out); the SSH
+tunnel is yours to bring up.
 
 **3. Configure Hermes.** In the Hermes home's `config.yaml`: enable the
 `loam-hooks` plugin and point `mcp_servers.hpc` at the server from step 1. See
 `examples/hermes-config.yaml.example`.
 
-**4. Write the Loam profile.** Copy `examples/loam.yaml.example` to
+**4. Write the Loam profile.** Copy the starter kit's `loam.yaml` (or
+`examples/loam.yaml.example`, which annotates every key more fully) to
 `~/.hermes/loam.yaml` and fill in every `<PLACEHOLDER>`. This is where the
 tournament settings, the `execution:` contract (including the `setup:` recipe
 handed verbatim to every code-generator child) and the `campaign:` block live.
 It is deliberately outside the repo: it holds your paths and endpoints.
 
-**5. Write your campaign.** In a directory you own, named by `campaign.dir`:
+**5. Write your campaign.** In a directory you own, named by `campaign.dir` —
+the starter kit is already this shape, with a template for each file:
 
 ```
 <campaign.dir>/campaigns/<goal>.md   # what the campaign is for
@@ -76,6 +89,11 @@ bounds. A campaign with no rules of its own still runs governed by the invariant
 ones. See [`.loam/rules/README.md`](.loam/rules/README.md) for the layers, the
 front matter, and what a rule has to answer.
 
+Everything past the front matter in these files is injected into agent context
+verbatim, and a rule arrives labelled authoritative over conflicting
+instructions. So keep them short, and leave no editorial notes in them — an HTML
+comment is not stripped, and is read as policy.
+
 **6. Launch.**
 
 ```bash
@@ -90,13 +108,33 @@ home and writes every artifact inside it, then runs a fail-closed preflight —
 one real completion per model role and one returned `run_code` probe — before
 `exec hermes`.
 
-To run from the repo root instead, without a per-campaign directory:
+Overrides, for a scratch or diagnostic launch:
 
 ```bash
-./run-hermes                          # pre-LLM hook every turn
-LOAM_PRE_LLM_EVERY=3 ./run-hermes     # ... every three turns
-LOAM_STATE_DIR=/var/tmp/loam/$ID ./run-hermes   # isolate this run's artifacts
+LOAM_SKIP_PREFLIGHT=1 ./run-campaign    # no readiness gate, and no proxy or
+                                        # allocation auto-start; never a real run
+ALCF_PROXY=0 ./run-campaign             # ranking model served some other way
+LOAM_REPO=/path/to/loam ./run-campaign  # required when the script was copied out
 ```
+
+`run-campaign`'s header documents every variable it reads, including which ones
+it deliberately discards — the tournament cadence is a profile setting
+(`pre_llm_every`), not an environment override.
+
+**7. Drive it.** A launch leaves you at an interactive prompt with nothing
+started: the pre-LLM hook fires on a turn, so the campaign begins when you take
+one. `Begin the campaign.` is enough — the goal, the rules, and the round's
+scheduler directive are all injected, so the message itself carries no content.
+Unattended, pass a one-shot prompt through to Hermes:
+
+```bash
+./run-campaign -z "Begin the campaign."
+```
+
+Thereafter one scheduler step happens per turn (tournament → validators →
+reasoner brief → next tournament), so `continue` advances the round. See
+[ONBOARDING.md](ONBOARDING.md) Step 6 for the per-turn breakdown and what to
+watch in `state/`.
 
 ## Validate without a cluster first
 
@@ -116,12 +154,12 @@ the profile-parsing tests fail.
 
 ## Run enzyme reactions with Reactra
 
-The [Reactra skill](skills/reactra/SKILL.md) covers YAML-driven enzyme-reaction
+The [Reactra skill](skills/qm/reactra/SKILL.md) covers YAML-driven enzyme-reaction
 simulations, including packaged PMD and chorismate-mutase examples, HPC execution,
 recovery, and interpreting crossings versus barriers. Make the skill available in
 the campaign's Hermes skill library and add `reactra` to `campaign.skills` in your
 Loam profile so code-generators consult it. The
-[execution guide](skills/reactra/references/loam-execution.md) explains environment
+[execution guide](skills/qm/reactra/references/loam-execution.md) explains environment
 setup and resource ownership for direct and cluster execution.
 
 ## Where things live
@@ -136,5 +174,7 @@ setup and resource ownership for direct and cluster execution.
 | `.loam/README.md` | Lifecycle-hook behavior, and global Hermes installation |
 | `skills/` | Domain procedures the campaign's code draws on |
 | `scripts/campaign_preflight.py` | The fail-closed readiness gate |
-| `examples/` | Config templates to copy outside the repo |
+| `examples/campaign-starter/` | A new campaign's skeleton: profile, goal, rules, checklist |
+| `examples/*.example` | Fully annotated config templates to copy outside the repo |
+| `scripts/install_skills.py` | Registers `skills/` in a Hermes library (run-campaign does this) |
 | `~/.hermes/loam.yaml` | Your profile (never tracked here) |

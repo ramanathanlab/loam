@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Fail-closed Loam campaign readiness check with bounded HPC auto-start.
+"""Fail-closed Loam campaign readiness check with bounded auto-start.
 
 This checks real inference (not only an open TCP port) and a returned Aurora
-run_code result with placement provenance. If the HPC server is stopped, it may
-start one debug allocation and wait for it. It never restarts a listening server.
+run_code result with placement provenance. It may start two things it depends on
+and then wait for them: the local ALCF inference proxy, and -- when the HPC
+server is stopped -- one debug allocation. It never restarts a listening server.
 """
 from __future__ import annotations
 
@@ -150,6 +151,60 @@ def _host_port(url: str) -> tuple[str, int]:
     return parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
 
 
+def ensure_proxy_started(repo: Path, port: int, wait_seconds: int) -> dict[str, Any]:
+    """Start the local ALCF inference proxy if nothing is listening on its port.
+
+    The ranking role runs through this proxy, so `check_inference` below is what
+    fails when it is down -- with a connection error that says nothing about the
+    cause. Starting it here rather than in the launcher keeps one readiness path:
+    the gate that requires a dependency is the thing that satisfies it, so the
+    two cannot drift the way the launcher and this gate did while both existed.
+
+    This is the smaller of the two auto-starts already in this file -- the other
+    submits a PBS allocation on a supercomputer. Detached, so it outlives the
+    campaign that started it, and skipped entirely by ALCF_PROXY=0 when the
+    ranking model is served some other way.
+    """
+
+    if os.environ.get("ALCF_PROXY", "1") == "0":
+        return {"action": "skipped", "reason": "ALCF_PROXY=0"}
+    if _port_open("127.0.0.1", port):
+        return {"action": "already-listening", "port": port}
+
+    python = Path(
+        os.environ.get("ALCF_PROXY_PYTHON") or Path.home() / ".loam-venv-312" / "bin" / "python"
+    )
+    if not python.is_file():
+        raise RuntimeError(f"ALCF proxy interpreter is unavailable: {python}")
+    log = Path(os.environ.get("ALCF_PROXY_LOG") or Path.home() / ".loam-hpc" / "alcf_proxy_minerva.log")
+    log.parent.mkdir(parents=True, exist_ok=True)
+
+    with log.open("ab") as stream:
+        subprocess.Popen(  # noqa: S603 -- fixed argv, no shell
+            [str(python), str(repo / "scripts" / "alcf_inference_proxy.py")],
+            env={**os.environ, "ALCF_CLUSTER": "minerva", "ALCF_PROXY_PORT": str(port)},
+            stdout=stream,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+    deadline = time.monotonic() + wait_seconds
+    while time.monotonic() < deadline:
+        if _port_open("127.0.0.1", port):
+            return {"action": "started", "port": port, "log": str(log)}
+        time.sleep(0.5)
+    tail = ""
+    try:
+        tail = "".join(log.read_text(errors="replace").splitlines(keepends=True)[-5:])
+    except OSError:
+        pass
+    raise RuntimeError(
+        f"ALCF proxy did not listen on {port} within {wait_seconds}s. Last log lines:\n{tail}"
+        f"\nIf it is an auth error: {python.parent}/alcf-tokens login inference"
+    )
+
+
 def ensure_hpc_started(repo: Path, env_file: Path, wait_seconds: int, url: str) -> dict[str, Any]:
     host, port = _host_port(url)
     if _port_open(host, port):
@@ -216,6 +271,13 @@ def main() -> int:
     parser.add_argument("--wait-seconds", type=int, default=900)
     parser.add_argument("--timeout", type=float, default=120)
     parser.add_argument("--no-auto-start", action="store_true")
+    parser.add_argument(
+        "--proxy-port",
+        type=int,
+        default=int(os.environ.get("ALCF_PROXY_PORT") or 51911),
+        help="local ALCF inference proxy port; ALCF_PROXY=0 disables the auto-start",
+    )
+    parser.add_argument("--proxy-wait-seconds", type=int, default=15)
     args = parser.parse_args()
     args.hpc_env = (args.hpc_env or os.environ.get("HPC_ENV_FILE")
                     or args.repo / "skills" / "hpc-deployment" / "set_env.sh")
@@ -223,6 +285,10 @@ def main() -> int:
 
     report: dict[str, Any] = {"ready": False}
     try:
+        # Before the inference check, which is what depends on it.
+        if not args.no_auto_start:
+            report["proxy_start"] = ensure_proxy_started(
+                args.repo, args.proxy_port, args.proxy_wait_seconds)
         report["inference"] = check_inference(args.hermes_home, args.loam_config, args.timeout)
         if not args.no_auto_start:
             report["hpc_start"] = ensure_hpc_started(
