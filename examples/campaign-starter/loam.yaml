@@ -13,7 +13,7 @@ profiles:
     workflow_id: my_campaign
 
     # Absolute. run-campaign overrides this with the campaign directory's
-    # state/, so it only matters for a bare `run-hermes` launch.
+    # state/, so this value is only a fallback for other launch paths.
     state_dir: <ABS_PATH_TO_CAMPAIGN_DIR>/state
     pre_llm_every: 1
     duplicate_policy: allow_and_audit

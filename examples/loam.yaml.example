@@ -14,7 +14,7 @@ profiles:
     # Absolute path. Lifecycle ledgers, run-manifest, Jnana memory and
     # tournament reports are written here. run-campaign overrides this with the
     # campaign directory's state/, so this value is the default for bare
-    # run-hermes launches.
+    # launches that do not go through run-campaign.
     state_dir: /ABS/PATH/TO/loam/.loam/state/my_campaign
     pre_llm_every: 1
     duplicate_policy: allow_and_audit

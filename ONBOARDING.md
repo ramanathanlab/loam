@@ -72,10 +72,11 @@ Two OpenAI-compatible bases the campaign talks to:
 - **Argo tunnel on `:51900`** — the Hermes reasoner and every delegated subagent
   (`argo:gpt-5.6-sol`). Bring up this SSH tunnel yourself.
 - **`scripts/alcf_inference_proxy.py` on `:51911`** (Minerva) — Jnana's ranking
-  judge. **`run-hermes` starts this if nothing is listening; `run-campaign` does
-  not** — bring it up yourself before a campaign launch, or the preflight's
-  ranking-role completion fails and aborts. On an auth error run
-  `alcf-tokens login inference`.
+  judge. **The preflight starts this** if nothing is listening, and waits for
+  the port — it is the step whose ranking-role completion depends on it. Opt out
+  with `ALCF_PROXY=0` when the ranking model is served another way; override the
+  port, interpreter and log with `ALCF_PROXY_PORT`, `ALCF_PROXY_PYTHON` and
+  `ALCF_PROXY_LOG`. On an auth error run `alcf-tokens login inference`.
 
 ## Step 2 — Bring up the HPC MCP server ("the hpc thing")
 
@@ -310,7 +311,7 @@ orchestration ledger, `tournament-reports/` holds each round's ranking, and
 | File | Setting to change |
 |---|---|
 | `run-campaign` | `LOAM_REPO` default; `PREFLIGHT_PYTHON` (`~/.loam-venv-312`) |
-| `run-hermes` | `ALCF_PROXY_PYTHON`, proxy port/log paths |
+| `scripts/campaign_preflight.py` | `ALCF_PROXY_PYTHON` default (`~/.loam-venv-312`), proxy port and log path |
 | `.loam/README.md` global shim | `LOAM_ROOT` default (points at another user's checkout) |
 | `~/.hermes/loam.yaml` | `jnana_root`, all `state_dir` paths, the `:51900` / `:51911` endpoints and model ids |
 | `skills/hpc-deployment/set_env_akv.sh` | `HPC_GLOBUS_ENDPOINT_ID`, `HPC_BASE_DIR`, `HPC_CAMPAIGN_ID`, `HPC_INSPECT_ROOTS`, and the venv/paths inside `worker_init` of `HPC_ENDPOINT_CONFIG_JSON` |

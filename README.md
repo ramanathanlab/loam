@@ -51,8 +51,9 @@ tools. Do not trust it until `smoke_test_client.py` passes. Shut it down with
 SIGINT, never `kill -9` — a clean exit is what releases the allocation.
 
 **2. Bring up inference.** One OpenAI-compatible base for the harness and its
-subagents, one for the tournament judge. `run-hermes` will start the ALCF
-Minerva proxy if nothing is listening on its port; the rest is yours.
+subagents, one for the tournament judge. The preflight starts the ALCF Minerva
+proxy if nothing is listening on its port (`ALCF_PROXY=0` to opt out); the SSH
+tunnel is yours to bring up.
 
 **3. Configure Hermes.** In the Hermes home's `config.yaml`: enable the
 `loam-hooks` plugin and point `mcp_servers.hpc` at the server from step 1. See
@@ -107,12 +108,11 @@ home and writes every artifact inside it, then runs a fail-closed preflight —
 one real completion per model role and one returned `run_code` probe — before
 `exec hermes`.
 
-To run from the repo root instead, without a per-campaign directory:
+Overrides, for a scratch or diagnostic launch:
 
 ```bash
-./run-hermes                          # pre-LLM hook every turn
-LOAM_PRE_LLM_EVERY=3 ./run-hermes     # ... every three turns
-LOAM_STATE_DIR=/var/tmp/loam/$ID ./run-hermes   # isolate this run's artifacts
+LOAM_SKIP_PREFLIGHT=1 ./run-campaign    # no readiness gate; never for a real run
+LOAM_PRE_LLM_EVERY=3 ./run-campaign     # run the tournament every third turn
 ```
 
 **7. Drive it.** A launch leaves you at an interactive prompt with nothing

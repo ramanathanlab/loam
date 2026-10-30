@@ -9,10 +9,9 @@
 #     cd ~/campaigns/my-campaign && ./run-campaign
 #
 # The campaign name is the directory name, so renaming or copying the directory
-# starts a separate campaign. Unlike run-hermes (which must run from the repo
-# root so Hermes finds ./.hermes/plugins), this script works from anywhere: it
-# keeps LOAM_REPO for the adapter and generates a local plugin shim pointing at
-# it, because Hermes discovers project plugins relative to the working directory.
+# starts a separate campaign. This script works from anywhere: it keeps
+# LOAM_REPO for the adapter and generates a local plugin shim pointing at it,
+# because Hermes discovers project plugins relative to the working directory.
 #
 # Startup runs a fail-closed readiness check: one real completion per configured
 # model role (reasoner, subagents, tournament generation, tournament ranking) and

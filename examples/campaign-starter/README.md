@@ -94,7 +94,7 @@ Three things must be answering, or the fail-closed preflight aborts:
 | Port | What | Who starts it |
 |---|---|---|
 | `:51900` | Argo tunnel — reasoner and every subagent | you |
-| `:51911` | ALCF proxy — the tournament's ranking judge | `run-hermes` does; **`run-campaign` does not** |
+| `:51911` | ALCF proxy — the tournament's ranking judge | the preflight starts it (`ALCF_PROXY=0` opts out) |
 | `:8000/mcp` | HPC code execution | you (see the `hpc-deployment` skill). If nothing is listening, the preflight starts a bounded 1-node debug allocation and waits. |
 
 Prove the wiring without a cluster first: run the arithmetic campaign in
