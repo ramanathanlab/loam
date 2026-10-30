@@ -285,3 +285,69 @@ All hooks should fail closed with respect to themselves: malformed output or a
 non-zero exit means the adapter logs the failure and lets Hermes proceed. Do
 not put secrets in stdout; payloads can contain tool arguments and subagent
 summaries.
+
+### Metrics export (Weights & Biases)
+
+With a `metrics: {enabled: true, project: ...}` block in the active profile, the
+adapter turns on an **in-process** W&B exporter
+(`adapters/hermes/plugin/wandb_metrics.py`). Unlike the spawned lifecycle hooks
+above, this is not a subprocess per event: it registers two Hermes in-process
+observer hooks — `post_api_request` and `post_tool_call` — which fire on every
+API and tool call, a rate at which spawning a process each time is not
+affordable. It is the shape of Hermes's own `observability/langfuse` plugin,
+aimed at W&B and with Loam's agent-role attribution added.
+
+It records, into **one W&B run per campaign** (keyed by `LOAM_RUN_ID`, so a
+walltime resume rejoins the same run rather than forking a new one):
+
+- **Tokens per agent** — from `post_api_request`'s canonical `usage` buckets
+  (input / output / cache-read / cache-write / reasoning), attributed to the
+  Loam role that owns the call's session via the map built at `subagent_start`
+  (reasoner, hypothesis-validator, code-generator; an unmapped session is the
+  coordinator).
+- **Wall time per tool call** — from `post_tool_call`'s `duration_ms` (Hermes
+  measures start-to-result; the exporter does not time the call itself).
+- **Inference time per call** — from `post_api_request`'s `api_duration`.
+- **The gap between an inference ending and the tool call it triggers** —
+  `tool_start − inference_end`. The tool's start is stamped at `pre_tool_call`;
+  each tool call is linked back to its inference by `api_request_id` (falling
+  back to the session's last inference), which also carries that inference's
+  token usage onto the tool-call record.
+- **The skill each tool call ran under** — the reviewed recipe most recently
+  read in that session (`skill_view`/`skills_list` `name`), so tool time can be
+  grouped by skill as well as by tool. A call before any skill read is charged
+  to `(none)`.
+
+These land as per-call rows in an `events` table **and** as cumulative scalar
+series (live charts), plus end-of-run `summary/agents`, `summary/tools` and
+`summary/skills` tables. Every event is also appended to
+`<state_dir>/metrics-events.jsonl`, a durable record that survives when W&B is
+unreachable.
+
+**Per tool call, in the Pando workspace.** When the per-hypothesis workspace is
+on, each tool call a code-generator child makes also gets one line in
+`runs/<run_id>/metrics.jsonl` inside its run folder (sibling to `run.json`),
+carrying the five quantities above — tool duration, the triggering inference's
+duration and token usage, and the inference→tool gap. It is append-only and
+modelled on `log.jsonl`, but deliberately not the hash-chained log and not
+`run.json`, so recording a metric never touches the provenance record or the
+managed run index. Only a code-generator child has a run folder; other agents'
+calls still reach W&B and the flat state-dir log. The write is done in-process
+by the exporter (that is where Hermes surfaces the timings), resolving the
+call's run exactly as `pre-tool.py`'s workspace enforcement does — its session's
+latest `agent_started` row — and `hypothesis_workspace.record_tool_metrics`
+no-ops for any role without a run.
+
+The block is off by default, and the two hot-path hooks are registered **only**
+when it is on, so an unconfigured campaign pays nothing. Configuration errors
+(a missing `project`, an unknown `mode`) are loud — they raise in
+`loam_config.py` like a bad `execution:` block. Runtime failures are the
+opposite and always swallowed: no `wandb` installed, no API key, or an
+unreachable host leaves the exporter inert and never touches the running
+campaign. The API key is never stored in the profile: online mode authenticates
+either from an environment variable — `api_key_env` names it, default
+`WANDB_API_KEY` — or from an existing `wandb login` (the host's key in
+`~/.netrc`), so a logged-in machine needs no exported key. For a self-hosted
+`base_url`, the login must be for that host. Install the optional dependency
+with `pip install -e .[metrics]` in the environment that runs Hermes. See
+`examples/loam.yaml.example` for the full block.

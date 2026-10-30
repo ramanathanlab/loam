@@ -8,6 +8,7 @@ out an experiment:
     log.jsonl         append-only history, each line chained to the previous one
     src/              code the code-generators ran, captured from their tool calls
     runs/rM/run.json  one record per code-generator child
+    runs/rM/metrics.jsonl  per-tool-call metrics for that run (tokens, timings)
     outputs/rM/       that run's result files; frozen once the run ends
     scratch/rM/       that run's temporary files; never hashed
     data/             inputs supplied up front; read-only to agents
@@ -38,6 +39,7 @@ EXPERIMENT_FILE = "experiment.json"
 LOG_FILE = "log.jsonl"
 LOCK_FILE = ".workspace.lock"
 RUN_FILE = "run.json"
+METRICS_FILE = "metrics.jsonl"
 # "validator" holds the hypothesis-validator's own provenance (its trace), the
 # way runs/rM/ holds a code-generator's. Hook-written, so a code-generator still
 # cannot write there (_layout_problem has no branch for it); it is listed so the
@@ -1555,6 +1557,41 @@ def record_dispatch(
                      "what": f"dispatched by validator {validator_session[:12] or '(unknown)'}"
                              + (" (instruction rewritten by Loam)" if rewritten else " (instruction verbatim)")},
                 )
+
+
+def record_tool_metrics(
+    payload: Mapping[str, Any], start: Mapping[str, Any] | None, metrics: Mapping[str, Any]
+) -> Path | None:
+    """Append one tool call's metrics to ``runs/<run_id>/metrics.jsonl``.
+
+    Sibling to run.json and modelled on log.jsonl: append-only, one JSON object
+    per line, one line per tool call. Deliberately NOT the hash-chained log and
+    NOT run.json, so recording a metric can never alter the provenance record or
+    the managed run index. Only a code-generator child has a run folder, so this
+    is a no-op for any other role (the exporter still logs those calls to W&B and
+    the flat state-dir log). Best effort; the caller isolates failures.
+
+    The timings and token counts come from the in-process W&B exporter, which is
+    where Hermes surfaces them; this function only places them in the workspace.
+    """
+
+    if settings(payload) is None or not isinstance(start, Mapping):
+        return None
+    if _text(start.get("role")) != "code-generator":
+        return None
+    root, run_id = Path(_text(start.get("workspace"))), _text(start.get("run"))
+    if not _text(start.get("workspace")) or not _RUN_ID.fullmatch(run_id):
+        return None
+    record = {**dict(metrics), "run": run_id}
+    record.setdefault("observed_at", _timestamp())
+    with _locked(root):
+        run_dir = root / "runs" / run_id
+        if not run_dir.is_dir():
+            return None
+        path = run_dir / METRICS_FILE
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return path
 
 
 def _call_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
