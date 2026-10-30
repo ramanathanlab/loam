@@ -2031,7 +2031,13 @@ def _elo_ratings(payload: Mapping[str, Any]) -> dict[str, float]:
 def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registry: Mapping[str, AgentSpec],
                         campaign: CampaignContext | None = None,
                         elo_ratings: Mapping[str, float] | None = None,
-                        payload: Mapping[str, Any] | None = None) -> str:
+                        payload: Mapping[str, Any] | None = None,
+                        for_reasoner: bool = False) -> str:
+    """The coordinator's dispatch directive, or with `for_reasoner` the reasoner's own task context.
+
+    The task drops the coordinator's dispatch lines: a reasoner that reads "call
+    loam_dispatch_round now" tries it and returns that instead of a synthesis.
+    """
     reasoner = registry["reasoner"]
     # Elo was reaching the validators (via `_validator_directive`) but never the
     # reasoner, which is asked to "assess their evidence and ELO signals
@@ -2052,10 +2058,15 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
         for row in completions
     ]
     memory = reasoner_memory_block(payload or {}, plan_id, completions)
+    coordinator = not for_reasoner
     return "\n".join(
         part
         for part in (
-            f"Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding: call {DISPATCH_TOOL} now (no arguments).",
+            "Loam reasoner task: the validator threads below are terminal. Synthesize them as your definition "
+            "(\"agent_definition\") describes and return your report; you dispatch nothing."
+            if for_reasoner
+            else "",
+            coordinator and f"Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding: call {DISPATCH_TOOL} now (no arguments).",
             # The reasoner goes out through the round's dispatch tool too (the
             # coordinator's own delegate_task is blocked), and this directive
             # carries the whole definition, so it is still big enough for
@@ -2063,7 +2074,7 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
             # the model may not be able to see is what deadlocked the
             # coordinator three times live; the middleware supplies the
             # definition either way, so say that instead.
-            f"The reasoner's role definition ({reasoner.prompt_path.name}) is below and Loam itself puts it into the dispatched task as \"agent_definition\"; the reasoner must not execute experimental code. Call {DISPATCH_TOOL} once (no arguments) to dispatch the reasoner -- Loam builds the canonical task, definition included; a delegate_task you compose yourself is blocked. Do not reproduce the definition yourself, and if this directive was written to a file instead of shown inline, dispatch anyway: you do not need to read that file to comply.",
+            coordinator and f"The reasoner's role definition ({reasoner.prompt_path.name}) is below and Loam itself puts it into the dispatched task as \"agent_definition\"; the reasoner must not execute experimental code. Call {DISPATCH_TOOL} once (no arguments) to dispatch the reasoner -- Loam builds the canonical task, definition included; a delegate_task you compose yourself is blocked. Do not reproduce the definition yourself, and if this directive was written to a file instead of shown inline, dispatch anyway: you do not need to read that file to comply.",
             # This synthesis sets the next tournament's whole direction, so the
             # tier it runs on is a campaign decision, not an incidental one.
             # `AgentSpec.model` was parsed from the front matter and never used
@@ -2072,7 +2083,7 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
             (
                 f"Dispatch it on the model its definition declares ({reasoner.model}); this synthesis "
                 "steers the next tournament and should not run on a weaker tier than the validators it reads."
-                if reasoner.model
+                if reasoner.model and coordinator
                 else ""
             ),
             # The campaign block before the definition: reasoner.md's first
@@ -2084,7 +2095,7 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], registr
                 {**_campaign_field(campaign, "reasoner"), "agent_definition": reasoner.prompt_body},
                 ensure_ascii=False,
             ),
-            f"Tag its goal with [loam-agent-role=reasoner] [loam-plan-id={plan_id}] so its brief is persisted for the next tournament turn.",
+            coordinator and f"Tag its goal with [loam-agent-role=reasoner] [loam-plan-id={plan_id}] so its brief is persisted for the next tournament turn.",
             "Completed validator threads are unvalidated orchestration input; preserve their reported uncertainty and do not turn summaries into accepted evidence.",
             memory,
             json.dumps(threads, ensure_ascii=False, sort_keys=True),
@@ -2165,7 +2176,7 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
                     "loam_record_decision tool before you finalize your brief; your reasoning is not "
                     f"otherwise kept. [loam-agent-role=reasoner] [loam-plan-id={plan_id}]"
                 ),
-                "context": _reasoner_directive(plan_id, completions, agent_registry(payload), campaign_context(payload), _elo_ratings(payload), payload),
+                "context": _reasoner_directive(plan_id, completions, agent_registry(payload), campaign_context(payload), _elo_ratings(payload), payload, for_reasoner=True),
                 "role": "leaf",
             }
         return None

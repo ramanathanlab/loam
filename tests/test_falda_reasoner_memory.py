@@ -129,6 +129,20 @@ class ReasonerMemoryTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertIn("Memory interface:", canonical["context"])
 
+    def test_the_reasoner_task_carries_no_coordinator_dispatch_instructions(self) -> None:
+        # The reasoner read "call loam_dispatch_round now" in its own task, tried it, and returned
+        # "Dispatched the reasoner" instead of a synthesis (Aurora, 2026-10-31).
+        falda_memory.set_transport(FakeTransport())
+        payload = self._payload()
+        self._complete_validators(payload)
+        directive = self.orchestration.context_for(payload)
+        task = self.orchestration.canonical_delegation_args(payload)["context"]
+        self.assertIn(self.orchestration.DISPATCH_TOOL, directive)
+        for coordinator_only in (self.orchestration.DISPATCH_TOOL, "Delegate exactly one reasoner", "Tag its goal"):
+            self.assertNotIn(coordinator_only, task)
+        for expected in ('"agent_definition"', "h-1 claim", "Memory interface:", "unvalidated orchestration input"):
+            self.assertIn(expected, task)
+
     def test_corrupt_cache_file_does_not_lose_the_directive(self) -> None:
         falda_memory.set_transport(FakeTransport())
         payload = self._payload()
