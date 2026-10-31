@@ -66,11 +66,24 @@ profiles:
       # block and is decided by storage order, not by ranking.
       #
       # 200 matches over a 400 pool touches ~253 distinct hypotheses with up to
-      # 200 winners, so top_k: 150 is earned. Ranking is SERIALIZED
-      # (run_incremental_tournament hardcodes max_workers=1), measured ~3.1 s per
-      # match against this endpoint, so budget ~5 s: 200 x 5 s = ~17 min, and
-      # timeout_seconds must clear that with headroom or the hook is killed
-      # mid-tournament.
+      # 200 winners, so top_k: 150 is earned on ranking grounds.
+      #
+      # MEASURE THE RATE BEFORE COPYING THESE NUMBERS. Ranking is SERIALIZED
+      # (run_incremental_tournament hardcodes max_workers=1), and it is the
+      # round's critical path: validators cannot start until it returns. This
+      # file previously recorded ~3.1 s per match; measured against an Argo
+      # reasoning model with json_max_tokens: 16384 on 2026-10-31 it was
+      # ~16-21 s per match, 5-7x that. A reasoning model spends thousands of
+      # hidden tokens per match, so the figure moves with the model and the
+      # token budget -- re-measure after changing either.
+      #
+      # At ~20 s, matches_per_run: 200 is ~67 min of ranking. That exceeds
+      # timeout_seconds below (2400 s = 40 min) AND a one-hour allocation, and
+      # the overrun is SILENT: the hook is killed, _invoke returns None after a
+      # bare logger.warning, no hypotheses are selected, and the round
+      # dispatches no validators while the allocation sits idle. These values
+      # suit a long block; on a 1 h debug-scaling block use ~30 and raise it
+      # once the campaign has a walltime that can absorb the ranking.
       #
       # initial_hypotheses ALSO becomes max_workers for generation, so this is
       # 400 concurrent generation threads on round one. Do not raise much past
