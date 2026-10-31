@@ -66,12 +66,13 @@ def make_executor() -> Executor:
     return Executor(endpoint_id=ENDPOINT_ID, user_endpoint_config=ENDPOINT_CONFIG)
 
 
-def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) -> FastMCP:
+def create_server(cluster: bool = False, ckpt_dir: str | None = None,
+                  nnodes: int | None = None) -> FastMCP:
     # ckpt_dir only seeds the first cluster generation; ClusterPool mints a
     # fresh one for every rebuild so a new ClusterClient can never bind to the
     # dead master's checkpoint record.
-    if cluster:
-        assert nnodes is not None, "create server needs nnodes when using a EL cluster"
+    if cluster and nnodes is None:
+        raise ValueError("create_server(cluster=True) needs nnodes")
 
     @asynccontextmanager
     async def lifespan(server: FastMCP):
@@ -217,23 +218,19 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
                 return await dispatch("list_tools", query=query, name=name,
                                       all_versions=all_versions, limit=limit)
 
-            # Build the pool before serving: a tool call must never have to
-            # launch or verify an agent, or concurrent calls serialize. The
-            # pool brings the EL cluster up first, then the clients that
-            # handshake with its checkpoint dir.
-            if cluster:
-                await pool.start(launch_cluster, launch_client)
-
-            server.add_tool(run_code)
-            server.add_tool(inspect_filesystem)
             # run_batch needs EL; status/listing only read disk and register_tool's
             # smoke run is a local subprocess, so any agent serves those.
+            tools = [run_code, inspect_filesystem, batch_status, list_batches,
+                     register_tool, list_tools]
             if cluster:
-                server.add_tool(run_batch)
-            server.add_tool(batch_status)
-            server.add_tool(list_batches)
-            server.add_tool(register_tool)
-            server.add_tool(list_tools)
+                # Build the pool before serving: a tool call must never have to
+                # launch or verify an agent, or concurrent calls serialize. The
+                # pool brings the EL cluster up first, then the clients that
+                # handshake with its checkpoint dir.
+                await pool.start(launch_cluster, launch_client)
+                tools.append(run_batch)
+            for tool in tools:
+                server.add_tool(tool)
             try:
                 yield
             finally:

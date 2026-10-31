@@ -96,17 +96,16 @@ This is the `hpc-deployment` skill. From that skill's SKILL.md §Deployment:
 2. `source skills/hpc-deployment/set_env_akv.sh` — **every later step runs in
    that same shell**; the server reads its configuration from the process
    environment and nowhere else.
-3. `python scripts/preflight.py` — validates local deps and worker prerequisites
-   without submitting a job.
-4. `python scripts/mcp_server.py` — starts the local FastMCP server on `:8000`,
+3. `python scripts/mcp_server.py` — starts the local FastMCP server on `:8000`,
    creates the Globus Compute Executor with your endpoint UUID, submits the PBS
    allocation, and launches the Academy agents. In **cluster mode** that is one
    `HpcClusterAgent` running the Ensemble Launcher cluster plus `HPC_POOL_SIZE`
-   client agents that submit into it; EL owns tile placement.
-5. `python scripts/smoke_test_client.py` — **do not trust the server until this
+   client agents that submit into it; EL owns tile placement. A missing env var
+   or dependency fails here at once, before any job is submitted.
+4. `python scripts/smoke_test_client.py` — **do not trust the server until this
    passes.** It requires a real `run_code` result and bounded
    `inspect_filesystem` output from the worker.
-6. Submit a couple of concurrent cheap calls and confirm they *overlap* rather
+5. Submit a couple of concurrent cheap calls and confirm they *overlap* rather
    than serializing.
 
 **Shut it down only with SIGINT/SIGTERM** (`Ctrl-C` / `kill -INT`), never
