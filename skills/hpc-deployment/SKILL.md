@@ -41,8 +41,16 @@ and `HPC_MCP_TRANSPORT` (`http` or `stdio`, default `stdio`).
 
 Cluster-mode health checking (see "Self-healing" below) reads `HPC_POOL_PROBE_INTERVAL`
 (60s), `HPC_POOL_PROBE_TIMEOUT` (30s), `HPC_CLUSTER_PROBE_STRIKES` (3),
-`HPC_CLUSTER_MAX_RESTARTS` (3), `HPC_CLUSTER_STARTUP_TIMEOUT` (3000s),
-`HPC_AGENT_STARTUP_TIMEOUT` (600s), and `HPC_POOL_WAIT_TIMEOUT` (unset).
+`HPC_CLIENT_PROBE_STRIKES` (3), `HPC_CLUSTER_MAX_RESTARTS` (3),
+`HPC_CLUSTER_STARTUP_TIMEOUT` (3000s), `HPC_AGENT_STARTUP_TIMEOUT` (600s), and
+`HPC_POOL_WAIT_TIMEOUT` (unset).
+
+`HPC_EXCHANGE_REQUEST_TIMEOUT` (20s; Academy's default is 60s) caps how long each
+exchange listen stream stays open before a clean reconnect. When the ALCF proxy
+severs a stream, the server's reader for it lingers up to this long and can take
+the next message for a connection that no longer exists, so a shorter window
+loses fewer messages. Agents also ride out a 429/5xx from the exchange on both
+the listen stream and the heartbeat, instead of dying on one burst.
 
 ### Setting them: `set_env.sh`
 
@@ -158,8 +166,12 @@ the cluster on the way out.
 every `HPC_POOL_PROBE_INTERVAL`. Repair runs on that timer, never inside a tool
 call — reconciling per call is what serializes concurrent `run_code` requests.
 
-- **A client agent dies** → it is dropped from rotation immediately and replaced
-  on its own. The cluster is untouched.
+- **A client agent stops answering** → after `HPC_CLIENT_PROBE_STRIKES`
+  consecutive failed probes it is dropped from rotation, shut down, and replaced
+  on its own. The cluster is untouched. Until then it stays in rotation: a probe
+  can fail with the agent healthy (a message lost on the exchange, a 5xx burst),
+  and relaunching on every such blip piled load onto an exchange already in
+  trouble. Any successful probe resets the count.
 - **The cluster agent dies** → the EL cluster died with it, so every client is
   holding a `ClusterClient` bound to nothing. After `HPC_CLUSTER_PROBE_STRIKES`
   consecutive failed probes the pool shuts the stale agents down (freeing their

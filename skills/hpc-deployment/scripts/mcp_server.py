@@ -49,6 +49,15 @@ INSPECT_ROOTS = [item for item in os.environ.get("HPC_INSPECT_ROOTS", "").split(
 SYSTEM = os.environ.get("HPC_SYSTEM", "polaris")
 if SYSTEM not in ("aurora", "polaris"):
     raise RuntimeError("HPC_SYSTEM must be 'aurora' or 'polaris'")
+# Longest a listen stream stays open before a clean reconnect. The exchange
+# server blocks in a destructive pop for this long on each listen; when the
+# ALCF proxy severs our side, that stale reader lingers and can take (and
+# lose) the next message while our reconnected stream waits beside it. A
+# shorter window clears stale readers sooner; the cost is a few extra listen
+# requests per agent per minute. Academy's default is 60s.
+EXCHANGE_REQUEST_TIMEOUT_S = float(os.environ.get("HPC_EXCHANGE_REQUEST_TIMEOUT", "20"))
+if EXCHANGE_REQUEST_TIMEOUT_S <= 0:
+    raise RuntimeError("HPC_EXCHANGE_REQUEST_TIMEOUT must be positive")
 
 
 # The GC executor is the only allocation launcher. Passing the user endpoint
@@ -69,7 +78,8 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
         # Values are serialized into every agent constructor; worker-side setup
         # must make BASE_DIR available. Do not mkdir it locally: it may be a
         # remote-only HPC filesystem path.
-        factory = HttpExchangeFactory(EXCHANGE_URL, auth_method="globus", retries=3)
+        factory = HttpExchangeFactory(EXCHANGE_URL, auth_method="globus", retries=3,
+                                      request_timeout_s=EXCHANGE_REQUEST_TIMEOUT_S)
         gc_executor = make_executor()
         served = False
         try:
@@ -98,45 +108,45 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
             pool = ClusterPool(CAMPAIGN_ID, POOL_SIZE, ckpt_dir) if cluster else CampaignPool(
                 manager, HpcAgent, CAMPAIGN_ID, POOL_SIZE)
 
-            # Handles are rebound to the exchange client: the pool probes them
-            # for the life of the server, past the launch call that made them.
-            async def launch_one() -> Handle:
-                # The agent process is submitted through GCExecutor. This is
-                # deliberately not a local executor and has no PBS commands.
-                handle = await manager.launch(
-                    HpcAgent(CAMPAIGN_ID, BASE_DIR, INSPECT_ROOTS),
-                    executor="globus", name=f"{CAMPAIGN_ID}-agent"
-                )
+            # Every agent process is submitted through GCExecutor (the
+            # manager's default executor) -- deliberately not a local executor,
+            # and no PBS commands. The handle is rebound to the exchange
+            # client: the pool probes it for the life of the server, past the
+            # launch call that made it.
+            async def launch(agent, **kwargs) -> Handle:
+                handle = await manager.launch(agent, **kwargs)
                 return Handle(handle.agent_id, exchange=manager.exchange_client)
+
+            named = {"executor": "globus", "name": f"{CAMPAIGN_ID}-agent"}
+
+            async def launch_one() -> Handle:
+                return await launch(HpcAgent(CAMPAIGN_ID, BASE_DIR, INSPECT_ROOTS), **named)
 
             async def launch_client(generation_ckpt_dir: str) -> Handle:
-                handle = await manager.launch(
-                    HpcClientAgent(CAMPAIGN_ID, BASE_DIR, generation_ckpt_dir, INSPECT_ROOTS),
-                    executor="globus", name=f"{CAMPAIGN_ID}-agent"
-                )
-                return Handle(handle.agent_id, exchange=manager.exchange_client)
+                return await launch(HpcClientAgent(
+                    CAMPAIGN_ID, BASE_DIR, generation_ckpt_dir, INSPECT_ROOTS), **named)
 
             async def launch_cluster(generation_ckpt_dir: str) -> Handle:
-                handle = await manager.launch(HpcClusterAgent(
-                    BASE_DIR, generation_ckpt_dir, nnodes, SYSTEM,
-                ))
-                return Handle(handle.agent_id, exchange=manager.exchange_client)
+                return await launch(HpcClusterAgent(BASE_DIR, generation_ckpt_dir, nnodes, SYSTEM))
+
+            # Every tool forwards to the same-named action on the next pool
+            # agent. Failures come back as ToolError so the harness gets a
+            # readable message rather than an internal server error.
+            async def dispatch(action: str, *args, **kwargs):
+                try:
+                    agent = await pool.next_agent(launch_one)
+                    return await agent.handle.action(action, *args, **kwargs)
+                except Exception as exc:
+                    raise ToolError(f"{action} failed: {type(exc).__name__}: {exc}") from exc
 
             async def run_code(payload: str, workdir: str | None = None, timeout: float = 300.0, venv_path: str | None = None) -> dict[str, str]:
                 """Run Python on one campaign-owned, GPU/tile-pinned Academy agent."""
-                try:
-                    agent = await pool.next_agent(launch_one)
-                    return await agent.handle.action("run_code", payload, workdir=workdir or BASE_DIR, timeout=timeout, venv_path = venv_path)
-                except Exception as exc:
-                    raise ToolError(f"run_code failed: {type(exc).__name__}: {exc}") from exc
+                return await dispatch("run_code", payload, workdir=workdir or BASE_DIR,
+                                      timeout=timeout, venv_path=venv_path)
 
             async def inspect_filesystem(operation: str, path: str, offset: int = 1, limit: int = 100) -> dict:
                 """Bounded read-only ls/cat/tail inspection on a pinned campaign worker."""
-                try:
-                    agent = await pool.next_agent(launch_one)
-                    return await agent.handle.action("inspect_filesystem", operation, path, offset=offset, limit=limit)
-                except Exception as exc:
-                    raise ToolError(f"inspect_filesystem failed: {type(exc).__name__}: {exc}") from exc
+                return await dispatch("inspect_filesystem", operation, path, offset=offset, limit=limit)
 
             async def run_batch(script_path: str | None = None, inputs_path: str | None = None,
                                 timeout_each: float = 900.0, gpus: float = 1,
@@ -160,33 +170,21 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
                 To resume, pass only batch_id; finished runs are skipped. Use this rather
                 than run_code for more than a handful of runs.
                 """
-                try:
-                    agent = await pool.next_agent(launch_one)
-                    return await agent.handle.action(
-                        "run_batch", script_path=script_path, inputs_path=inputs_path,
-                        timeout_each=timeout_each, gpus=gpus, venv_path=venv_path,
-                        batch_id=batch_id, labels=labels, tool=tool, tool_version=tool_version,
-                    )
-                except Exception as exc:
-                    raise ToolError(f"run_batch failed: {type(exc).__name__}: {exc}") from exc
+                return await dispatch(
+                    "run_batch", script_path=script_path, inputs_path=inputs_path,
+                    timeout_each=timeout_each, gpus=gpus, venv_path=venv_path,
+                    batch_id=batch_id, labels=labels, tool=tool, tool_version=tool_version,
+                )
 
             async def batch_status(batch_id: str) -> dict:
                 """Progress of one run_batch batch: total, succeeded, failed, unfinished, and the first failures' stderr."""
-                try:
-                    agent = await pool.next_agent(launch_one)
-                    return await agent.handle.action("batch_status", batch_id)
-                except Exception as exc:
-                    raise ToolError(f"batch_status failed: {type(exc).__name__}: {exc}") from exc
+                return await dispatch("batch_status", batch_id)
 
             async def list_batches(plan_id: str | None = None, hypothesis_id: str | None = None,
                                    limit: int = 50) -> list[dict]:
                 """Batches in the registry, newest first, with their last known status."""
-                try:
-                    agent = await pool.next_agent(launch_one)
-                    return await agent.handle.action("list_batches", plan_id=plan_id,
-                                                     hypothesis_id=hypothesis_id, limit=limit)
-                except Exception as exc:
-                    raise ToolError(f"list_batches failed: {type(exc).__name__}: {exc}") from exc
+                return await dispatch("list_batches", plan_id=plan_id,
+                                      hypothesis_id=hypothesis_id, limit=limit)
 
             async def register_tool(name: str, script_path: str, params: dict, description: str,
                                     example: dict, defaults: dict | None = None,
@@ -207,25 +205,17 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
                 expects lists output filenames/globs (relative to each run's folder) the
                 script must write; a run that exits 0 without them counts as failed.
                 """
-                try:
-                    agent = await pool.next_agent(launch_one)
-                    return await agent.handle.action(
-                        "register_tool", name, script_path, params, description, example,
-                        defaults=defaults, call=call, venv_path=venv_path,
-                        skip_smoke=skip_smoke, labels=labels, expects=expects,
-                    )
-                except Exception as exc:
-                    raise ToolError(f"register_tool failed: {type(exc).__name__}: {exc}") from exc
+                return await dispatch(
+                    "register_tool", name, script_path, params, description, example,
+                    defaults=defaults, call=call, venv_path=venv_path,
+                    skip_smoke=skip_smoke, labels=labels, expects=expects,
+                )
 
             async def list_tools(query: str | None = None, name: str | None = None,
                                  all_versions: bool = False, limit: int = 50) -> list[dict]:
                 """Registered tools: params, description, example, how often batches used them, last clean batch."""
-                try:
-                    agent = await pool.next_agent(launch_one)
-                    return await agent.handle.action("list_tools", query=query, name=name,
-                                                     all_versions=all_versions, limit=limit)
-                except Exception as exc:
-                    raise ToolError(f"list_tools failed: {type(exc).__name__}: {exc}") from exc
+                return await dispatch("list_tools", query=query, name=name,
+                                      all_versions=all_versions, limit=limit)
 
             # Build the pool before serving: a tool call must never have to
             # launch or verify an agent, or concurrent calls serialize. The

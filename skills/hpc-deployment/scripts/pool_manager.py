@@ -133,7 +133,7 @@ class ClusterPool:
                  startup_timeout_s: float | None = None, probe_interval_s: float | None = None,
                  probe_timeout_s: float | None = None, cluster_timeout_s: float | None = None,
                  cluster_grace: int | None = None, max_restarts: int | None = None,
-                 wait_timeout_s: float | None = None):
+                 wait_timeout_s: float | None = None, client_grace: int | None = None):
         self.campaign_id = campaign_id
         self.want = want
         # A new client has to clear scheduler wait and agent_on_startup (the EL
@@ -155,9 +155,18 @@ class ClusterPool:
         )
         # Tearing down a live cluster over one dropped probe costs a restart
         # and possibly a fresh allocation, so the cluster gets consecutive
-        # strikes where a client agent gets one.
+        # strikes before a rebuild.
         self.cluster_grace = cluster_grace if cluster_grace is not None else int(
             os.environ.get("HPC_CLUSTER_PROBE_STRIKES", "3")
+        )
+        # Clients get strikes too. A probe can fail with the agent healthy: the
+        # exchange drops messages when a severed listen stream leaves a stale
+        # server-side reader on the mailbox, and a 5xx burst fails the send.
+        # Replacing a client on one miss turned each such blip into a mailbox
+        # registration, a GC submission and an EL handshake, piling load onto
+        # the exchange exactly while it was struggling.
+        self.client_grace = client_grace if client_grace is not None else int(
+            os.environ.get("HPC_CLIENT_PROBE_STRIKES", "3")
         )
         # Consecutive failed rebuilds before self-healing gives up for good.
         self.max_restarts = max_restarts if max_restarts is not None else int(
@@ -176,6 +185,8 @@ class ClusterPool:
         self._started = False
         self._failed = False
         self._cluster_misses = 0
+        # Consecutive failed probes per client agent id; cleared on any success.
+        self._client_misses: dict[str, int] = {}
         self._restart_failures = 0
         # Caller-supplied dir seeds generation 0; every later generation mints
         # its own so a new ClusterClient cannot bind to the dead master's
@@ -287,6 +298,7 @@ class ClusterPool:
         # Stop serving agents wired to the dead cluster before anything slow.
         self._cluster = None
         self._agents = []
+        self._client_misses.clear()
         await self._shutdown_all(stale)
         try:
             await self._start_cluster()
@@ -332,8 +344,24 @@ class ClusterPool:
 
     async def _repair_clients(self) -> None:
         probed = await asyncio.gather(*(self._probe(agent) for agent in self._agents))
-        survivors = [agent for agent in probed if agent is not None]
-        dropped = [agent for agent, ok in zip(self._agents, probed) if ok is None]
+        survivors, dropped = [], []
+        for agent, ok in zip(self._agents, probed):
+            key = str(agent.handle.agent_id)
+            if ok is not None:
+                self._client_misses.pop(key, None)
+                survivors.append(agent)
+                continue
+            misses = self._client_misses.get(key, 0) + 1
+            if misses < self.client_grace:
+                # Keep serving it: a dead client costs a few failed tool calls
+                # until its strikes run out; a false drop costs a relaunch.
+                self._client_misses[key] = misses
+                logger.warning("client agent %s probe failed [%d/%d]",
+                               key, misses, self.client_grace)
+                survivors.append(agent)
+            else:
+                self._client_misses.pop(key, None)
+                dropped.append(agent)
         if len(survivors) < len(self._agents):
             # Publish survivors before relaunching: a dead agent must stop
             # being handed out even if its replacement cannot be launched.

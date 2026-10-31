@@ -53,8 +53,21 @@ _MAX_ENTRIES = 200
 _MAX_LINES = 200
 _MAX_BYTES = 64 * 1024
 
-# A dropped exchange stream must not read as "the agent is gone".
-_TRANSIENT_LISTEN_ERRORS = (aiohttp.ClientPayloadError, aiohttp.ClientConnectionError)
+# A dropped exchange stream must not read as "the agent is gone", and neither
+# must an exchange that is briefly overloaded. Academy retries a 5xx/429 only
+# `retries` times (seconds, in all) and then raises ClientResponseError; left
+# uncaught, that one burst killed the listener (so the agent, so el.stop() and
+# the allocation) and silently ended the heartbeat loop for good.
+_TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+
+def _is_transient_exchange_error(exc: BaseException) -> bool:
+    """True for errors worth riding out: a severed stream or a 429/5xx reply."""
+    if isinstance(exc, (aiohttp.ClientPayloadError, aiohttp.ClientConnectionError)):
+        return True
+    return isinstance(exc, aiohttp.ClientResponseError) and exc.status in _TRANSIENT_STATUSES
+
+
 # The Academy exchange is reached over the ALCF HTTP proxy, which severs the
 # long-poll stream routinely (observed in production: repeated ClientPayloadError
 # / TransferEncodingError 400 against exchange.academy-agents.org via
@@ -124,7 +137,9 @@ def _harden_exchange_listener() -> None:
                         failures = 0
                         yield message
                 return
-            except _TRANSIENT_LISTEN_ERRORS as exc:
+            except aiohttp.ClientError as exc:
+                if not _is_transient_exchange_error(exc):
+                    raise
                 now = time.monotonic()
                 if first_failure is None:
                     first_failure = now
@@ -146,7 +161,38 @@ def _harden_exchange_listener() -> None:
     HttpExchangeTransport.listen = listen
 
 
+def _harden_exchange_heartbeat() -> None:
+    """Skip a heartbeat the exchange could not take, instead of ending the loop.
+
+    Academy's heartbeat loop only survives cancellation and a terminated
+    mailbox; any other error ends the task, and outside Academy debug mode
+    nothing restarts it. One 5xx burst therefore stopped an agent's heartbeat
+    for good, and ~90s later the exchange reported a working agent INACTIVE.
+    Swallowing a transient failure lets the loop's own sleep act as the retry.
+    Liveness is still decided elsewhere: the listener's silence budget and the
+    pool's probes.
+    """
+    from academy.exchange.cloud.client import HttpExchangeTransport
+
+    original = HttpExchangeTransport.update_heartbeat
+    if getattr(original, '_hpc_hardened', False):
+        return
+
+    async def update_heartbeat(self) -> None:
+        try:
+            await original(self)
+        except aiohttp.ClientError as exc:
+            if not _is_transient_exchange_error(exc):
+                raise
+            logger.warning('exchange heartbeat failed (%s: %s); retrying next interval',
+                           type(exc).__name__, exc)
+
+    update_heartbeat._hpc_hardened = True
+    HttpExchangeTransport.update_heartbeat = update_heartbeat
+
+
 _harden_exchange_listener()
+_harden_exchange_heartbeat()
 
 
 class HpcAgent(Agent):
@@ -268,10 +314,18 @@ class HpcClusterAgent(Agent):
         self._el = None
 
     async def agent_on_startup(self):
-        self._el = EnsembleLauncher(ensemble_file={},
-                                    system_config=self.system_config, 
-                                    launcher_config=self.launcher_config)
-        self._el.start()
+        # EL's start() and stop() are blocking (a fork plus time.sleep; a
+        # terminate/join of up to 30s+), and this event loop also runs the
+        # exchange listener and heartbeat. Run them in a thread so the agent
+        # keeps reading its mailbox and heartbeating through both.
+        def start() -> EnsembleLauncher:
+            el = EnsembleLauncher(ensemble_file={},
+                                  system_config=self.system_config,
+                                  launcher_config=self.launcher_config)
+            el.start()
+            return el
+
+        self._el = await asyncio.to_thread(start)
 
     @action
     async def probe(self) -> dict[str, str]:
@@ -283,7 +337,7 @@ class HpcClusterAgent(Agent):
         
     async def agent_on_shutdown(self):
         if self._el is not None:
-            self._el.stop()
+            await asyncio.to_thread(self._el.stop)
 
 class HpcClientAgent(HpcAgent):
     def __init__(self, campaign_id: str, base_dir: str, ckpt_dir: str, inspect_roots: list[str] | None = None) -> None:
@@ -302,8 +356,17 @@ class HpcClientAgent(HpcAgent):
         # tasks_working_dir, so without this the client log lands there instead
         # of beside the master's, which HpcClusterAgent places under base_dir.
         os.environ.setdefault("EL_LOGDIR", str(Path(self.base_dir, "logs")))
-        self._client = ClusterClient(checkpoint_dir=self.ckpt_dir, checkpoint_timeout=300)
-        self._client.start()
+        # ClusterClient's constructor polls the checkpoint dir and then the comm
+        # file with time.sleep, up to checkpoint_timeout each -- and a client
+        # usually starts before the new master has written them. On the event
+        # loop that froze the exchange listener and heartbeat for minutes, so
+        # the exchange saw the agent go stale while it was coming online.
+        def connect() -> ClusterClient:
+            client = ClusterClient(checkpoint_dir=self.ckpt_dir, checkpoint_timeout=300)
+            client.start()
+            return client
+
+        self._client = await asyncio.to_thread(connect)
 
     async def agent_on_shutdown(self):
         # EL's ClusterClient shutdown method is teardown(), NOT stop(): stop()
@@ -311,7 +374,7 @@ class HpcClientAgent(HpcAgent):
         # and on the pipeline objects that teardown() itself stops, so .stop()
         # on a ClusterClient raises AttributeError on every repair/rebuild sweep.
         if self._client is not None:
-            self._client.teardown()
+            await asyncio.to_thread(self._client.teardown)  # joins threads, up to 5s each
 
 
     def _create_task(self, payload: str, workdir: str, timeout: float, venv_path: str | None = None):
@@ -329,9 +392,12 @@ class HpcClientAgent(HpcAgent):
                        timeout: float = 300.0, venv_path: str | None = None) -> dict[str, str]:
         self._inflight += 1
         try:
-            return await asyncio.wrap_future(
-                self._client.submit(self._create_task(payload, workdir, timeout, venv_path))
+            # submit() takes a lock the flush thread holds while it serializes
+            # a whole buffer, so call it off the event loop.
+            future = await asyncio.to_thread(
+                self._client.submit, self._create_task(payload, workdir, timeout, venv_path)
             )
+            return await asyncio.wrap_future(future)
         finally:
             self._inflight -= 1
 
@@ -385,7 +451,9 @@ class HpcClientAgent(HpcAgent):
         # submit_batch only buffers the tasks and hands back futures; EL's
         # master spreads them over the nodes and GPUs.
         if tasks:
-            self._batches[batch_id] = self._client.submit_batch(tasks)
+            # Off the event loop: a full buffer is serialized inline, under a
+            # lock the flush thread also holds while serializing.
+            self._batches[batch_id] = await asyncio.to_thread(self._client.submit_batch, tasks)
         return {
             "batch_id": batch_id,
             "total": entry["total"],
