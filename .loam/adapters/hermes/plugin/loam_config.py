@@ -33,6 +33,9 @@ class HypothesisTournamentConfig:
     matches_per_run: int
     top_k: int
     timeout_seconds: int
+    # How many brief-informed hypotheses enter a seeded pool per new reasoner
+    # brief. 0 (the default) leaves a seeded pool only ever re-ranked.
+    refresh_hypotheses: int
     provider: str
     inference_endpoint: str
     endpoint_is_chat_completions: bool
@@ -103,11 +106,6 @@ class ExecutionConfig:
     # campaign's local files, so a recipe it must follow has to travel in the
     # contract. Empty by default; generic Loam carries no host paths.
     setup: str = ""
-    # generated (default): the code-generator writes its own code from the
-    # validator's instruction. fixed is for debugging the orchestration only:
-    # it runs Loam's built-in arithmetic check instead. Never a default.
-    code_source: str = "generated"
-    max_children: int = 3
     workdir_root: str = ""
     # Prefix of the HPC server's other MCP tool names (run_batch, list_tools,
     # ...). Empty: derived from tool_name when it ends with function_name.
@@ -122,7 +120,6 @@ class ExecutionConfig:
 
 
 _EXECUTION_MODES = {"remote_mcp", "local"}
-_CODE_SOURCES = {"fixed", "generated"}
 
 
 @dataclass(frozen=True)
@@ -248,6 +245,20 @@ def _positive_int(value: Any, default: int) -> int:
         return default
 
 
+def _count_int(value: Any) -> int:
+    """A non-negative count: 0 for absent, negative, or unreadable.
+
+    Separate from `_positive_int` because zero is a meaningful setting for a
+    count that switches a feature off, and clamping it to one would turn the
+    default into the feature.
+    """
+
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 
 # A campaign or rules name becomes a file name under `.loam/`, so it may not
 # carry a path at all: `../../../etc/passwd`, or an absolute path, would
@@ -320,25 +331,14 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
     raw = _as_mapping(value)
     if raw is None:
         return None
-    # A bad value in either field raises rather than returning None. `None`
-    # means "no execution block", which silently turns a configured HPC
-    # campaign into the local arithmetic self-test (no generated mode, an empty
-    # HPC tool allowlist, no max_children budget, no setup/workdir context) --
-    # with orchestration enabled it instead makes load_profile reject the whole
-    # profile, so every Loam hook goes inert. Neither belongs to a typo.
+    # A bad mode raises rather than returning None, which would silently turn
+    # off the execution contract (and with orchestration on, the whole profile).
     mode = _clean_text(raw.get("mode"))
     if mode not in _EXECUTION_MODES:
         raise ValueError(
             f"execution.mode must be one of {sorted(_EXECUTION_MODES)}: {mode!r}"
         )
-    code_source = _clean_text(raw.get("code_source")) or "generated"
-    if code_source not in _CODE_SOURCES:
-        raise ValueError(
-            f"execution.code_source must be one of {sorted(_CODE_SOURCES)}: {code_source!r}"
-        )
     extras = dict(
-        code_source=code_source,
-        max_children=_positive_int(raw.get("max_children"), 3 if code_source == "generated" else 1),
         workdir_root=_clean_text(raw.get("workdir_root")),
         tool_prefix=_clean_text(raw.get("tool_prefix")),
         setup=_clean_text(raw.get("setup")),
@@ -473,6 +473,7 @@ def _tournament_config(value: Any, state_dir: Path | None = None) -> HypothesisT
         matches_per_run=_positive_int(raw.get("matches_per_run"), 1),
         top_k=_positive_int(raw.get("top_k"), 3),
         timeout_seconds=_positive_int(raw.get("timeout_seconds"), 30),
+        refresh_hypotheses=_count_int(raw.get("refresh_hypotheses")),
         provider=required["provider"],
         inference_endpoint=required["inference_endpoint"],
         endpoint_is_chat_completions=raw.get("endpoint_is_chat_completions") is True,
@@ -658,8 +659,6 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "input_schema": execution.input_schema,
             "runtime": execution.runtime,
             "setup": execution.setup,
-            "code_source": execution.code_source,
-            "max_children": execution.max_children,
             "workdir_root": execution.workdir_root,
             "tool_prefix": execution.tool_prefix,
         }
@@ -699,6 +698,7 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "matches_per_run": tournament.matches_per_run,
             "top_k": tournament.top_k,
             "timeout_seconds": tournament.timeout_seconds,
+            "refresh_hypotheses": tournament.refresh_hypotheses,
             "provider": tournament.provider,
             "inference_endpoint": tournament.inference_endpoint,
             "endpoint_is_chat_completions": tournament.endpoint_is_chat_completions,

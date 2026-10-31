@@ -2,7 +2,7 @@
 name: evidence-integrity
 applies: always
 scope: all
-enforced_by: partially -- _SCRUBBERS strips filesystem-recovery steering from validator instructions, and a source-located claim travels as a hypothesis_provenance_v1 candidate that is accepted only through explicit review; the rest is advisory
+enforced_by: partially -- a source-located claim travels as a hypothesis_provenance_v1 candidate that is accepted only through explicit review; the rest is advisory
 ---
 
 - A datum you did not produce in this campaign has an authoritative source.

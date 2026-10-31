@@ -9,17 +9,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-JNANA_ROOT = ROOT.parent / "jnana"
-# Jnana is a sibling checkout (acadev/Jnana), not a dependency of this package,
-# so the tests that actually drive it are opt-in: without it they would fail at
-# `patch("jnana.protognosis...")` rather than report anything useful. Its LLM
-# factory additionally imports `openai`, which the no-auth local endpoints this
-# repo talks to never need.
-HAVE_JNANA = JNANA_ROOT.is_dir()
-HAVE_JNANA_LLM = HAVE_JNANA and importlib.util.find_spec("openai") is not None
 HOOKS = ROOT / ".loam" / "hooks"
 CONFIG = ROOT / ".loam" / "adapters" / "hermes" / "plugin" / "loam_config.py"
 
@@ -33,6 +26,9 @@ def _load(name: str, path: Path):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+GOAL = "---\nname: fixture-goal\n---\n\nDesign de novo binders against a fixture target.\n"
 
 
 class HypothesisTournamentTests(unittest.TestCase):
@@ -83,10 +79,49 @@ class HypothesisTournamentTests(unittest.TestCase):
         self.assertEqual(tournament["initial_hypotheses"], 3)
         self.assertEqual(tournament["matches_per_run"], 1)
         self.assertEqual(tournament["top_k"], 3)
+        # Absent means off, and the hook must still see the key: a setting the
+        # adapter drops is a setting that fails silently.
+        self.assertEqual(tournament["refresh_hypotheses"], 0)
         self.assertTrue(values["loam_hypothesis_orchestration"])
         self.assertEqual(values["loam_state_dir"], "/tmp/state")
         self.assertEqual(values["loam_execution"]["mode"], "remote_mcp")
         self.assertEqual(values["loam_execution"]["tool_name"], "globus_execute")
+
+    def test_refresh_hypotheses_reaches_the_hook_and_zero_stays_zero(self) -> None:
+        """Zero is the feature off, not a value to clamp up to one."""
+
+        config = _load("loam_config_refresh", CONFIG)
+        base = {
+            "workflow_id": "research-v1",
+            "state_dir": "/tmp/state",
+            "hypothesis_tournament": {
+                "enabled": True,
+                "jnana_root": "/tmp/jnana",
+                "state_file": "/tmp/state/memory.json",
+                "reports_dir": "/tmp/state/reports",
+                "inference_endpoint": "http://example.test/v1",
+                "model": "test-model",
+            },
+        }
+        parsed = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            for label, value in (("set", 25), ("zero", 0), ("junk", "many"), ("negative", -5)):
+                raw = {
+                    "enabled": True,
+                    "active_profile": "research",
+                    "profiles": {"research": {**base, "hypothesis_tournament": {
+                        **base["hypothesis_tournament"], "refresh_hypotheses": value}}},
+                }
+                config_path = Path(tmp) / f"loam-{label}.yaml"
+                config_path.write_text(json.dumps(raw), encoding="utf-8")
+                with patch.dict(os.environ, {"LOAM_CONFIG_PATH": str(config_path)}, clear=False):
+                    profile = config.load_profile()
+                assert profile is not None
+                parsed[label] = config.payload_values(profile)["loam_hypothesis_tournament"][
+                    "refresh_hypotheses"
+                ]
+
+        self.assertEqual(parsed, {"set": 25, "zero": 0, "junk": 0, "negative": 0})
 
     def test_profile_parses_local_execution_mode(self) -> None:
         config = _load("loam_config_local_execution", CONFIG)
@@ -109,28 +144,15 @@ class HypothesisTournamentTests(unittest.TestCase):
                 profile = config.load_profile()
 
         assert profile is not None
-        self.assertEqual(config.payload_values(profile)["loam_execution"], {"mode": "local", "tool_name": "", "endpoint": "", "function_name": "", "input_schema": "", "runtime": "python3.11", "setup": "", "code_source": "generated", "max_children": 3, "workdir_root": "", "tool_prefix": ""})
+        self.assertEqual(config.payload_values(profile)["loam_execution"], {"mode": "local", "tool_name": "", "endpoint": "", "function_name": "", "input_schema": "", "runtime": "python3.11", "setup": "", "workdir_root": "", "tool_prefix": ""})
 
-    def test_execution_parses_generated_code_source(self) -> None:
+    def test_execution_parses_workdir_root_and_tool_prefix(self) -> None:
         config = _load("loam_config_generated_execution", CONFIG)
         remote = {"mode": "remote_mcp", "tool_name": "mcp_hpc_run_code", "endpoint": "http://x/mcp",
                   "function_name": "run_code", "input_schema": "v1"}
-        generated = config._execution_config(
-            {**remote, "code_source": "generated", "workdir_root": " /lus/w ", "tool_prefix": "mcp_hpc_"})
-        self.assertEqual((generated.code_source, generated.max_children, generated.workdir_root,
-                          generated.tool_prefix), ("generated", 3, "/lus/w", "mcp_hpc_"))
-        self.assertEqual(config._execution_config({**remote, "code_source": "generated",
-                                                   "max_children": 5}).max_children, 5)
-        self.assertEqual(config._execution_config(remote).code_source, "generated")
-        self.assertEqual(config._execution_config(remote).max_children, 3)
-        fixed = config._execution_config({**remote, "code_source": "fixed"})
-        self.assertEqual((fixed.code_source, fixed.max_children), ("fixed", 1))
-        # A typo in either field must fail loudly rather than discard the whole
-        # execution block: a dropped block degrades a configured HPC campaign to
-        # the local arithmetic self-test, or makes load_profile reject the
-        # profile outright, with no error anywhere.
-        with self.assertRaisesRegex(ValueError, "code_source"):
-            config._execution_config({**remote, "code_source": "llm"})
+        parsed = config._execution_config({**remote, "workdir_root": " /lus/w ", "tool_prefix": "mcp_hpc_"})
+        self.assertEqual((parsed.workdir_root, parsed.tool_prefix), ("/lus/w", "mcp_hpc_"))
+        # A bad mode must fail loudly rather than discard the whole execution block.
         with self.assertRaisesRegex(ValueError, "mode"):
             config._execution_config({**remote, "mode": "remote-mcp"})
         with self.assertRaisesRegex(ValueError, "mode"):
@@ -172,205 +194,6 @@ class HypothesisTournamentTests(unittest.TestCase):
         self.assertEqual(profile.hypothesis_tournament.state_file, runtime_state / "jnana-memory.json")
         self.assertEqual(profile.hypothesis_tournament.reports_dir, runtime_state / "tournament-reports")
 
-    @unittest.skipUnless(HAVE_JNANA_LLM, "jnana checkout and openai required")
-    def test_context_for_runs_runner_writes_report_and_renders_compact_ranking(self) -> None:
-        hook = _load("loam_hypothesis_tournament", HOOKS / "hypothesis_tournament.py")
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            jnana_root = JNANA_ROOT
-            state_file = root / "state" / "memory.json"
-            reports_dir = root / "reports"
-            payload = {
-                "workflow_id": "research-v1",
-                "loam_profile": "research",
-                "session_id": "session-1",
-                "loam_turn": 5,
-                "loam_hypothesis_tournament": {
-                    "enabled": True,
-                    "jnana_root": str(jnana_root),
-                    "state_file": str(state_file),
-                    "reports_dir": str(reports_dir),
-                    "matches_per_run": 2,
-                    "top_k": 2,
-                    "provider": "openai",
-                    "inference_endpoint": "http://example.test/v1",
-                    "model": "test-model",
-                    "api_key_env": "TEST_JNANA_KEY",
-                },
-            }
-            result = {
-                "status": "completed",
-                "matches_requested": 2,
-                "matches_completed": 2,
-                "top_hypotheses": [
-                    {"hypothesis_id": "h-1", "summary": "First hypothesis", "elo_rating": 1212.25},
-                    {"hypothesis_id": "h-2", "summary": "Second hypothesis", "elo_rating": 1187.75},
-                ],
-            }
-            with patch.dict(os.environ, {"TEST_JNANA_KEY": "not-a-real-secret"}, clear=False):
-                original_path = list(sys.path)
-                sys.path.insert(0, str(jnana_root))
-                try:
-                    with patch(
-                        "jnana.protognosis.periodic_tournament.run_incremental_tournament",
-                        return_value=result,
-                    ):
-                        context = hook.context_for(payload)
-                finally:
-                    sys.path[:] = original_path
-
-            self.assertIn("ran 2/2 pairwise matches", context)
-            self.assertIn("h-1 — 1212.2 Elo", context)
-            reports = list(reports_dir.glob("tournament-*.json"))
-            self.assertEqual(len(reports), 1)
-            report = json.loads(reports[0].read_text())
-            self.assertEqual(report["result"]["matches_completed"], 2)
-
-    @unittest.skipUnless(HAVE_JNANA, "jnana checkout required")
-    def test_context_for_generates_initial_hypotheses_before_running_tournament(self) -> None:
-        hook = _load("loam_hypothesis_tournament_generation", HOOKS / "hypothesis_tournament.py")
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            state_file = root / "state" / "memory.json"
-            reports_dir = root / "reports"
-            payload = {
-                "workflow_id": "research-v1",
-                "loam_profile": "research",
-                "session_id": "session-1",
-                "loam_turn": 5,
-                "user_message": "Explain why genomic GC content predicts codon usage.",
-                "loam_hypothesis_tournament": {
-                    "enabled": True,
-                    "jnana_root": str(JNANA_ROOT),
-                    "state_file": str(state_file),
-                    "reports_dir": str(reports_dir),
-                    "initial_hypotheses": 3,
-                    "matches_per_run": 2,
-                    "top_k": 2,
-                    "provider": "openai",
-                    "inference_endpoint": "http://example.test/v1",
-                    "model": "test-model",
-                    "json_max_tokens": 1200,
-                },
-            }
-            generated = []
-            construction = {}
-
-            class FakeCoScientist:
-                def __init__(self, **kwargs):
-                    construction.update(kwargs)
-                    self.memory = type("Memory", (), {"save": lambda _self: None})()
-
-                def start(self):
-                    pass
-
-                def stop(self):
-                    pass
-
-                def get_all_hypotheses(self):
-                    return generated
-
-                def set_research_goal(self, goal):
-                    self.goal = goal
-
-                def generate_hypotheses(self, count):
-                    generated.extend(range(count))
-
-                def wait_for_completion(self):
-                    pass
-
-            result = {
-                "status": "completed",
-                "matches_requested": 2,
-                "matches_completed": 2,
-                "top_hypotheses": [
-                    {"hypothesis_id": "h-1", "summary": "First hypothesis", "elo_rating": 1212.25},
-                    {"hypothesis_id": "h-2", "summary": "Second hypothesis", "elo_rating": 1187.75},
-                ],
-            }
-            with patch.dict(os.environ, {}, clear=True):
-                original_path = list(sys.path)
-                sys.path.insert(0, str(JNANA_ROOT))
-                try:
-                    with patch.object(hook, "CoScientist", FakeCoScientist), patch(
-                        "jnana.protognosis.periodic_tournament.run_incremental_tournament",
-                        return_value=result,
-                    ) as tournament:
-                        context = hook.context_for(payload)
-                finally:
-                    sys.path[:] = original_path
-
-            self.assertEqual(len(generated), 3)
-            self.assertEqual(construction["llm_config"].model_adapter["json_max_tokens"], 4096)
-            tournament.assert_called_once()
-            self.assertIn("ran 2/2 pairwise matches", context)
-            report = json.loads(next(reports_dir.glob("tournament-*.json")).read_text())
-            self.assertEqual(report["result"]["generation"]["generated_hypotheses"], 3)
-
-    @unittest.skipUnless(HAVE_JNANA, "jnana checkout required")
-    def test_existing_hypotheses_do_not_require_current_user_message(self) -> None:
-        """Later pre-LLM turns rank persistent state even without a new prompt."""
-
-        hook = _load("loam_hypothesis_tournament_existing", HOOKS / "hypothesis_tournament.py")
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            existing = [object(), object(), object()]
-            construction = {}
-            payload = {
-                "workflow_id": "research-v1",
-                "loam_profile": "research",
-                "session_id": "session-1",
-                "loam_turn": 6,
-                "loam_hypothesis_tournament": {
-                    "enabled": True,
-                    "jnana_root": str(JNANA_ROOT),
-                    "state_file": str(root / "state" / "memory.json"),
-                    "reports_dir": str(root / "reports"),
-                    "matches_per_run": 1,
-                    "top_k": 2,
-                    "provider": "openai",
-                    "inference_endpoint": "http://example.test/v1",
-                    "model": "test-model",
-                },
-            }
-
-            class FakeCoScientist:
-                def __init__(self, **kwargs):
-                    construction.update(kwargs)
-                    self.memory = type("Memory", (), {"save": lambda _self: None})()
-
-                def start(self):
-                    pass
-
-                def stop(self):
-                    pass
-
-                def get_all_hypotheses(self):
-                    return existing
-
-            result = {
-                "status": "completed",
-                "matches_requested": 1,
-                "matches_completed": 1,
-                "top_hypotheses": [{"hypothesis_id": "h-1", "summary": "First", "elo_rating": 1208}],
-            }
-            with patch.dict(os.environ, {}, clear=True):
-                original_path = list(sys.path)
-                sys.path.insert(0, str(JNANA_ROOT))
-                try:
-                    with patch.object(hook, "CoScientist", FakeCoScientist), patch(
-                        "jnana.protognosis.periodic_tournament.run_incremental_tournament", return_value=result
-                    ) as tournament:
-                        context = hook.context_for(payload)
-                finally:
-                    sys.path[:] = original_path
-
-            self.assertEqual(construction["llm_config"].model_adapter["json_max_tokens"], 4096)
-            tournament.assert_called_once()
-            self.assertIn("ran 1/1 pairwise matches", context)
-            report = json.loads(next((root / "reports").glob("tournament-*.json")).read_text())
-            self.assertEqual(report["result"]["generation"], {"status": "not_needed", "generated_hypotheses": 0})
-
     def test_pre_llm_hook_skips_tournament_for_campaign_children(self) -> None:
         pre_llm = _load("loam_pre_llm_campaign_child", HOOKS / "pre-llm.py")
         payload = {
@@ -379,9 +202,9 @@ class HypothesisTournamentTests(unittest.TestCase):
             "loam_hypothesis_orchestration": True,
         }
         with patch.object(pre_llm, "ensure_run_manifest"), patch.object(
-            pre_llm, "memory_context_for", return_value="Validated memory"
+            pre_llm.Parser, "memory_context", return_value="Validated memory"
         ), patch.object(pre_llm, "is_campaign_child", return_value=True), patch.object(
-            pre_llm, "tournament_context_for"
+            pre_llm.Tournament, "context"
         ) as tournament:
             with patch("sys.stdin") as stdin, patch("sys.stdout") as stdout:
                 stdin.read.return_value = json.dumps(payload)
@@ -395,8 +218,8 @@ class HypothesisTournamentTests(unittest.TestCase):
         pre_llm = _load("loam_pre_llm_tournament", HOOKS / "pre-llm.py")
         payload = {"event": "pre_llm_call", "session_id": "session", "loam_hypothesis_orchestration": True}
         with patch.object(pre_llm, "ensure_run_manifest"), patch.object(
-            pre_llm, "memory_context_for", return_value="Validated memory"
-        ), patch.object(pre_llm, "tournament_context_for", return_value="Tournament ranking"), patch.object(
+            pre_llm.Parser, "memory_context", return_value="Validated memory"
+        ), patch.object(pre_llm.Tournament, "context", return_value="Tournament ranking"), patch.object(
             pre_llm, "is_campaign_child", return_value=False
         ):
             with patch("sys.stdin") as stdin, patch("sys.stdout") as stdout:
@@ -405,29 +228,6 @@ class HypothesisTournamentTests(unittest.TestCase):
 
         emitted = json.loads("".join(call.args[0] for call in stdout.write.call_args_list))
         self.assertEqual(emitted["context"], "Validated memory\n\nTournament ranking")
-
-    @unittest.skipUnless(HAVE_JNANA_LLM, "jnana checkout and openai required")
-    def test_endpoint_normalization_and_no_auth_config(self) -> None:
-        hook = _load("loam_hypothesis_tournament_endpoint", HOOKS / "hypothesis_tournament.py")
-        self.assertEqual(
-            hook._base_url(
-                {"inference_endpoint": "http://example.test/v1/chat/completions", "endpoint_is_chat_completions": True}
-            ),
-            "http://example.test/v1",
-        )
-        payload = {
-            "loam_hypothesis_tournament": {
-                "enabled": True,
-                "jnana_root": "/tmp",
-                "state_file": "/tmp/memory.json",
-                "reports_dir": "/tmp/reports",
-                "provider": "openai",
-                "inference_endpoint": "http://example.test/v1",
-                "model": "test-model",
-            }
-        }
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(hook.context_for(payload), "")
 
     def test_role_blocks_override_only_the_keys_they_set(self) -> None:
         """A `generation:`/`ranking:` block retargets one role; the rest inherits."""
@@ -455,23 +255,6 @@ class HypothesisTournamentTests(unittest.TestCase):
             parsed.roles,
             {"generation": {"model": "generator-model", "inference_endpoint": "http://generator.test/v1"}},
         )
-
-        hook = _load("loam_hypothesis_tournament_roles", HOOKS / "hypothesis_tournament.py")
-        payload = {"loam_hypothesis_tournament": {**raw, "generation": parsed.roles["generation"]}}
-        resolved = hook._config(payload)
-        assert resolved is not None
-
-        generation = hook._role_config(resolved, "generation")
-        self.assertEqual(generation["model"], "generator-model")
-        self.assertEqual(hook._base_url(generation), "http://generator.test/v1")
-        # Unset keys still come from the shared defaults.
-        self.assertEqual(generation["provider"], "openai")
-        self.assertEqual(generation["json_max_tokens"], 16384)
-
-        # No usable override for this role: the judge keeps the shared values.
-        ranking = hook._role_config(resolved, "ranking")
-        self.assertEqual(ranking["model"], "judge-model")
-        self.assertEqual(hook._base_url(ranking), "http://judge.test/v1")
 
     def test_role_overrides_reach_the_hook_payload(self) -> None:
         config = _load("loam_config_role_payload", CONFIG)
@@ -506,6 +289,175 @@ class HypothesisTournamentTests(unittest.TestCase):
         self.assertEqual(values["loam_hypothesis_tournament"]["model"], "judge-model")
         self.assertEqual(values["loam_hypothesis_tournament"]["generation"], {"model": "generator-model"})
         self.assertNotIn("ranking", values["loam_hypothesis_tournament"])
+
+
+def _fake_jnana(yields: bool = True):
+    """Stand-ins for the Jnana modules the hook imports, sharing one persisted state."""
+
+    state = SimpleNamespace(hypotheses=[], metadata={}, goals=[], generated=[], yields=yields)
+
+    class CoScientist:
+        def __init__(self, **kwargs):
+            self.research_goal = None
+            self.memory = SimpleNamespace(metadata=state.metadata, save=lambda: None)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def get_all_hypotheses(self):
+            return state.hypotheses
+
+        def set_research_goal(self, goal):
+            self.research_goal = goal
+            state.metadata["research_goal"] = goal
+            state.goals.append(goal)
+
+        def generate_hypotheses(self, count):
+            # Jnana generates against the in-memory goal, which a load never restores.
+            assert self.research_goal, "generated without setting the goal this turn"
+            state.generated.append(count)
+            if state.yields:
+                state.hypotheses.extend(range(len(state.hypotheses), len(state.hypotheses) + count))
+
+        def wait_for_completion(self):
+            pass
+
+    ranking = {
+        "status": "completed",
+        "matches_requested": 2,
+        "matches_completed": 2,
+        "top_hypotheses": [{"hypothesis_id": "h-1", "summary": "First", "elo_rating": 1208}],
+    }
+    modules = {name: ModuleType(name) for name in (
+        "jnana",
+        "jnana.protognosis",
+        "jnana.protognosis.core",
+        "jnana.protognosis.core.coscientist",
+        "jnana.protognosis.core.multi_llm_config",
+        "jnana.protognosis.periodic_tournament",
+    )}
+    modules["jnana.protognosis.core.coscientist"].CoScientist = CoScientist
+    modules["jnana.protognosis.core.multi_llm_config"].LLMConfig = SimpleNamespace
+    modules["jnana.protognosis.periodic_tournament"].run_incremental_tournament = lambda **_: ranking
+    return state, modules
+
+
+class TournamentTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.hook = _load("loam_hypothesis_tournament", HOOKS / "hypothesis_tournament.py")
+        self.root = Path(tempfile.mkdtemp())
+        (self.root / "campaigns").mkdir()
+        (self.root / "campaigns" / "fixture-goal.md").write_text(GOAL, encoding="utf-8")
+
+    def _payload(self, *, campaign: bool = True, **extra) -> dict:
+        payload = {
+            "workflow_id": "research-v1",
+            "session_id": "session-1",
+            "loam_turn": 1,
+            "user_message": "dispatch the next round",
+            "repo_root": str(self.root),
+            "loam_hypothesis_tournament": {
+                "enabled": True,
+                "jnana_root": str(self.root / "jnana"),
+                "state_file": str(self.root / "state" / "memory.json"),
+                "reports_dir": str(self.root / "reports"),
+                "initial_hypotheses": 3,
+                "refresh_hypotheses": 4,
+                "provider": "openai",
+                "inference_endpoint": "http://judge.test/v1",
+                "model": "judge-model",
+            },
+        }
+        if campaign:
+            payload["loam_campaign"] = {"goal": "fixture-goal", "rules": [], "dir": str(self.root), "skills": []}
+        payload.update(extra)
+        return payload
+
+    def _run(self, modules, payload: dict) -> str:
+        with patch.dict(sys.modules, modules), patch.dict(os.environ, {}, clear=True):
+            return self.hook.Tournament(payload).context()
+
+    def test_disabled_returns_nothing(self) -> None:
+        self.assertEqual(self.hook.Tournament({"loam_hypothesis_tournament": {"enabled": False}}).context(), "")
+
+    def test_first_turn_seeds_against_the_campaign_goal_and_reports(self) -> None:
+        state, modules = _fake_jnana()
+        context = self._run(modules, self._payload())
+
+        self.assertEqual(state.generated, [3])
+        self.assertEqual(state.goals, ["Design de novo binders against a fixture target."])
+        self.assertIn("#1: h-1 — 1208.0 Elo; First", context)
+        report = json.loads(next((self.root / "reports").glob("tournament-*.json")).read_text())
+        self.assertEqual(report["result"]["generation"]["goal_source"], "campaign:fixture-goal")
+
+    def test_an_unchanged_goal_costs_nothing_on_later_turns(self) -> None:
+        state, modules = _fake_jnana()
+        self._run(modules, self._payload())
+        self._run(modules, self._payload(loam_turn=2))
+
+        self.assertEqual(state.generated, [3])
+        self.assertEqual(len(state.goals), 1)
+
+    def test_a_new_reasoner_brief_re_goals_and_refreshes_the_pool(self) -> None:
+        state, modules = _fake_jnana()
+        self._run(modules, self._payload())
+        context = self._run(modules, self._payload(loam_turn=2, loam_reasoner_brief="Hotspot K745 matters."))
+
+        self.assertEqual(state.generated, [3, 4])
+        self.assertIn(self.hook.Tournament.brief_heading + "\nHotspot K745 matters.", state.goals[-1])
+        self.assertIn("4 new hypotheses entered", context)
+
+    def test_a_refresh_that_generated_nothing_is_retried(self) -> None:
+        state, modules = _fake_jnana()
+        self._run(modules, self._payload())
+        state.yields = False
+        brief = {"loam_reasoner_brief": "Hotspot K745 matters."}
+        self._run(modules, self._payload(loam_turn=2, **brief))
+        self._run(modules, self._payload(loam_turn=3, **brief))
+
+        self.assertEqual(state.generated, [3, 4, 4])
+
+    def test_a_turn_message_goal_is_never_re_goaled(self) -> None:
+        state, modules = _fake_jnana()
+        self._run(modules, self._payload(campaign=False, user_message="Why does X bind Y?"))
+        self._run(modules, self._payload(campaign=False, user_message="Something else entirely"))
+
+        self.assertEqual(state.goals, ["Why does X bind Y?"])
+        self.assertEqual(state.generated, [3])
+
+    def test_the_knowledge_brief_is_seeded_and_carried_into_a_re_goal(self) -> None:
+        state, modules = _fake_jnana()
+        payload = self._payload()
+        payload["loam_hypothesis_tournament"]["knowledge"] = {"enabled": True, "model": "kg-model"}
+        with patch("knowledge_brief.brief_for", return_value={"status": "ok", "brief": "Background: KG facts"}) as brief_for:
+            self._run(modules, payload)
+        self._run(modules, {**payload, "loam_turn": 2, "loam_reasoner_brief": "New synthesis."})
+
+        self.assertEqual(brief_for.call_count, 1)
+        self.assertEqual(brief_for.call_args.args[2]["model"], "kg-model")
+        self.assertIn("Background: KG facts", state.goals[0])
+        self.assertIn("Background: KG facts", state.goals[-1])
+
+    def test_role_blocks_override_only_the_keys_they_set(self) -> None:
+        _, modules = _fake_jnana()
+        payload = self._payload()
+        payload["loam_hypothesis_tournament"]["generation"] = {
+            "model": "generator-model",
+            "inference_endpoint": "http://generator.test/v1/chat/completions",
+            "endpoint_is_chat_completions": True,
+        }
+        payload["loam_hypothesis_tournament"]["ranking"] = {"model": "   "}
+        tournament = self.hook.Tournament(payload)
+        with patch.dict(sys.modules, modules):
+            generation = tournament._llm("generation", 4096)
+            ranking = tournament._llm("ranking", 1)
+
+        self.assertEqual((generation.model, generation.base_url), ("generator-model", "http://generator.test/v1"))
+        self.assertEqual(generation.model_adapter["json_max_tokens"], 4096)
+        self.assertEqual((ranking.model, ranking.base_url, ranking.api_key), ("judge-model", "http://judge.test/v1", "local-no-auth"))
 
 
 if __name__ == "__main__":

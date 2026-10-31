@@ -18,6 +18,10 @@ _KEY = re.compile(r"[a-z][a-z0-9_-]{0,79}")
 _STANCES = {"supports", "contradicts", "context"}
 
 
+def _stripped(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
 def stable_id(kind: str, material: Mapping[str, Any]) -> str:
     encoded = json.dumps(
         {"contract_version": CONTRACT_VERSION, "kind": kind, **dict(material)},
@@ -55,39 +59,36 @@ def normalize_candidate(value: Mapping[str, Any]) -> tuple[dict[str, Any] | None
         if not isinstance(raw, Mapping):
             return None, "invalid_hypothesis"
         key = raw.get("hypothesis_key")
-        statement = raw.get("statement")
+        statement = _stripped(raw.get("statement"))
         parents = raw.get("parent_hypothesis_keys", [])
         if not isinstance(key, str) or not _KEY.fullmatch(key):
             return None, "invalid_hypothesis_key"
         if key in seen_keys:
             return None, "duplicate_hypothesis_key"
-        if not isinstance(statement, str) or not statement.strip() or len(statement.strip()) > 4000:
+        if not statement or len(statement) > 4000:
             return None, "invalid_hypothesis_statement"
         if not isinstance(parents, list) or not all(isinstance(parent, str) and _KEY.fullmatch(parent) for parent in parents):
             return None, "invalid_parent_hypothesis_keys"
         seen_keys.add(key)
         normalized_hypotheses.append(
-            {"hypothesis_key": key, "statement": statement.strip(), "parent_hypothesis_keys": sorted(set(parents))}
+            {"hypothesis_key": key, "statement": statement, "parent_hypothesis_keys": sorted(set(parents))}
         )
 
     normalized_evidence: list[dict[str, str]] = []
     for raw in evidence:
         if not isinstance(raw, Mapping):
             return None, "invalid_evidence_candidate"
-        key, claim, source_url, stance = (
-            raw.get("hypothesis_key"), raw.get("claim"), raw.get("source_url"), raw.get("stance")
-        )
+        key, stance = raw.get("hypothesis_key"), raw.get("stance")
+        claim, source_url = _stripped(raw.get("claim")), _stripped(raw.get("source_url"))
         if key not in seen_keys:
             return None, "unknown_evidence_hypothesis"
-        if not isinstance(claim, str) or not claim.strip() or len(claim.strip()) > 4000:
+        if not claim or len(claim) > 4000:
             return None, "invalid_evidence_claim"
-        if not isinstance(source_url, str) or not source_url.startswith(("https://", "http://")):
+        if not source_url.startswith(("https://", "http://")):
             return None, "invalid_evidence_source_url"
         if stance not in _STANCES:
             return None, "invalid_evidence_stance"
-        normalized_evidence.append(
-            {"hypothesis_key": key, "claim": claim.strip(), "source_url": source_url.strip(), "stance": stance}
-        )
+        normalized_evidence.append({"hypothesis_key": key, "claim": claim, "source_url": source_url, "stance": stance})
     return {
         "contract_version": CONTRACT_VERSION,
         "hypotheses": normalized_hypotheses,

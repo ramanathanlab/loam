@@ -30,7 +30,6 @@ REMOTE_GENERATED = {
     "endpoint": "https://compute.example/mcp",
     "input_schema": "run-python-v1",
     "runtime": "python3.12",
-    "code_source": "generated",
     "max_children": 3,
 }
 
@@ -93,14 +92,13 @@ class ToolPolicyTests(unittest.TestCase):
             return self.orchestration.tool_policy({**child, "tool_name": tool_name, "arguments": {}})
 
     def test_reading_a_skill_is_allowed(self) -> None:
-        for tool_name in self.orchestration.SKILL_TOOLS:
+        for tool_name in ("skills_list", "skill_view"):
             with self.subTest(tool=tool_name):
                 self.assertIsNone(self._verdict(tool_name))
 
     def test_authoring_a_skill_is_not(self) -> None:
         """The child consults skills; it does not write them."""
 
-        self.assertNotIn("skill_manage", self.orchestration.SKILL_TOOLS)
         verdict = self._verdict("skill_manage")
         assert verdict is not None
         self.assertEqual(verdict["action"], "block")
@@ -130,7 +128,7 @@ class ChildContextTests(unittest.TestCase):
         campaign = self.orchestration.CampaignContext(
             goal_name="g", goal="Design something.", rules=(), skills=skills
         )
-        return self.orchestration._generated_child_context(
+        return self.orchestration._child_context(
             "Fold the candidate.", REMOTE_GENERATED, "/work", None, campaign
         )
 
@@ -161,13 +159,13 @@ class ChildContextTests(unittest.TestCase):
     def test_skills_land_after_policy_and_before_the_environment(self) -> None:
         """Goal, then which procedure, then how to run it."""
 
-        rule = self.orchestration.RuleSpec(
+        rule = sys.modules["campaign"].RuleSpec(
             name="r", scopes=frozenset(("code-generator",)), body="Fetch, do not recall."
         )
         campaign = self.orchestration.CampaignContext(
             goal_name="g", goal="Design something.", rules=(rule,), skills=("folding",)
         )
-        context = self.orchestration._generated_child_context(
+        context = self.orchestration._child_context(
             "Fold it.", {**REMOTE_GENERATED, "setup": "source /venv/bin/activate"}, "/work", None, campaign
         )
 

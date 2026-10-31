@@ -107,92 +107,6 @@ class HypothesisOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(orchestration._evidence_score("### Evidence Score\n`0.00` — inconclusive"), 0.0)
 
-    def test_validator_directive_renders_ready_tagged_task_payload(self) -> None:
-        orchestration = _load("loam_orchestration_ready_validator_tasks")
-        with tempfile.TemporaryDirectory() as temporary:
-            payload = self._fixed(self._payload(Path(temporary)))
-            # Called for its effect: it is what computes and persists the plan.
-            orchestration.context_for(payload)
-            # Inside the temp dir: the dispatch arguments are rebuilt from the
-            # persisted report, which is gone once the directory is cleaned up.
-            tasks = orchestration.canonical_delegation_args(payload)["tasks"]
-        self.assertEqual(len(tasks), 2)
-        self.assertEqual({task["role"] for task in tasks}, {"orchestrator"})
-        self.assertTrue(all("[loam-agent-role=hypothesis-validator]" in task["goal"] for task in tasks))
-        self.assertEqual(
-            {"h-1", "h-2"},
-            {task["goal"].split("[loam-hypothesis-id=", 1)[1].split("]", 1)[0] for task in tasks},
-        )
-        contexts = [json.loads(task["context"]) for task in tasks]
-        self.assertTrue(
-            all("[loam-agent-role=code-generator]" in context["required_child"]["goal"] for context in contexts)
-        )
-        self.assertTrue(all(context["required_child"]["role"] == "leaf" for context in contexts))
-        self.assertTrue(all("Fraction" in context["required_child"]["context"] for context in contexts))
-        self.assertTrue(all("### Evidence Score" in context["validator_instructions"] for context in contexts))
-
-    def test_canonical_delegation_reconstructs_validator_code_generator(self) -> None:
-        orchestration = _load("loam_orchestration_canonical_delegation")
-        with tempfile.TemporaryDirectory() as temporary:
-            payload = self._fixed(self._payload(Path(temporary)))
-            validator = {
-                **payload,
-                "child_subagent_id": "validator-1",
-                "child_session_id": "validator-session-1",
-                "child_goal": (
-                    "Validate [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-1] "
-                    "[loam-hypothesis-id=h-1]"
-                ),
-            }
-            orchestration.record_start(validator)
-            canonical = orchestration.canonical_delegation_args(
-                {**payload, "session_id": "validator-session-1"}
-            )
-
-        self.assertEqual(canonical["tasks"][0]["role"], "leaf")
-        self.assertIn("[loam-agent-role=code-generator]", canonical["tasks"][0]["goal"])
-        self.assertIn("Fraction", canonical["tasks"][0]["context"])
-
-    def test_canonical_remote_delegation_requires_the_configured_mcp_tool(self) -> None:
-        orchestration = _load("loam_orchestration_canonical_remote_delegation")
-        with tempfile.TemporaryDirectory() as temporary:
-            payload = {
-                **self._payload(Path(temporary)),
-                "loam_execution": {
-                    "mode": "remote_mcp",
-                    "tool_name": "mcp_hpc_execution_run_code",
-                    "endpoint": "http://127.0.0.1:8000/mcp",
-                    "function_name": "run_code",
-                    "input_schema": "hpc-run-code-v1",
-                    "runtime": "python3.12",
-                    "code_source": "fixed",
-                },
-            }
-            validator = {
-                **payload,
-                "child_subagent_id": "validator-1",
-                "child_session_id": "validator-session-1",
-                "child_goal": (
-                    "Validate [loam-agent-role=hypothesis-validator] [loam-plan-id=plan-1] "
-                    "[loam-hypothesis-id=h-1]"
-                ),
-            }
-            orchestration.record_start(validator)
-            canonical = orchestration.canonical_delegation_args(
-                {**payload, "session_id": "validator-session-1"}
-            )
-
-        context = canonical["tasks"][0]["context"]
-        self.assertIn("mcp_hpc_execution_run_code", context)
-        self.assertIn("do not execute code locally", context)
-        self.assertIn("pbs_jobid", context)
-        self.assertNotIn("Use local python3.11", context)
-
-    def _fixed(self, payload: dict) -> dict:
-        """Opt a payload out of the generated default, into the built-in check."""
-
-        return {**payload, "loam_execution": {**payload["loam_execution"], "code_source": "fixed"}}
-
     def _payload(self, root: Path) -> dict:
         state_file = root / "jnana.json"
         reports_dir = root / "reports"
@@ -237,14 +151,6 @@ class HypothesisOrchestrationTests(unittest.TestCase):
             },
         }
 
-    def test_registry_enforces_validator_execution_boundary(self) -> None:
-        orchestration = _load("loam_orchestration_registry")
-        registry = orchestration.agent_registry({"repo_root": str(ROOT)})
-
-        self.assertEqual(registry["hypothesis-validator"].allowed_children, ("code-generator",))
-        self.assertFalse(registry["hypothesis-validator"].direct_execution)
-        self.assertTrue(registry["code-generator"].direct_execution)
-        self.assertFalse(registry["reasoner"].direct_execution)
     def test_tagged_roles_enforce_tool_boundaries(self) -> None:
         orchestration = _load("loam_orchestration_tool_policy")
         with tempfile.TemporaryDirectory() as temporary:
@@ -384,7 +290,7 @@ class HypothesisOrchestrationTests(unittest.TestCase):
                 row = {"event": "agent_started", "role": role, "child_session_id": "S1",
                        "run": "r1", "run_id": "campaign-run-uuid-9999",
                        "workspace": str(ws), "plan_id": "p1"}
-                (sd / module.STATE_FILENAME).write_text(json.dumps(row) + "\n")
+                (sd / "hypothesis-orchestration.jsonl").write_text(json.dumps(row) + "\n")
                 calls = [{"tool": t, "ts": "x"} for t in tools]
                 (ws / "runs" / "r1" / hw.RUN_FILE).write_text(json.dumps({"calls": calls}))
                 return module.runbatch_nudge_for({"session_id": "S1", "loam_state_dir": str(sd)})
@@ -429,7 +335,7 @@ class HypothesisOrchestrationTests(unittest.TestCase):
             planned = orchestration.canonical_delegation_args(payload)["tasks"]
             self.assertEqual({task["role"] for task in planned}, {"orchestrator"})
             self.assertIn('"mode": "remote_mcp"', planned[0]["context"])
-            plan_id = orchestration._plan_id(orchestration._latest_report(payload)[0], payload)
+            plan_id = orchestration._plan_id(orchestration.Tournament(payload).latest_report()[0], payload)
 
             for index, hypothesis_id in enumerate(("h-1", "h-2"), start=1):
                 child = {
@@ -598,8 +504,6 @@ class HypothesisOrchestrationTests(unittest.TestCase):
             "function_name": "run_code",
             "input_schema": "hpc-run-code-v1",
             "runtime": "python3.12",
-            "code_source": "generated",
-            "max_children": 2,
             "workdir_root": "/lus/campaign/work",
             **execution,
         }
@@ -666,7 +570,7 @@ class HypothesisOrchestrationTests(unittest.TestCase):
         self.assertTrue(body, "validator prompt body should be loaded")
         self.assertFalse(body.startswith("---"), "front matter should be stripped")
         self.assertNotIn("name: hypothesis-validator", body)
-        self.assertLessEqual(len(body), orchestration.MAX_AGENT_PROMPT_CHARS)
+        self.assertLessEqual(len(body), 24_000)
 
         raw_context = tasks[0]["context"]
         context = json.loads(raw_context)
@@ -769,36 +673,7 @@ class HypothesisOrchestrationTests(unittest.TestCase):
         self.assertIsNone(register)
         self.assertEqual(terminal["action"], "block")
 
-    def test_missing_code_source_defaults_to_generated(self) -> None:
-        orchestration = _load("loam_orchestration_default_generated")
-        with tempfile.TemporaryDirectory() as temporary:
-            payload = self._generated_payload(Path(temporary))
-            del payload["loam_execution"]["code_source"]
-            del payload["loam_execution"]["max_children"]
-            orchestration.context_for(payload)
-            context = json.loads(orchestration.canonical_delegation_args(payload)["tasks"][0]["context"])
-        self.assertNotIn("required_child", context)
-        self.assertEqual(context["child_template"]["max_children"], 3)
-
-    def test_fixed_mode_code_generator_still_limited_to_run_tool(self) -> None:
-        orchestration = _load("loam_orchestration_fixed_policy")
-        with tempfile.TemporaryDirectory() as temporary:
-            payload = {
-                **self._generated_payload(Path(temporary), code_source="fixed"),
-                "loam_hypothesis_orchestration": True,
-            }
-            goal = "Run [loam-agent-role=code-generator] [loam-plan-id=plan-1] [loam-hypothesis-id=h-1]"
-            orchestration.record_start(
-                {**payload, "child_subagent_id": "cg", "child_session_id": "cg-session", "child_goal": goal}
-            )
-            batch = orchestration.tool_policy(
-                {**payload, "session_id": "cg-session", "tool_name": "mcp_hpc_run_batch", "arguments": {}}
-            )
-
-        self.assertEqual(batch["action"], "block")
-
-
-class EvidenceScoreAndNeutralizeTests(unittest.TestCase):
+class EvidenceScoreTests(unittest.TestCase):
     """M2 (evidence-score parsing) and H2 (fs-recovery neutralizer)."""
 
     def setUp(self) -> None:
@@ -820,12 +695,6 @@ class EvidenceScoreAndNeutralizeTests(unittest.TestCase):
         self.assertEqual(self.orch._evidence_score(
             "### Evidence Score\n0.10 (prior)\n\n### Evidence Score\n+0.90"), 0.90)
 
-    def test_neutralize_strips_reuse_existing_without_a_period(self) -> None:
-        # H2: a period-less "reuse the existing FASTA under ..." line is stripped.
-        cleaned = self.orch._neutralize_fs_recovery(
-            "reuse the existing FASTA under chai_batch_test")
-        self.assertNotIn("FASTA", cleaned)
-
     def test_score_ignores_a_number_in_the_heading_lead_in(self) -> None:
         # H1: `start` is the end of the "Evidence Score" match, so the rest of
         # the heading line was still in the window: the `0` of "(0-1" was read
@@ -836,35 +705,6 @@ class EvidenceScoreAndNeutralizeTests(unittest.TestCase):
             "### Evidence Score\n\nBased on 3 folds, 0.42"), 0.42)
         # A bare integer is still read when it is the first token of the body.
         self.assertEqual(self.orch._evidence_score("### Evidence Score\n\n0"), 0.0)
-
-    def test_neutralize_keeps_ordinary_instructions_about_results(self) -> None:
-        # H1: the object lists matched any "verb + noun" pair on a line, so
-        # correct instructions were silently deleted.
-        for instruction in (
-            "Report the results you find in stdout.",
-            "Inspect the ipTM in the batch results.",
-            "Use the existing UniProt accession for the sequence.",
-        ):
-            self.assertEqual(self.orch._neutralize_fs_recovery(instruction), instruction)
-
-    def test_neutralize_reports_what_it_stripped(self) -> None:
-        # H1: the deletion used to be silent, so a gutted instruction looked to
-        # the child like a validator who wrote nothing useful.
-        import contextlib
-        import io
-
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            cleaned = self.orch._neutralize_fs_recovery(
-                "First inspect the campaign files to recover the hypothesis.")
-        self.assertEqual(cleaned, "")
-        self.assertIn("stripped filesystem-recovery clause", stderr.getvalue())
-
-    def test_neutralize_keeps_a_legitimate_fetch_instruction(self) -> None:
-        # H2: fetching from an authoritative source carries no on-disk qualifier.
-        instruction = "Fetch the sequence from the UniProt REST API by accession."
-        self.assertEqual(self.orch._neutralize_fs_recovery(instruction), instruction)
-
 
 if __name__ == "__main__":
     unittest.main()

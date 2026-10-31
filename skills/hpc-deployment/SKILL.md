@@ -41,8 +41,16 @@ and `HPC_MCP_TRANSPORT` (`http` or `stdio`, default `stdio`).
 
 Cluster-mode health checking (see "Self-healing" below) reads `HPC_POOL_PROBE_INTERVAL`
 (60s), `HPC_POOL_PROBE_TIMEOUT` (30s), `HPC_CLUSTER_PROBE_STRIKES` (3),
-`HPC_CLUSTER_MAX_RESTARTS` (3), `HPC_CLUSTER_STARTUP_TIMEOUT` (3000s),
-`HPC_AGENT_STARTUP_TIMEOUT` (600s), and `HPC_POOL_WAIT_TIMEOUT` (unset).
+`HPC_CLIENT_PROBE_STRIKES` (3), `HPC_CLUSTER_MAX_RESTARTS` (3),
+`HPC_CLUSTER_STARTUP_TIMEOUT` (3000s), `HPC_AGENT_STARTUP_TIMEOUT` (600s), and
+`HPC_POOL_WAIT_TIMEOUT` (unset).
+
+`HPC_EXCHANGE_REQUEST_TIMEOUT` (20s; Academy's default is 60s) caps how long each
+exchange listen stream stays open before a clean reconnect. When the ALCF proxy
+severs a stream, the server's reader for it lingers up to this long and can take
+the next message for a connection that no longer exists, so a shorter window
+loses fewer messages. Agents also ride out a 429/5xx from the exchange on both
+the listen stream and the heartbeat, instead of dying on one burst.
 
 ### Setting them: `set_env.sh`
 
@@ -126,14 +134,13 @@ See `references/polaris-globus-compute-flex-scaling.md` for the concise Polaris 
 1. On the endpoint host, inspect the live endpoint user-config schema/template. Confirm that it accepts the requested allocation keys, activates the intended environment, makes `HPC_BASE_DIR` importable, and sets accelerator pinning.
 2. Create/reuse a local uv environment containing `fastmcp`, `globus-compute-sdk`, and `academy-py`.
 3. Edit `set_env.sh` for this campaign and `source` it. Run every later step in that same shell — the server inherits its configuration from the process environment and nowhere else.
-4. Run `scripts/preflight.py`. It validates local dependencies/configuration and emits the exact worker-side import/pinning prerequisites without submitting a job.
-5. Start `scripts/mcp_server.py`. Its Academy launch manager uses the Globus Compute `Executor` created with the supplied UUID and endpoint configuration. A local `ThreadPoolExecutor` is invalid: it launches agents locally.
-6. Launch the agents. Direct mode launches exactly `HPC_POOL_SIZE` `HpcAgent`s, each reporting hostname, `HPC_CAMPAIGN_ID`, and a unique device pin. Cluster mode launches the `HpcClusterAgent` first, then `HPC_POOL_SIZE` `HpcClientAgent`s against that cluster's checkpoint dir; clients report an empty device pin by design. All handles are rebound to their exchange client before serving MCP calls — the pool probes them for the life of the server.
-7. Run `scripts/smoke_test_client.py` against the server. It requires both `run_code` and `inspect_filesystem`, a normal code result, and bounded worker filesystem output.
-8. Submit concurrent cheap calls and confirm they **overlap** rather than running one at a time. In direct mode also verify unique `(hostname, device pin)` pairs; if pins duplicate or an agent is absent, stop and repair placement. Pins are empty and identical in cluster mode, so they are not a valid acceptance signal there — EL owns placement.
-9. Agents do not outlive the server. `Manager.close()` shuts down everything it launched, so a restarted server builds a fresh pool rather than adopting one. Within a run, cluster mode repairs itself (below).
+4. Start `scripts/mcp_server.py`. It validates its environment and imports its dependencies before submitting anything, so a bad configuration fails at once without costing a job. Its Academy launch manager uses the Globus Compute `Executor` created with the supplied UUID and endpoint configuration. A local `ThreadPoolExecutor` is invalid: it launches agents locally.
+5. Launch the agents. Direct mode launches exactly `HPC_POOL_SIZE` `HpcAgent`s, each reporting hostname, `HPC_CAMPAIGN_ID`, and a unique device pin. Cluster mode launches the `HpcClusterAgent` first, then `HPC_POOL_SIZE` `HpcClientAgent`s against that cluster's checkpoint dir; clients report an empty device pin by design. All handles are rebound to their exchange client before serving MCP calls — the pool probes them for the life of the server.
+6. Run `scripts/smoke_test_client.py` against the server. It requires both `run_code` and `inspect_filesystem`, a normal code result, and bounded worker filesystem output.
+7. Submit concurrent cheap calls and confirm they **overlap** rather than running one at a time. In direct mode also verify unique `(hostname, device pin)` pairs; if pins duplicate or an agent is absent, stop and repair placement. Pins are empty and identical in cluster mode, so they are not a valid acceptance signal there — EL owns placement.
+8. Agents do not outlive the server. `Manager.close()` shuts down everything it launched, so a restarted server builds a fresh pool rather than adopting one. Within a run, cluster mode repairs itself (below).
 
-The skill supplies `scripts/hpc_agent.py`, `scripts/pool_manager.py`, `scripts/mcp_server.py`, `scripts/preflight.py`, and `scripts/smoke_test_client.py`, plus the campaign's `set_env.sh`. A deployment is not considered ready until steps 7–8 succeed against the live endpoint.
+The skill supplies `scripts/hpc_agent.py`, `scripts/pool_manager.py`, `scripts/mcp_server.py`, and `scripts/smoke_test_client.py`, plus the campaign's `set_env.sh`. A deployment is not considered ready until steps 6–7 succeed against the live endpoint.
 
 ### Shutting the server down
 
@@ -158,8 +165,12 @@ the cluster on the way out.
 every `HPC_POOL_PROBE_INTERVAL`. Repair runs on that timer, never inside a tool
 call — reconciling per call is what serializes concurrent `run_code` requests.
 
-- **A client agent dies** → it is dropped from rotation immediately and replaced
-  on its own. The cluster is untouched.
+- **A client agent stops answering** → after `HPC_CLIENT_PROBE_STRIKES`
+  consecutive failed probes it is dropped from rotation, shut down, and replaced
+  on its own. The cluster is untouched. Until then it stays in rotation: a probe
+  can fail with the agent healthy (a message lost on the exchange, a 5xx burst),
+  and relaunching on every such blip piled load onto an exchange already in
+  trouble. Any successful probe resets the count.
 - **The cluster agent dies** → the EL cluster died with it, so every client is
   holding a `ClusterClient` bound to nothing. After `HPC_CLUSTER_PROBE_STRIKES`
   consecutive failed probes the pool shuts the stale agents down (freeing their

@@ -37,12 +37,8 @@ MAX_TOTAL_CHARS = 64_000
 
 
 def _audit_path(payload: Mapping[str, Any]) -> Path | None:
-    state_dir = payload.get("loam_state_dir")
-    if not isinstance(state_dir, str) or not state_dir.strip():
-        state_dir = os.environ.get("LOAM_STATE_DIR", "").strip()
-    if not state_dir:
-        return None
-    return Path(state_dir).expanduser() / FILENAME
+    state_dir = str(payload.get("loam_state_dir") or "").strip() or os.environ.get("LOAM_STATE_DIR", "").strip()
+    return Path(state_dir).expanduser() / FILENAME if state_dir else None
 
 
 def _clip(value: Any) -> Any:
@@ -72,7 +68,7 @@ def record(payload: Mapping[str, Any]) -> None:
         if not tool_name:
             return
         arguments = payload.get("arguments")
-        record = {
+        row = {
             "record_version": "loam_tool_call_v1",
             "observed_at": datetime.now(timezone.utc).isoformat(),
             "run_id": str(payload.get("loam_run_id") or ""),
@@ -82,12 +78,12 @@ def record(payload: Mapping[str, Any]) -> None:
             # The role tag travels in the child's goal, so a reader can tell a
             # code-generator's submission from the coordinator's own calls.
             "agent_role": str(payload.get("agent_role") or ""),
-            "arguments": _clip(arguments) if isinstance(arguments, (Mapping, list)) else _clip(str(arguments or "")),
+            "arguments": _clip(arguments if isinstance(arguments, (Mapping, list)) else str(arguments or "")),
         }
-        line = json.dumps(record, ensure_ascii=False, sort_keys=True)
+        line = json.dumps(row, ensure_ascii=False, sort_keys=True)
         if len(line) > MAX_TOTAL_CHARS:
-            record["arguments"] = {"truncated": True, "chars": len(line)}
-            line = json.dumps(record, ensure_ascii=False, sort_keys=True)
+            row["arguments"] = {"truncated": True, "chars": len(line)}
+            line = json.dumps(row, ensure_ascii=False, sort_keys=True)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(line + "\n")

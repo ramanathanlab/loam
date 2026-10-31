@@ -31,7 +31,7 @@ class HypothesisProvenanceTests(unittest.TestCase):
         self.contract = load("hypothesis_contract", HOOKS / "hypothesis_provenance.py")
         self.reconciler = load("hypothesis_reconciler", RECONCILE)
         self.projector = load("hypothesis_projector", PROJECT)
-        self.recall = load("hypothesis_recall_test", HOOKS / "hypothesis_recall.py")
+        self.parser = load("hypothesis_parser_test", HOOKS / "parser.py").Parser()
 
     def _candidate(self) -> dict:
         raw = {
@@ -132,7 +132,7 @@ class HypothesisProvenanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "hypothesis-memory.jsonl"
             path.write_text(__import__("json").dumps(snapshot) + "\n", encoding="utf-8")
-            context = self.recall.context_for(
+            context = self.parser.hypothesis_context(
                 {"loam_state_dir": tmp, "workflow_id": "workflow-1", "session_id": "session-1"}
             )
         self.assertIn("support=1, contradiction=1", context)

@@ -422,5 +422,148 @@ class ExchangeListenerBudgetTests(unittest.TestCase):
         self.assertTrue(self.hpc._listen_should_give_up(100.0, 100.0 + 1200, giveup_s=1200))
 
 
+def _response_error(status: int):
+    import aiohttp
+    from multidict import CIMultiDict, CIMultiDictProxy
+    from yarl import URL
+    url = URL("https://exchange.example/v1/listen")
+    info = aiohttp.RequestInfo(url, "GET", CIMultiDictProxy(CIMultiDict()), url)
+    return aiohttp.ClientResponseError(info, (), status=status, message="x")
+
+
+@unittest.skipUnless(HAVE_DEPS, "hpc-deployment dependencies not installed")
+class ExchangeTransientErrorTests(unittest.TestCase):
+    """A 429/5xx burst from the exchange is ridden out like a severed stream,
+    rather than killing the listener (and the EL cluster) or the heartbeat."""
+
+    def setUp(self) -> None:
+        sys.path.insert(0, str(SCRIPTS))
+        import hpc_agent
+        from academy.exchange.cloud.client import HttpExchangeTransport
+        self.hpc = hpc_agent
+        self.transport = HttpExchangeTransport
+        saved = (HttpExchangeTransport.listen, HttpExchangeTransport.update_heartbeat)
+        self.addCleanup(self._restore, saved)
+
+    def tearDown(self) -> None:
+        sys.path.remove(str(SCRIPTS))
+
+    def _restore(self, saved) -> None:
+        self.transport.listen, self.transport.update_heartbeat = saved
+
+    def test_classification(self) -> None:
+        import aiohttp
+        transient = self.hpc._is_transient_exchange_error
+        for status in (429, 500, 502, 503, 504):
+            self.assertTrue(transient(_response_error(status)), status)
+        for status in (400, 401, 403, 404, 413):
+            self.assertFalse(transient(_response_error(status)), status)
+        self.assertTrue(transient(aiohttp.ClientPayloadError("cut")))
+        self.assertTrue(transient(aiohttp.ServerDisconnectedError()))
+        self.assertFalse(transient(ValueError("x")))
+
+    def _harden_listen(self, script):
+        """Install a fake original listen that replays `script`, then harden it."""
+        calls = []
+
+        async def fake_listen(transport, timeout=None):
+            step = script[len(calls)]
+            calls.append(step)
+            if isinstance(step, BaseException):
+                raise step
+            for message in step:
+                yield message
+
+        self.transport.listen = fake_listen
+        self.hpc._harden_exchange_listener()
+        return calls
+
+    def _drain(self):
+        async def run():
+            sleeps = []
+            real_sleep = asyncio.sleep
+
+            async def no_sleep(seconds):
+                sleeps.append(seconds)
+                await real_sleep(0)
+
+            self.hpc.asyncio.sleep = no_sleep
+            try:
+                return [m async for m in self.transport.listen(object())], sleeps
+            finally:
+                self.hpc.asyncio.sleep = real_sleep
+        return asyncio.run(run())
+
+    def test_listener_reconnects_through_a_5xx_burst(self) -> None:
+        calls = self._harden_listen([_response_error(500), _response_error(503), ["m1", "m2"]])
+        messages, sleeps = self._drain()
+        self.assertEqual(messages, ["m1", "m2"])
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sleeps, [1.0, 2.0])
+
+    def test_listener_still_raises_non_transient_errors(self) -> None:
+        self._harden_listen([_response_error(403)])
+        with self.assertRaises(Exception) as caught:
+            self._drain()
+        self.assertEqual(getattr(caught.exception, "status", None), 403)
+
+    def test_client_startup_does_not_block_the_event_loop(self) -> None:
+        # ClusterClient's constructor polls for the checkpoint with time.sleep.
+        # Run on the event loop, it froze the exchange listener and heartbeat.
+        import time as _time
+        hpc = self.hpc
+
+        class SlowClusterClient:
+            def __init__(self, checkpoint_dir, checkpoint_timeout):
+                _time.sleep(0.5)   # stands in for _wait_for_path
+
+            def start(self):
+                pass
+
+        saved = (getattr(hpc, "ClusterClient", None), hpc.EL_AVAILABLE)
+        hpc.ClusterClient, hpc.EL_AVAILABLE = SlowClusterClient, True
+
+        def restore():
+            hpc.ClusterClient, hpc.EL_AVAILABLE = saved
+        self.addCleanup(restore)
+
+        agent = hpc.HpcClientAgent("camp", tempfile.mkdtemp(), "ckpt")
+
+        async def run():
+            ticks = 0
+
+            async def ticker():
+                nonlocal ticks
+                while True:
+                    await asyncio.sleep(0.02)
+                    ticks += 1
+
+            task = asyncio.create_task(ticker())
+            await agent.agent_on_startup()
+            task.cancel()
+            return ticks
+
+        ticks = asyncio.run(run())
+        self.assertIsInstance(agent._client, SlowClusterClient)
+        self.assertGreater(ticks, 10)   # ~25 if the loop stayed free; 0 if blocked
+
+    def test_heartbeat_skips_a_transient_failure_and_raises_others(self) -> None:
+        outcomes = iter([_response_error(503), None, _response_error(401)])
+
+        async def fake_heartbeat(transport):
+            outcome = next(outcomes)
+            if outcome is not None:
+                raise outcome
+
+        self.transport.update_heartbeat = fake_heartbeat
+        self.hpc._harden_exchange_heartbeat()
+        beat = self.transport.update_heartbeat
+        asyncio.run(beat(object()))       # 503: logged and swallowed
+        asyncio.run(beat(object()))       # success
+        with self.assertRaises(Exception) as caught:
+            asyncio.run(beat(object()))   # 401: not ours to hide
+        self.assertEqual(getattr(caught.exception, "status", None), 401)
+
+
 if __name__ == "__main__":
     unittest.main()

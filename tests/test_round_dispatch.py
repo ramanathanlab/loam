@@ -127,7 +127,7 @@ class CoordinatorBoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             payload = {**_payload(Path(temporary)), "loam_hypothesis_orchestration": True}
             orchestration.context_for(dict(payload))
-            plan_id = orchestration._plan_id(orchestration._latest_report(payload)[0], payload)
+            plan_id = orchestration._plan_id(orchestration.Tournament(payload).latest_report()[0], payload)
             orchestration.record_start(
                 {
                     **payload,

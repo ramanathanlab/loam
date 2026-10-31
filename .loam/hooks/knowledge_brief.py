@@ -178,8 +178,7 @@ async def _research(goal: str, url: str, allowed: set[str], llm: Mapping[str, An
             {"role": "system", "content": SYSTEM.replace("{instructions}", (init.instructions or "")[:4000])},
             {"role": "user", "content": task},
         ]
-        calls, used, seen = 0, [], {}
-        nudges = 0
+        calls, used, seen, nudged = 0, [], set(), False
         while True:
             budget_left = calls < max_calls
             response = await client.chat.completions.create(
@@ -190,8 +189,8 @@ async def _research(goal: str, url: str, allowed: set[str], llm: Mapping[str, An
                 text = (message.content or "").strip()
                 # A reasoning model can spend the whole budget thinking and
                 # answer with empty content; ask once, plainly, for the text.
-                if not text and nudges < 1:
-                    nudges += 1
+                if not text and not nudged:
+                    nudged = True
                     messages.append({"role": "user", "content": (
                         "Your last reply had no text. Write the brief now as plain prose, no tool calls.")})
                     continue
@@ -214,7 +213,7 @@ async def _research(goal: str, url: str, allowed: set[str], llm: Mapping[str, An
                         text = _tool_text(result)
                     except Exception as exc:  # noqa: BLE001 - report to the model and keep going
                         text = f"TOOL ERROR: {type(exc).__name__}: {exc}"
-                    seen[signature] = True
+                    seen.add(signature)
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": text})
             if calls >= max_calls:
                 messages.append({"role": "user", "content": "Tool budget used. Write the brief now, without tool calls."})
@@ -237,23 +236,22 @@ def brief_for(goal: str, knowledge: Mapping[str, Any], llm: Mapping[str, Any],
     cache_path = cache_dir / CACHE_FILE
     key = _key(goal, url, str(llm["model"]), seeds)
     cached = _read_cache(cache_path).get(key)
-    if isinstance(cached, dict) and cached.get("brief"):
+    if cached and cached.get("brief"):
         return {**cached, "cached": True}
 
     started = time.time()
     try:
         text, calls, used = asyncio.run(asyncio.wait_for(
             _research(goal, url, allowed, llm, max_calls, seeds), timeout))
+        status = "ok" if text else "empty"
     except Exception as exc:  # noqa: BLE001 - advisory: never block generation
-        return {"status": f"failed: {_describe(exc)}", "brief": "",
-                "tool_calls": 0, "tools_used": [], "cached": False,
-                "seconds": round(time.time() - started, 1)}
-    if not text:
-        return {"status": "empty", "brief": "", "tool_calls": calls, "tools_used": used,
-                "cached": False, "seconds": round(time.time() - started, 1)}
-    entry = {"status": "ok", "brief": HEADER.format(name=name) + "\n" + text[:max_chars],
-             "tool_calls": calls, "tools_used": used, "seconds": round(time.time() - started, 1),
-             "mcp_url": url, "goal": goal[:500]}
+        text, calls, used, status = "", 0, [], f"failed: {_describe(exc)}"
+    entry = {"status": status, "brief": "", "tool_calls": calls, "tools_used": used,
+             "seconds": round(time.time() - started, 1)}
+    if status != "ok":
+        return {**entry, "cached": False}
+    entry.update(brief=HEADER.format(name=name) + "\n" + text[:max_chars], mcp_url=url, goal=goal[:500])
+    # Re-read: another tournament may have cached a different goal meanwhile.
     cache = _read_cache(cache_path)
     cache[key] = entry
     cache_dir.mkdir(parents=True, exist_ok=True)
