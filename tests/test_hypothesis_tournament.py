@@ -294,7 +294,9 @@ class HypothesisTournamentTests(unittest.TestCase):
 def _fake_jnana(yields: bool = True):
     """Stand-ins for the Jnana modules the hook imports, sharing one persisted state."""
 
-    state = SimpleNamespace(hypotheses=[], metadata={}, goals=[], generated=[], yields=yields)
+    state = SimpleNamespace(
+        hypotheses=[], metadata={}, goals=[], generated=[], yields=yields, wait_timeouts=[]
+    )
 
     class CoScientist:
         def __init__(self, **kwargs):
@@ -322,8 +324,13 @@ def _fake_jnana(yields: bool = True):
             if state.yields:
                 state.hypotheses.extend(range(len(state.hypotheses), len(state.hypotheses) + count))
 
-        def wait_for_completion(self):
-            pass
+        def wait_for_completion(self, timeout=None):
+            # The real CoScientist.start() runs the whole agent ensemble, and
+            # those agents enqueue their own follow-up work, so an unbounded
+            # wait here does not return. Every caller in the hook must pass a
+            # budget; recorded so a test can assert that it did.
+            state.wait_timeouts.append(timeout)
+            return True
 
     ranking = {
         "status": "completed",
