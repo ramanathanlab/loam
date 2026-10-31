@@ -1,7 +1,7 @@
 ---
 name: design-provenance
 scope: all
-enforced_by: partially -- _SCRUBBERS strips filesystem-recovery steering from validator instructions; the rest is advisory
+enforced_by: none -- advisory
 ---
 
 - A datum designed in this campaign — a candidate construct, a proposed

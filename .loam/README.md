@@ -102,10 +102,34 @@ policy as it is designed.
 
   A profile may additionally opt into `hypothesis_tournament`. When enabled,
   the hook uses Jnana/ProtoGnosis generation agents to seed an empty
-  workflow-scoped state from the current user request, then runs a bounded
-  pairwise ranking tournament before the model call. `initial_hypotheses`
-  controls the one-time seed size (default `3`); existing states with at least
-  two hypotheses are ranked without generating more. The hook persists Jnana
+  workflow-scoped state from the campaign's goal — the same `campaigns/<goal>.md`
+  the validators and the reasoner are given, falling back to the current user
+  request for a profile that names no campaign — then runs a bounded pairwise
+  ranking tournament before the model call. `initial_hypotheses` controls the
+  one-time seed size (default `3`).
+
+  The stored goal is re-set whenever it moves, because the pairwise judge reads
+  it (and the evaluation criteria parsed from it) on every match: an edited goal
+  file or a fresh reasoner brief reaches the ranking rather than leaving it
+  judging against the first round's text. `refresh_hypotheses` (default `0`,
+  off) then lets that new knowledge enter the pool as candidates: N
+  brief-informed hypotheses per *new brief*, not per turn. Left at `0`, a
+  seeded state is only ever re-ranked, never added to. Both of those need a
+  campaign goal to measure movement against; a profile that names none keeps
+  the earlier behaviour, seeding once from the turn's request and then only
+  re-ranking, because that request differs every turn.
+
+  A brief is recorded as spent only once it has actually bought hypotheses. A
+  generation that comes back empty — Jnana logs an agent-level failure, stores
+  nothing and raises nothing — leaves the refresh owed, and the next turn tries
+  the same brief again (`status: refresh_yielded_nothing`). A re-goal or refresh
+  that raises is advisory like the rest of the hook: it is reported in the turn's
+  report as `goal_sync: "failed: ..."` and costs the turn its rankings, not its
+  other context. A state seeded before these markers existed needs no migration:
+  its knowledge-pre-pass brief is recovered from the goal it is stored inside,
+  and an unmoved goal is stamped rather than re-parsed, so the first turn after
+  an upgrade spends no LLM call and no refresh (`goal_sync: unchanged_stamped`).
+  The hook persists Jnana
   JSON state and an immutable Loam report, and injects only a compact Elo
   ranking. Generation and rankings are advisory rather than empirical
   validation. The hook uses a nonblocking state lock and fails open on

@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOKS = ROOT / ".loam" / "hooks"
 START = HOOKS / "subagent-start.py"
 STOP = HOOKS / "subagent-stop.py"
-MEMORY_RECALL = HOOKS / "memory_recall.py"
+AUDIT_DUPLICATES = HOOKS / "audit_duplicates.py"
+PARSER = HOOKS / "parser.py"
 
 
 def _load_module(name: str, path: Path):
@@ -337,7 +338,8 @@ class SubagentLedgerTests(unittest.TestCase):
         self.assertEqual(candidate["candidate"]["hypotheses"][0]["statement"], "A claim.")
 
     def test_recall_injects_validated_memory_and_audits_exact_duplicate(self) -> None:
-        recall = _load_module("loam_memory_recall", MEMORY_RECALL)
+        recall = _load_module("loam_audit_duplicates", AUDIT_DUPLICATES)
+        parser = _load_module("loam_parser", PARSER).Parser()
         with tempfile.TemporaryDirectory() as tmp:
             memory_path = Path(tmp) / "parent-memory.jsonl"
             audit_path = Path(tmp) / "subagent-ledger.jsonl"
@@ -367,7 +369,7 @@ class SubagentLedgerTests(unittest.TestCase):
                     "tool_name": "delegate_task",
                     "arguments": {"goal": "Verify the UniProt P00918 gene name."},
                 }
-                context = recall.context_for(payload)
+                context = parser.memory_context(payload)
                 matches = recall.audit_duplicates(payload)
             finally:
                 if old_memory is None:
@@ -388,7 +390,7 @@ class SubagentLedgerTests(unittest.TestCase):
         self.assertEqual(audit_rows[0]["policy_action"], "allow_and_audit")
 
     def test_exact_duplicate_block_is_opt_in(self) -> None:
-        recall = _load_module("loam_memory_recall_block", MEMORY_RECALL)
+        recall = _load_module("loam_audit_duplicates_block", AUDIT_DUPLICATES)
         with tempfile.TemporaryDirectory() as tmp:
             memory_path = Path(tmp) / "parent-memory.jsonl"
             ledger_path = Path(tmp) / "subagent-ledger.jsonl"
@@ -457,7 +459,7 @@ class DuplicateFieldMatchTests(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        self.recall = _load_module("loam_recall_fields", MEMORY_RECALL)
+        self.recall = _load_module("loam_audit_fields", AUDIT_DUPLICATES)
 
     def _matches(self, field: str, text: str) -> bool:
         pattern = self.recall._field_pattern(field)

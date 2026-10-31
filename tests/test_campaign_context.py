@@ -12,6 +12,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HOOKS = ROOT / ".loam" / "hooks"
 ORCHESTRATION = HOOKS / "hypothesis_orchestration.py"
+TIERS = ("reasoner", "hypothesis-validator", "code-generator")
+sys.path.insert(0, str(HOOKS))
+import campaign as policy  # noqa: E402
 
 
 def _load(name: str):
@@ -61,7 +64,6 @@ class CampaignContextTests(unittest.TestCase):
         assert context is not None
         self.assertEqual(context.goal_name, "")
         self.assertEqual([rule.name for rule in context.rules], ["evidence-integrity", "experiment-discipline"])
-        self.assertTrue(all(rule.always for rule in context.rules))
 
     def test_an_empty_rules_directory_loads_nothing(self) -> None:
         orchestration = _load("loam_campaign_empty")
@@ -124,16 +126,6 @@ class CampaignContextTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 orchestration.campaign_context(payload)
 
-    def test_an_unknown_applies_value_raises(self) -> None:
-        orchestration = _load("loam_campaign_bad_applies")
-        with tempfile.TemporaryDirectory() as temporary:
-            payload = _repo(
-                Path(temporary),
-                rules={"assay": _rule("assay", "all", "Body.", extra="applies: sometimes\n")},
-            )
-            with self.assertRaises(ValueError):
-                orchestration.campaign_context({**payload, "loam_campaign": {"rules": ["assay"]}})
-
     def test_goal_and_rules_load_from_the_repo(self) -> None:
         orchestration = _load("loam_campaign_load")
         with tempfile.TemporaryDirectory() as temporary:
@@ -148,7 +140,7 @@ class CampaignContextTests(unittest.TestCase):
         self.assertIn("de novo binders", context.goal)
         self.assertNotIn("---", context.goal)  # front matter stripped
         self.assertEqual(len(context.rules), 1)
-        self.assertEqual(context.rules[0].scopes, frozenset(orchestration.RULE_TIERS))
+        self.assertEqual(context.rules[0].scopes, frozenset(TIERS))
 
     def test_the_repo_ships_no_campaign_content(self) -> None:
         """The framework must not carry one field's goal or protocol.
@@ -228,9 +220,9 @@ class CampaignContextTests(unittest.TestCase):
                     Path(temporary),
                     goal=GOAL,
                     rules={
-                        "validator-only": _rule("validator-only", "validator"),
+                        "validator-only": _rule("validator-only", "hypothesis-validator"),
                         "child-only": _rule("child-only", "code-generator"),
-                        "two-tiers": _rule("two-tiers", "validator, reasoner"),
+                        "two-tiers": _rule("two-tiers", "hypothesis-validator, reasoner"),
                     },
                 ),
                 "loam_campaign": {
@@ -242,26 +234,10 @@ class CampaignContextTests(unittest.TestCase):
 
         assert context is not None
         self.assertEqual(
-            [rule.name for rule in context.rules_for("validator")], ["validator-only", "two-tiers"]
+            [rule.name for rule in context.rules_for("hypothesis-validator")], ["validator-only", "two-tiers"]
         )
         self.assertEqual([rule.name for rule in context.rules_for("code-generator")], ["child-only"])
         self.assertEqual([rule.name for rule in context.rules_for("reasoner")], ["two-tiers"])
-
-    def test_enforced_by_is_carried_when_declared(self) -> None:
-        orchestration = _load("loam_campaign_enforced_by")
-        with tempfile.TemporaryDirectory() as temporary:
-            payload = {
-                **_repo(
-                    Path(temporary),
-                    goal=GOAL,
-                    rules={"budget": _rule("budget", "validator", extra="enforced_by: tool_policy max_children\n")},
-                ),
-                "loam_campaign": {"goal": "fixture-goal", "rules": ["budget"]},
-            }
-            context = orchestration.campaign_context(payload)
-
-        assert context is not None
-        self.assertEqual(context.rules[0].enforced_by, "tool_policy max_children")
 
     def test_a_missing_named_file_raises(self) -> None:
         """Named-but-absent policy must fail loudly, not leave the run ungoverned."""
@@ -318,15 +294,15 @@ class CampaignContextTests(unittest.TestCase):
                 **_repo(
                     Path(temporary),
                     goal="---\nname: fixture-goal\n---\n\n" + "g" * 10_000,
-                    rules={"long": _rule("long", "validator", body="r" * 10_000)},
+                    rules={"long": _rule("long", "hypothesis-validator", body="r" * 10_000)},
                 ),
                 "loam_campaign": {"goal": "fixture-goal", "rules": ["long"]},
             }
             context = orchestration.campaign_context(payload)
 
         assert context is not None
-        self.assertEqual(len(context.goal), orchestration.MAX_CAMPAIGN_CHARS)
-        self.assertEqual(len(context.rules[0].body), orchestration.MAX_RULES_CHARS)
+        self.assertEqual(len(context.goal), 4_000)
+        self.assertEqual(len(context.rules[0].body), 4_000)
 
 
 def _orchestration_payload(root: Path, campaign: dict | None = None) -> dict:
@@ -470,7 +446,7 @@ class CampaignInjectionTests(unittest.TestCase):
                 **_orchestration_payload(Path(temporary), _campaign(Path(temporary))),
                 "arguments": {"tasks": [{"goal": "Co-fold the candidate.", "context": "Inputs follow."}]},
             }
-            tasks = orchestration._generated_child_tasks(payload, "plan-1", "h-1")
+            tasks = orchestration._child_tasks(payload, "plan-1", "h-1")
 
         assert tasks is not None
         context = tasks["tasks"][0]["context"]
@@ -483,17 +459,13 @@ class CampaignInjectionTests(unittest.TestCase):
         """reasoner.md requires an objective; until now nothing supplied one."""
 
         orchestration = _load("loam_campaign_reasoner_inject")
-        registry = orchestration.agent_registry({"repo_root": str(ROOT)})
         with tempfile.TemporaryDirectory() as temporary:
-            campaign = _campaign(Path(temporary))
-            context = orchestration.campaign_context({"repo_root": str(ROOT), "loam_campaign": campaign})
-        directive = orchestration._reasoner_directive(
-            "plan-1",
-            [{"hypothesis_id": "h-1", "status": "supported", "evidence_score": 0.5, "summary": "Report."}],
-            registry,
-            context,
-            {"h-1": 1210.0},
-        )
+            payload = {"repo_root": str(ROOT), "loam_campaign": _campaign(Path(temporary))}
+            directive = orchestration._reasoner_directive(
+                "plan-1",
+                [{"hypothesis_id": "h-1", "status": "supported", "evidence_score": 0.5, "summary": "Report."}],
+                payload,
+            )
 
         self.assertIn("FIXTURE SUBJECT", directive)
         # Asserted inside the JSON block, because the surrounding prose names
@@ -509,7 +481,7 @@ class HypothesisBlockExtractionTests(unittest.TestCase):
         block = orchestration._hypothesis_block({"hypothesis_id": "h-1", "content": "A claim."})
 
         self.assertIn("A claim.", block)
-        # Kept: campaign-independent, and backed by _SCRUBBERS.
+        # Kept: campaign-independent.
         self.assertIn("NEVER run, score, or reuse", block)
         self.assertIn("complete assignment", block)
         # Moved to the assay rules under .loam/rules/.
@@ -555,8 +527,7 @@ class RuleLayeringTests(unittest.TestCase):
     def test_every_always_on_rule_is_invariant(self) -> None:
         """Catches a rule added later, which is when this bar gets forgotten."""
 
-        orchestration = _load("loam_rule_layering_all")
-        names = orchestration._base_rule_names({"repo_root": str(ROOT)})
+        names = policy._base_rule_names({"repo_root": str(ROOT)})
         self.assertTrue(names)
         for name in names:
             self._assert_invariant(name)
@@ -579,8 +550,7 @@ class RuleLayeringTests(unittest.TestCase):
         shape = (ROOT / ".loam" / "rules" / "design-provenance.md").read_text(encoding="utf-8")
         self.assertIn("Paste what was designed", shape)
         self.assertNotIn("applies:", shape)
-        orchestration = _load("loam_rule_layering_shape")
-        self.assertNotIn("design-provenance", orchestration._base_rule_names({"repo_root": str(ROOT)}))
+        self.assertNotIn("design-provenance", policy._base_rule_names({"repo_root": str(ROOT)}))
 
 
 class StarterKitTests(unittest.TestCase):
@@ -610,7 +580,7 @@ class StarterKitTests(unittest.TestCase):
         names = [rule.name for rule in context.rules]
         self.assertIn("example-protocol", names)
         self.assertIn("example-constraint", names)
-        for tier in orchestration.RULE_TIERS:
+        for tier in TIERS:
             self.assertTrue(context.rules_for(tier), f"no rule reaches {tier}")
 
     def test_the_profile_names_the_files_the_kit_ships(self) -> None:

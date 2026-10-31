@@ -12,8 +12,8 @@ import json
 import sys
 from typing import Any
 
+from audit_duplicates import audit_duplicates
 from hypothesis_orchestration import tool_policy, workspace_capture, workspace_policy
-from memory_recall import audit_duplicates
 from provenance import record as record_provenance
 from run_manifest import ensure as ensure_run_manifest
 from tool_audit import record as record_tool_call

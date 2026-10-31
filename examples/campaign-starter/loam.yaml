@@ -54,6 +54,7 @@ profiles:
       matches_per_run: 5      # pairwise ranking matches per round
       top_k: 3                # hypotheses handed to validators per round
       timeout_seconds: 600
+      refresh_hypotheses: 2   # new hypotheses per reasoner brief; 0 disables
 
     campaign:
       # The directory holding campaigns/ and rules/ -- i.e. the copy of

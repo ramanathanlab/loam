@@ -40,7 +40,7 @@ per-field decisions (`validation_status`, `authoritative_value`) into
 `parent-memory.jsonl`, and the surviving reconciler emits no such rows — its
 accepted evidence carries a claim, a `source_url` and a stance. The file itself
 is still live: the reasoner writes it directly as its one durable findings
-cache, and `memory_recall` reads it. Deleting the projector left that file with
+cache, and `parser.Parser` reads it. Deleting the projector left that file with
 exactly one writer.
 
 Note what went with it: that contract's reconciler fetched the authoritative

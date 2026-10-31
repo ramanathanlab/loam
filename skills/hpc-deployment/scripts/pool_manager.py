@@ -12,6 +12,18 @@ from academy.handle import Handle
 logger = logging.getLogger(__name__)
 
 
+def _setting(value, env_name: str, default: str, cast=float):
+    """An explicit constructor argument, else the environment, else the default."""
+    return value if value is not None else cast(os.environ.get(env_name, default))
+
+
+def _reraise_cancel(results: list) -> None:
+    """gather(return_exceptions=True) swallows cancellation; re-raise it so stop() works."""
+    for item in results:
+        if isinstance(item, asyncio.CancelledError):
+            raise item
+
+
 @dataclass
 class AgentInfo:
     handle: Handle
@@ -36,9 +48,7 @@ class CampaignPool:
         # agent instead has to clear scheduler wait and agent_on_startup (the
         # EL ClusterClient checkpoint handshake), so it gets a longer deadline.
         self.timeout_s = timeout_s
-        self.startup_timeout_s = startup_timeout_s if startup_timeout_s is not None else float(
-            os.environ.get("HPC_AGENT_STARTUP_TIMEOUT", "600")
-        )
+        self.startup_timeout_s = _setting(startup_timeout_s, "HPC_AGENT_STARTUP_TIMEOUT", "600")
         self._agents: list[AgentInfo] = []
         self._lock = asyncio.Lock()
         self._cursor = 0
@@ -133,36 +143,31 @@ class ClusterPool:
                  startup_timeout_s: float | None = None, probe_interval_s: float | None = None,
                  probe_timeout_s: float | None = None, cluster_timeout_s: float | None = None,
                  cluster_grace: int | None = None, max_restarts: int | None = None,
-                 wait_timeout_s: float | None = None):
+                 wait_timeout_s: float | None = None, client_grace: int | None = None):
         self.campaign_id = campaign_id
         self.want = want
         # A new client has to clear scheduler wait and agent_on_startup (the EL
         # ClusterClient checkpoint handshake) before it answers a probe.
-        self.startup_timeout_s = startup_timeout_s if startup_timeout_s is not None else float(
-            os.environ.get("HPC_AGENT_STARTUP_TIMEOUT", "600")
-        )
+        self.startup_timeout_s = _setting(startup_timeout_s, "HPC_AGENT_STARTUP_TIMEOUT", "600")
         # The cluster agent's first probe waits out the PBS queue, not just
         # process startup, so it gets a much larger budget than anything else.
-        self.cluster_timeout_s = cluster_timeout_s if cluster_timeout_s is not None else float(
-            os.environ.get("HPC_CLUSTER_STARTUP_TIMEOUT", "3000")
-        )
-        self.probe_interval_s = probe_interval_s if probe_interval_s is not None else float(
-            os.environ.get("HPC_POOL_PROBE_INTERVAL", "60")
-        )
+        self.cluster_timeout_s = _setting(cluster_timeout_s, "HPC_CLUSTER_STARTUP_TIMEOUT", "3000")
+        self.probe_interval_s = _setting(probe_interval_s, "HPC_POOL_PROBE_INTERVAL", "60")
         # Liveness probes must fail fast; only a cold launch gets the long one.
-        self.probe_timeout_s = probe_timeout_s if probe_timeout_s is not None else float(
-            os.environ.get("HPC_POOL_PROBE_TIMEOUT", "30")
-        )
+        self.probe_timeout_s = _setting(probe_timeout_s, "HPC_POOL_PROBE_TIMEOUT", "30")
         # Tearing down a live cluster over one dropped probe costs a restart
         # and possibly a fresh allocation, so the cluster gets consecutive
-        # strikes where a client agent gets one.
-        self.cluster_grace = cluster_grace if cluster_grace is not None else int(
-            os.environ.get("HPC_CLUSTER_PROBE_STRIKES", "3")
-        )
+        # strikes before a rebuild.
+        self.cluster_grace = _setting(cluster_grace, "HPC_CLUSTER_PROBE_STRIKES", "3", int)
+        # Clients get strikes too. A probe can fail with the agent healthy: the
+        # exchange drops messages when a severed listen stream leaves a stale
+        # server-side reader on the mailbox, and a 5xx burst fails the send.
+        # Replacing a client on one miss turned each such blip into a mailbox
+        # registration, a GC submission and an EL handshake, piling load onto
+        # the exchange exactly while it was struggling.
+        self.client_grace = _setting(client_grace, "HPC_CLIENT_PROBE_STRIKES", "3", int)
         # Consecutive failed rebuilds before self-healing gives up for good.
-        self.max_restarts = max_restarts if max_restarts is not None else int(
-            os.environ.get("HPC_CLUSTER_MAX_RESTARTS", "3")
-        )
+        self.max_restarts = _setting(max_restarts, "HPC_CLUSTER_MAX_RESTARTS", "3", int)
         # How long a tool call waits for a restart. Unset means wait as long as
         # it takes and let the MCP client's own timeout be the bound.
         if wait_timeout_s is None:
@@ -176,6 +181,8 @@ class ClusterPool:
         self._started = False
         self._failed = False
         self._cluster_misses = 0
+        # Consecutive failed probes per client agent id; cleared on any success.
+        self._client_misses: dict[str, int] = {}
         self._restart_failures = 0
         # Caller-supplied dir seeds generation 0; every later generation mints
         # its own so a new ClusterClient cannot bind to the dead master's
@@ -242,11 +249,8 @@ class ClusterPool:
         launched = await asyncio.gather(
             *(self._launch_client() for _ in range(count)), return_exceptions=True,
         )
+        _reraise_cancel(launched)
         for item in launched:
-            # gather(return_exceptions=True) swallows cancellation; re-raise so
-            # stop() can actually stop us.
-            if isinstance(item, asyncio.CancelledError):
-                raise item
             if isinstance(item, BaseException):
                 logger.error("client agent launch failed: %s: %s", type(item).__name__, item)
         return [item for item in launched if isinstance(item, AgentInfo)]
@@ -272,9 +276,7 @@ class ClusterPool:
                 logger.debug("shutdown of %s failed: %s: %s",
                              agent.handle.agent_id, type(exc).__name__, exc)
 
-        for item in await asyncio.gather(*(one(a) for a in agents), return_exceptions=True):
-            if isinstance(item, asyncio.CancelledError):
-                raise item
+        _reraise_cancel(await asyncio.gather(*(one(a) for a in agents), return_exceptions=True))
 
     # -- repair ----------------------------------------------------------
 
@@ -287,6 +289,7 @@ class ClusterPool:
         # Stop serving agents wired to the dead cluster before anything slow.
         self._cluster = None
         self._agents = []
+        self._client_misses.clear()
         await self._shutdown_all(stale)
         try:
             await self._start_cluster()
@@ -332,8 +335,24 @@ class ClusterPool:
 
     async def _repair_clients(self) -> None:
         probed = await asyncio.gather(*(self._probe(agent) for agent in self._agents))
-        survivors = [agent for agent in probed if agent is not None]
-        dropped = [agent for agent, ok in zip(self._agents, probed) if ok is None]
+        survivors, dropped = [], []
+        for agent, ok in zip(self._agents, probed):
+            key = str(agent.handle.agent_id)
+            if ok is not None:
+                self._client_misses.pop(key, None)
+                survivors.append(agent)
+                continue
+            misses = self._client_misses.get(key, 0) + 1
+            if misses < self.client_grace:
+                # Keep serving it: a dead client costs a few failed tool calls
+                # until its strikes run out; a false drop costs a relaunch.
+                self._client_misses[key] = misses
+                logger.warning("client agent %s probe failed [%d/%d]",
+                               key, misses, self.client_grace)
+                survivors.append(agent)
+            else:
+                self._client_misses.pop(key, None)
+                dropped.append(agent)
         if len(survivors) < len(self._agents):
             # Publish survivors before relaunching: a dead agent must stop
             # being handed out even if its replacement cannot be launched.

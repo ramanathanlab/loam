@@ -67,17 +67,15 @@ class ReasonerInputTests(unittest.TestCase):
 
     def test_elo_reaches_each_reasoner_thread(self) -> None:
         orchestration = _load("loam_reasoner_elo_threads")
-        registry = orchestration.agent_registry({"repo_root": str(ROOT)})
-        directive = orchestration._reasoner_directive(
-            "plan-1",
-            [
-                {"hypothesis_id": "h-1", "status": "supported", "evidence_score": 0.5, "summary": "A."},
-                {"hypothesis_id": "h-2", "status": "contradicted", "evidence_score": -0.5, "summary": "B."},
-            ],
-            registry,
-            None,
-            {"h-1": 1210.0, "h-2": 1190.5},
-        )
+        with tempfile.TemporaryDirectory() as temporary:
+            directive = orchestration._reasoner_directive(
+                "plan-1",
+                [
+                    {"hypothesis_id": "h-1", "status": "supported", "evidence_score": 0.5, "summary": "A."},
+                    {"hypothesis_id": "h-2", "status": "contradicted", "evidence_score": -0.5, "summary": "B."},
+                ],
+                _report_payload(Path(temporary)),
+            )
 
         threads = json.loads(directive.rsplit("\n", 1)[1])
         self.assertEqual([thread["elo_rating"] for thread in threads], [1210.0, 1190.5])
@@ -86,13 +84,10 @@ class ReasonerInputTests(unittest.TestCase):
         """Absent must be explicit: the definition's rule is to flag it, not infer it."""
 
         orchestration = _load("loam_reasoner_elo_missing")
-        registry = orchestration.agent_registry({"repo_root": str(ROOT)})
         directive = orchestration._reasoner_directive(
             "plan-1",
             [{"hypothesis_id": "h-9", "status": "inconclusive", "evidence_score": 0.0, "summary": "C."}],
-            registry,
-            None,
-            {},
+            {"repo_root": str(ROOT)},
         )
 
         threads = json.loads(directive.rsplit("\n", 1)[1])
@@ -102,17 +97,16 @@ class ReasonerInputTests(unittest.TestCase):
     def test_the_declared_model_tier_is_stated_to_the_dispatcher(self) -> None:
         orchestration = _load("loam_reasoner_model")
         registry = orchestration.agent_registry({"repo_root": str(ROOT)})
-        directive = orchestration._reasoner_directive("plan-1", [], registry, None, {})
+        directive = orchestration._reasoner_directive("plan-1", [], {"repo_root": str(ROOT)})
 
         self.assertIn(registry["reasoner"].model, directive)
 
     def test_the_brief_ceiling_leaves_room_for_a_turn_of_synthesis(self) -> None:
         orchestration = _load("loam_reasoner_brief_bound")
-        rows = [{"event": "reasoner_completed", "workflow_id": "research-v1", "summary": "s" * 20_000}]
+        rows = [{"event": "reasoner_completed", "workflow_id": "research-v1", "summary": "s" * 30_000}]
         brief = orchestration._latest_brief(rows, "research-v1")
 
-        self.assertEqual(len(brief), orchestration.MAX_BRIEF_CHARS)
-        self.assertGreaterEqual(orchestration.MAX_BRIEF_CHARS, 8_000)
+        self.assertEqual(len(brief), 25_000)
 
 
 if __name__ == "__main__":

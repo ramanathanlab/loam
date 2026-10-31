@@ -23,6 +23,10 @@ import logging
 import os
 import re
 import shutil
+import socket
+import subprocess
+import sys
+import tempfile
 import time
 import uuid
 from contextlib import aclosing
@@ -32,6 +36,7 @@ from typing import Literal
 
 import aiohttp
 from academy.agent import Agent, action
+from academy.exchange.cloud.client import HttpExchangeTransport
 
 logger = logging.getLogger(__name__)
 
@@ -45,16 +50,39 @@ try:
     )
     from ensemble_launcher.ensemble import Task
     from ensemble_launcher.orchestrator import ClusterClient
-    EL_AVAILABLE=True
+    EL_AVAILABLE = True
 except ModuleNotFoundError:
-    EL_AVAILABLE=False
+    EL_AVAILABLE = False
 
 _MAX_ENTRIES = 200
 _MAX_LINES = 200
 _MAX_BYTES = 64 * 1024
 
-# A dropped exchange stream must not read as "the agent is gone".
-_TRANSIENT_LISTEN_ERRORS = (aiohttp.ClientPayloadError, aiohttp.ClientConnectionError)
+# A dropped exchange stream must not read as "the agent is gone", and neither
+# must an exchange that is briefly overloaded. Academy retries a 5xx/429 only
+# `retries` times (seconds, in all) and then raises ClientResponseError; left
+# uncaught, that one burst killed the listener (so the agent, so el.stop() and
+# the allocation) and silently ended the heartbeat loop for good.
+_TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+
+def _device_pin() -> str:
+    """The accelerator this process is pinned to: ZE_AFFINITY_MASK (Aurora) or CUDA_VISIBLE_DEVICES."""
+    return os.environ.get("ZE_AFFINITY_MASK", os.environ.get("CUDA_VISIBLE_DEVICES", ""))
+
+
+def _python(venv_path: str | None) -> str:
+    """The interpreter to run a payload under: the venv's (via Copper if mounted), else ours."""
+    return str(Path(_copper_venv(venv_path), "bin/python")) if venv_path else sys.executable
+
+
+def _is_transient_exchange_error(exc: BaseException) -> bool:
+    """True for errors worth riding out: a severed stream or a 429/5xx reply."""
+    if isinstance(exc, (aiohttp.ClientPayloadError, aiohttp.ClientConnectionError)):
+        return True
+    return isinstance(exc, aiohttp.ClientResponseError) and exc.status in _TRANSIENT_STATUSES
+
+
 # The Academy exchange is reached over the ALCF HTTP proxy, which severs the
 # long-poll stream routinely (observed in production: repeated ClientPayloadError
 # / TransferEncodingError 400 against exchange.academy-agents.org via
@@ -102,8 +130,6 @@ def _harden_exchange_listener() -> None:
     make agent death mean something: ride out blips, but still propagate once
     the exchange is persistently unreachable and the agent really is lost.
     """
-    from academy.exchange.cloud.client import HttpExchangeTransport
-
     original = HttpExchangeTransport.listen
     if getattr(original, '_hpc_hardened', False):
         return
@@ -124,7 +150,9 @@ def _harden_exchange_listener() -> None:
                         failures = 0
                         yield message
                 return
-            except _TRANSIENT_LISTEN_ERRORS as exc:
+            except aiohttp.ClientError as exc:
+                if not _is_transient_exchange_error(exc):
+                    raise
                 now = time.monotonic()
                 if first_failure is None:
                     first_failure = now
@@ -146,7 +174,36 @@ def _harden_exchange_listener() -> None:
     HttpExchangeTransport.listen = listen
 
 
+def _harden_exchange_heartbeat() -> None:
+    """Skip a heartbeat the exchange could not take, instead of ending the loop.
+
+    Academy's heartbeat loop only survives cancellation and a terminated
+    mailbox; any other error ends the task, and outside Academy debug mode
+    nothing restarts it. One 5xx burst therefore stopped an agent's heartbeat
+    for good, and ~90s later the exchange reported a working agent INACTIVE.
+    Swallowing a transient failure lets the loop's own sleep act as the retry.
+    Liveness is still decided elsewhere: the listener's silence budget and the
+    pool's probes.
+    """
+    original = HttpExchangeTransport.update_heartbeat
+    if getattr(original, '_hpc_hardened', False):
+        return
+
+    async def update_heartbeat(self) -> None:
+        try:
+            await original(self)
+        except aiohttp.ClientError as exc:
+            if not _is_transient_exchange_error(exc):
+                raise
+            logger.warning('exchange heartbeat failed (%s: %s); retrying next interval',
+                           type(exc).__name__, exc)
+
+    update_heartbeat._hpc_hardened = True
+    HttpExchangeTransport.update_heartbeat = update_heartbeat
+
+
 _harden_exchange_listener()
+_harden_exchange_heartbeat()
 
 
 class HpcAgent(Agent):
@@ -163,7 +220,7 @@ class HpcAgent(Agent):
         return {
             "pid": str(os.getpid()),
             "campaign_id": self.campaign_id,
-            "device_pin": os.environ.get("ZE_AFFINITY_MASK", os.environ.get("CUDA_VISIBLE_DEVICES", "")),
+            "device_pin": _device_pin(),
         }
 
     @action
@@ -171,8 +228,8 @@ class HpcAgent(Agent):
                        timeout: float = 300.0, venv_path: str | None = None) -> dict[str, str]:
         self._inflight += 1
         try:
-            return await asyncio.get_running_loop().run_in_executor(
-                None, _run_subprocess, payload, workdir or self.base_dir, timeout, venv_path
+            return await asyncio.to_thread(
+                _run_subprocess, payload, workdir or self.base_dir, timeout, venv_path
             )
         finally:
             self._inflight -= 1
@@ -181,23 +238,23 @@ class HpcAgent(Agent):
     async def inspect_filesystem(self, operation: str, path: str,
                                  offset: int = 1, limit: int = 100) -> dict:
         """Bounded read-only worker filesystem inspection: ls, cat, or tail."""
-        return await asyncio.get_running_loop().run_in_executor(
-            None, _inspect, operation, path, offset, limit, self.base_dir, self.inspect_roots
+        return await asyncio.to_thread(
+            _inspect, operation, path, offset, limit, self.base_dir, self.inspect_roots
         )
 
     @action
     async def batch_status(self, batch_id: str) -> dict:
         """Progress of one run_batch batch, counted from its run folders."""
-        return await asyncio.get_running_loop().run_in_executor(
-            None, _batch_status, batch_id, self.base_dir
+        return await asyncio.to_thread(
+            _batch_status, batch_id, self.base_dir
         )
 
     @action
     async def list_batches(self, plan_id: str | None = None, hypothesis_id: str | None = None,
                            limit: int = 50) -> list[dict]:
         """Registry entries, newest first, filtered by Loam labels."""
-        return await asyncio.get_running_loop().run_in_executor(
-            None, _list_batches, self.base_dir, plan_id, hypothesis_id, limit
+        return await asyncio.to_thread(
+            _list_batches, self.base_dir, plan_id, hypothesis_id, limit
         )
 
     @action
@@ -215,8 +272,8 @@ class HpcAgent(Agent):
         that exits clean but writes nothing never travels downstream as a
         datapoint.
         """
-        return await asyncio.get_running_loop().run_in_executor(
-            None, _register_tool, name, script_path, params, description, example, defaults,
+        return await asyncio.to_thread(
+            _register_tool, name, script_path, params, description, example, defaults,
             call, venv_path, skip_smoke, labels, expects, self.base_dir, self.inspect_roots,
         )
 
@@ -224,23 +281,16 @@ class HpcAgent(Agent):
     async def list_tools(self, query: str | None = None, name: str | None = None,
                          all_versions: bool = False, limit: int = 50) -> list[dict]:
         """Registered tools, newest version of each unless all_versions."""
-        return await asyncio.get_running_loop().run_in_executor(
-            None, _list_tools, self.base_dir, query, name, all_versions, limit
+        return await asyncio.to_thread(
+            _list_tools, self.base_dir, query, name, all_versions, limit
         )
 
 
 class HpcClusterAgent(Agent):
-    """
-    Agent to manage the lifecyle of EL cluster
-    """
-    def __init__(self, 
-                 base_dir: str, 
-                 ckpt_dir: str,
-                 nnodes: int,
+    """Owns the lifecycle of one EL cluster; stopping this agent stops the cluster."""
+    def __init__(self, base_dir: str, ckpt_dir: str, nnodes: int,
                  system: Literal["aurora", "polaris"],
-                 task_executor_name : list[str] = ["async_processpool"]
-                  
-                 ):
+                 task_executor_name: list[str] | None = None):
         super().__init__()
         self.ckpt_dir = str(Path(base_dir, ckpt_dir))
         if system == "aurora":
@@ -254,7 +304,7 @@ class HpcClusterAgent(Agent):
 
         self.launcher_config = LauncherConfig(
             child_executor_name="async_mpi",
-            task_executor_name=task_executor_name,
+            task_executor_name=task_executor_name or ["async_processpool"],
             cluster=True,
             checkpoint_dir=self.ckpt_dir,
             task_flush_interval=0.5,
@@ -263,27 +313,36 @@ class HpcClusterAgent(Agent):
             master_logs=True,
             children_scheduler_policy="fixed_leafs_children_policy",
             policy_config=PolicyConfig(nlevels=2, leaf_nodes=nnodes),
-            log_dir=str(Path(base_dir,"logs")),
+            log_dir=str(Path(base_dir, "logs")),
         )
         self._el = None
 
     async def agent_on_startup(self):
-        self._el = EnsembleLauncher(ensemble_file={},
-                                    system_config=self.system_config, 
-                                    launcher_config=self.launcher_config)
-        self._el.start()
+        # EL's start() and stop() are blocking (a fork plus time.sleep; a
+        # terminate/join of up to 30s+), and this event loop also runs the
+        # exchange listener and heartbeat. Run them in a thread so the agent
+        # keeps reading its mailbox and heartbeating through both.
+        def start() -> EnsembleLauncher:
+            el = EnsembleLauncher(ensemble_file={},
+                                  system_config=self.system_config,
+                                  launcher_config=self.launcher_config)
+            el.start()
+            return el
+
+        self._el = await asyncio.to_thread(start)
 
     @action
     async def probe(self) -> dict[str, str]:
         """Health check"""
         return {
             "pid": str(os.getpid()),
-            "device_pin": os.environ.get("ZE_AFFINITY_MASK", os.environ.get("CUDA_VISIBLE_DEVICES", "")),
+            "device_pin": _device_pin(),
         }
-        
+
     async def agent_on_shutdown(self):
         if self._el is not None:
-            self._el.stop()
+            await asyncio.to_thread(self._el.stop)
+
 
 class HpcClientAgent(HpcAgent):
     def __init__(self, campaign_id: str, base_dir: str, ckpt_dir: str, inspect_roots: list[str] | None = None) -> None:
@@ -302,8 +361,17 @@ class HpcClientAgent(HpcAgent):
         # tasks_working_dir, so without this the client log lands there instead
         # of beside the master's, which HpcClusterAgent places under base_dir.
         os.environ.setdefault("EL_LOGDIR", str(Path(self.base_dir, "logs")))
-        self._client = ClusterClient(checkpoint_dir=self.ckpt_dir, checkpoint_timeout=300)
-        self._client.start()
+        # ClusterClient's constructor polls the checkpoint dir and then the comm
+        # file with time.sleep, up to checkpoint_timeout each -- and a client
+        # usually starts before the new master has written them. On the event
+        # loop that froze the exchange listener and heartbeat for minutes, so
+        # the exchange saw the agent go stale while it was coming online.
+        def connect() -> ClusterClient:
+            client = ClusterClient(checkpoint_dir=self.ckpt_dir, checkpoint_timeout=300)
+            client.start()
+            return client
+
+        self._client = await asyncio.to_thread(connect)
 
     async def agent_on_shutdown(self):
         # EL's ClusterClient shutdown method is teardown(), NOT stop(): stop()
@@ -311,8 +379,7 @@ class HpcClientAgent(HpcAgent):
         # and on the pipeline objects that teardown() itself stops, so .stop()
         # on a ClusterClient raises AttributeError on every repair/rebuild sweep.
         if self._client is not None:
-            self._client.teardown()
-
+            await asyncio.to_thread(self._client.teardown)  # joins threads, up to 5s each
 
     def _create_task(self, payload: str, workdir: str, timeout: float, venv_path: str | None = None):
         return Task(
@@ -329,9 +396,12 @@ class HpcClientAgent(HpcAgent):
                        timeout: float = 300.0, venv_path: str | None = None) -> dict[str, str]:
         self._inflight += 1
         try:
-            return await asyncio.wrap_future(
-                self._client.submit(self._create_task(payload, workdir, timeout, venv_path))
+            # submit() takes a lock the flush thread holds while it serializes
+            # a whole buffer, so call it off the event loop.
+            future = await asyncio.to_thread(
+                self._client.submit, self._create_task(payload, workdir, timeout, venv_path)
             )
+            return await asyncio.wrap_future(future)
         finally:
             self._inflight -= 1
 
@@ -357,8 +427,8 @@ class HpcClientAgent(HpcAgent):
         of truth: on a new batch it holds exactly the values passed; on a resume
         it wins over whatever this call passes.
         """
-        entry, script, todo = await asyncio.get_running_loop().run_in_executor(
-            None, _prepare_batch, script_path, inputs_path, batch_id, labels,
+        entry, script, todo = await asyncio.to_thread(
+            _prepare_batch, script_path, inputs_path, batch_id, labels,
             timeout_each, gpus, venv_path, self.base_dir, self.inspect_roots, tool, tool_version,
         )
         batch_id = entry["batch_id"]
@@ -385,7 +455,9 @@ class HpcClientAgent(HpcAgent):
         # submit_batch only buffers the tasks and hands back futures; EL's
         # master spreads them over the nodes and GPUs.
         if tasks:
-            self._batches[batch_id] = self._client.submit_batch(tasks)
+            # Off the event loop: a full buffer is serialized inline, under a
+            # lock the flush thread also holds while serializing.
+            self._batches[batch_id] = await asyncio.to_thread(self._client.submit_batch, tasks)
         return {
             "batch_id": batch_id,
             "total": entry["total"],
@@ -433,12 +505,9 @@ def _clamp(limit: int) -> int:
 def _read_text_lines(path: Path) -> list[str]:
     if not path.is_file():
         raise ValueError("cat/tail require a regular file")
-    if path.stat().st_size > _MAX_BYTES:
-        # Read only bounded bytes so inspection cannot pull an arbitrary log.
-        with path.open("rb") as handle:
-            data = handle.read(_MAX_BYTES)
-    else:
-        data = path.read_bytes()
+    # Read only bounded bytes so inspection cannot pull an arbitrary log.
+    with path.open("rb") as handle:
+        data = handle.read(_MAX_BYTES)
     if b"\0" in data:
         raise ValueError("binary files are not inspectable")
     return data.decode("utf-8", errors="replace").splitlines()
@@ -463,8 +532,9 @@ def _inspect(operation: str, raw_path: str, offset: int, limit: int,
     if operation == "ls":
         if not path.is_dir():
             raise ValueError("ls requires a directory")
+        children = sorted(path.iterdir(), key=lambda x: x.name)
         entries = []
-        for item in sorted(path.iterdir(), key=lambda x: x.name)[:_MAX_ENTRIES]:
+        for item in children[:_MAX_ENTRIES]:
             stat = item.stat(follow_symlinks=False)
             entries.append({
                 "name": item.name,
@@ -472,7 +542,7 @@ def _inspect(operation: str, raw_path: str, offset: int, limit: int,
                 "size_bytes": stat.st_size,
             })
         return {"operation": "ls", "path": str(path), "entries": entries,
-                "truncated": len(list(path.iterdir())) > _MAX_ENTRIES}
+                "truncated": len(children) > _MAX_ENTRIES}
     lines = _read_text_lines(path)
     if operation == "cat":
         if offset < 1:
@@ -508,22 +578,13 @@ def _copper_venv(venv_path: str) -> str:
 
 
 def _run_subprocess(payload: str, workdir: str | None, timeout: float, venv_path: str | None = None) -> dict[str, str]:
-    import subprocess
-    import sys
-    import tempfile
-
     cwd = Path(workdir or os.environ.get("HPC_BASE_DIR", ".")).resolve()
     cwd.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, dir=cwd) as handle:
         handle.write(payload)
         script = Path(handle.name)
-    if venv_path is not None:
-        exec = str(Path(_copper_venv(venv_path), "bin/python"))
-    else:
-        exec = sys.executable
-
     try:
-        proc = subprocess.run([exec, str(script)], cwd=cwd, env=os.environ.copy(),
+        proc = subprocess.run([_python(venv_path), str(script)], cwd=cwd, env=os.environ.copy(),
                               capture_output=True, timeout=timeout)
         return {"stdout": proc.stdout.decode(errors="replace"),
                 "stderr": proc.stderr.decode(errors="replace"),
@@ -670,8 +731,6 @@ def _acquire_lease(folder: Path, max_age: float) -> dict | None:
     the second to start loses the race, sees a fresh lease, and backs off. A
     clearly-stale lease (dead owner) is stolen so a crashed row can still rerun.
     """
-    import socket
-
     lease = folder / "lease.json"
     me = {"pid": os.getpid(), "host": socket.gethostname(), "started_at": time.time()}
     payload = json.dumps(me).encode()
@@ -773,10 +832,6 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
     producing them is recorded as a failure (L3). `done` is written last, so it
     means "finished".
     """
-    import socket
-    import subprocess
-    import sys
-
     folder = Path(run_dir)
     folder.mkdir(parents=True, exist_ok=True)
     # C3: claim the folder before touching anything. If a live task already owns
@@ -794,7 +849,7 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
     attempt.mkdir(parents=True, exist_ok=True)
     (folder / "input.json").write_text(json.dumps(row))
     (attempt / "input.json").write_text(json.dumps(row))
-    python = str(Path(_copper_venv(venv_path), "bin/python")) if venv_path else sys.executable
+    python = _python(venv_path)
     args = _argv(row, order) if call == "argv" else ["input.json"]
     started = time.time()
     with open(folder / "stdout.txt", "wb") as out, open(folder / "stderr.txt", "wb") as err:
@@ -809,7 +864,7 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
         "attempt": attempt_n,
         "seconds": round(time.time() - started, 1),
         "host": socket.gethostname(),
-        "gpu": os.environ.get("CUDA_VISIBLE_DEVICES", os.environ.get("ZE_AFFINITY_MASK", "")),
+        "gpu": _device_pin(),
     }
     # L3: enforce the tool's declared output contract on an otherwise-clean exit.
     if returncode == 0 and expects:
@@ -948,18 +1003,27 @@ def _batch_status(batch_id: str, base_dir: str, max_failures: int = 5) -> dict:
             "dir": str(root / batch_id), "failures": failures}
 
 
+def _registry_entries(base_dir: str):
+    """Every readable batch registry entry; a torn or hand-edited one is skipped."""
+    registry = _batch_root(base_dir) / "registry"
+    if not registry.is_dir():
+        return
+    for path in registry.glob("*.json"):
+        try:
+            yield json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+
+
+def _clamp_listing(limit: int) -> int:
+    return max(1, min(limit, 500))
+
+
 def _list_batches(base_dir: str, plan_id: str | None = None,
                   hypothesis_id: str | None = None, limit: int = 50) -> list[dict]:
     """Registry entries matching the labels, newest first, using cached status."""
-    registry = _batch_root(base_dir) / "registry"
-    if not registry.is_dir():
-        return []
     found = []
-    for path in registry.glob("*.json"):
-        try:  # one torn or hand-edited entry must not break every listing
-            entry = json.loads(path.read_text())
-        except (OSError, ValueError):
-            continue
+    for entry in _registry_entries(base_dir):
         entry_labels = entry.get("labels", {})
         if plan_id and entry_labels.get("plan_id") != plan_id:
             continue
@@ -969,7 +1033,7 @@ def _list_batches(base_dir: str, plan_id: str | None = None,
                       ("batch_id", "created_at", "labels", "total", "last_status", "source_inputs",
                        "tool", "tool_version")})
     found.sort(key=lambda item: item["created_at"] or "", reverse=True)
-    return found[:max(1, min(limit, 500))]
+    return found[:_clamp_listing(limit)]
 
 
 # -- tool library ----------------------------------------------------------
@@ -1192,14 +1256,7 @@ def _tool_usage(base_dir: str) -> tuple[dict, dict]:
     """Batch counts and newest fully-successful batch per (tool, version)."""
     uses: dict[tuple, int] = {}
     last_ok: dict[tuple, tuple[str, str]] = {}
-    registry = _batch_root(base_dir) / "registry"
-    if not registry.is_dir():
-        return uses, last_ok
-    for path in registry.glob("*.json"):
-        try:
-            entry = json.loads(path.read_text())
-        except (OSError, ValueError):
-            continue
+    for entry in _registry_entries(base_dir):
         if not entry.get("tool"):
             continue
         key = (entry["tool"], entry.get("tool_version"))
@@ -1235,4 +1292,4 @@ def _list_tools(base_dir: str, query: str | None = None, name: str | None = None
                 "uses": uses.get(key, 0),
                 "last_ok_batch": last_ok.get(key, ("", None))[1],
             })
-    return found[:max(1, min(limit, 500))]
+    return found[:_clamp_listing(limit)]

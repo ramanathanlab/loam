@@ -2,7 +2,7 @@
 
 Policy text injected into a reasoning tier's context by `campaign_context()` in
 `.loam/hooks/hypothesis_orchestration.py`, in the tiers each rule's `scope:`
-front matter lists (`validator`, `code-generator`, `reasoner`, or `all`).
+front matter lists (`hypothesis-validator`, `code-generator`, `reasoner`, or `all`).
 
 **This directory holds only rules invariant across every campaign.** Loam ships
 no campaign content — no goal, and no rule naming a particular measurement.
@@ -89,7 +89,7 @@ leaves open:
 
 ```
 name:        must match the file name
-scope:       validator | code-generator | reasoner | all   (required)
+scope:       hypothesis-validator | code-generator | reasoner | all   (required)
 applies:     always | when-named                           (default when-named)
 enforced_by: which pre-tool.py clause backs this rule, if any
 ```

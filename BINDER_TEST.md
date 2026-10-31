@@ -108,7 +108,6 @@ profiles:
       reports_dir: <state_dir>/tournament-reports
     execution:
       mode: remote_mcp
-      code_source: generated                  # REQUIRED: real code-gen, never "fixed"
       tool_name: mcp__hpc__run_code
       function_name: run_code
       endpoint: hpc-deployment
@@ -123,10 +122,6 @@ profiles:
         sequence at run time from the UniProt REST API by accession (the Aurora
         node has http_proxy set); never paste it from memory.
 ```
-
-`code_source: generated` is the default, but set it explicitly here: a profile
-that sets `code_source: fixed` runs Loam's built-in arithmetic debug check
-instead of real work, which would silently void this test.
 
 ## Campaign protocol
 
@@ -205,8 +200,7 @@ Inspect only the campaign state directory and the per-fold Aurora run folders:
 
 The campaign passes only when all hold:
 
-1. `run-manifest.json` has `identity.execution.mode == "remote_mcp"` and
-   `identity.execution.code_source == "generated"` (NOT `fixed`), the expected
+1. `run-manifest.json` has `identity.execution.mode == "remote_mcp"`, the expected
    workflow id, and one stable run id.
 
 2. Jnana persisted at least `initial_hypotheses` hypotheses and wrote at least

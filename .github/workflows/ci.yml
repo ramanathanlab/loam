@@ -18,7 +18,7 @@ env:
   # tournament lives only on this branch of acadev/Jnana; pin the commit so an
   # upstream push cannot change what the tournament tests exercise.
   JNANA_REPOSITORY: acadev/Jnana
-  JNANA_REF: b38d89287c741afb035cd8699a964d36799e7a39
+  JNANA_REF: aa70a1ba60468728257da2a4109082df5dd8718a
 
 jobs:
   lint:

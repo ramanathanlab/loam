@@ -1,0 +1,154 @@
+# Loam profile for the EGFR binder-design campaign.
+#
+# Copy to ~/.hermes/loam.yaml -- or MERGE the `campaign1:` block into the
+# `profiles:` map you already have there and set active_profile to it. This file
+# lives OUTSIDE the campaign directory; one active profile drives one campaign.
+#
+# THE VALUES BELOW ARE msinclair's, AS ACTUALLY RUN. They are concrete on
+# purpose so you can see a known-good configuration rather than guess at a
+# template. Everything you must change is listed in README.md under
+# "What you must change" -- at minimum every /Users/msinclair and
+# /flare/FRAME-IDP/msinclair path, and the Globus endpoint.
+#
+# Fuller annotation of every key: ../loam.yaml.example
+
+enabled: true
+active_profile: campaign1
+
+profiles:
+  campaign1:
+  campaign1:
+    enabled: true
+    workflow_id: campaign1-binder-design
+
+    state_dir: /Users/msinclair/agent/loam/campaign1/state
+    pre_llm_every: 1
+    duplicate_policy: allow_and_audit
+
+    hypothesis_orchestration:
+      enabled: true
+
+    hypothesis_tournament:
+      enabled: true
+      jnana_root: /Users/msinclair/github/jnana
+      provider: openai
+
+      # Judge and generation both run on the Argo tunnel at :61612, so no
+      # `generation:` override is needed. The ALCF proxy at :51911 is unused.
+      inference_endpoint: http://localhost:61612/v1
+      endpoint_is_chat_completions: false
+      model: argo:gpt-5.6-terra
+
+      # Argo reasoning models reject temperature != 1 with HTTP 400, and Jnana
+      # swallows the per-worker error -- it looks like "generated_hypotheses: 0"
+      # with status completed.
+      omit_temperature: true
+
+      # A reasoning model spends thousands of hidden tokens before any JSON.
+      # Too small truncates the ranking JSON and every match fails to parse.
+      json_max_tokens: 16384
+
+      knowledge:
+        enabled: false
+
+      # REQUIRED, not redundant with state_dir above. _tournament_config is
+      # handed the LOAM_STATE_DIR override, not the profile's state_dir; with
+      # that env var unset these two are the only source for the paths, and
+      # without them the whole tournament block returns None SILENTLY -- the
+      # campaign then runs with no tournament at all. run-campaign does export
+      # LOAM_STATE_DIR (and overrides both paths), so these matter for every
+      # other launch path, e.g. a bare LOAM_CONFIG_PATH.
+      state_file: /Users/msinclair/agent/loam/campaign1/state/jnana-memory.json
+      reports_dir: /Users/msinclair/agent/loam/campaign1/state/tournament-reports
+
+      # Sized so that top_k stays at or below the expected number of match
+      # WINNERS -- otherwise selection falls into the 1200.0 initial-Elo tie
+      # block and is decided by storage order, not by ranking.
+      #
+      # 200 matches over a 400 pool touches ~253 distinct hypotheses with up to
+      # 200 winners, so top_k: 150 is earned on ranking grounds.
+      #
+      # MEASURE THE RATE BEFORE COPYING THESE NUMBERS. Ranking is SERIALIZED
+      # (run_incremental_tournament hardcodes max_workers=1), and it is the
+      # round's critical path: validators cannot start until it returns. This
+      # file previously recorded ~3.1 s per match; measured against an Argo
+      # reasoning model with json_max_tokens: 16384 on 2026-10-31 it was
+      # ~16-21 s per match, 5-7x that. A reasoning model spends thousands of
+      # hidden tokens per match, so the figure moves with the model and the
+      # token budget -- re-measure after changing either.
+      #
+      # At ~20 s, matches_per_run: 200 is ~67 min of ranking. That exceeds
+      # timeout_seconds below (2400 s = 40 min) AND a one-hour allocation, and
+      # the overrun is SILENT: the hook is killed, _invoke returns None after a
+      # bare logger.warning, no hypotheses are selected, and the round
+      # dispatches no validators while the allocation sits idle. These values
+      # suit a long block; on a 1 h debug-scaling block use ~30 and raise it
+      # once the campaign has a walltime that can absorb the ranking.
+      #
+      # initial_hypotheses ALSO becomes max_workers for generation, so this is
+      # 400 concurrent generation threads on round one. Do not raise much past
+      # this without checking the endpoint tolerates it. It is also ONE-SHOT:
+      # generation is skipped once the state file holds >= 2 hypotheses, so
+      # raising it later does nothing unless jnana-memory.json is deleted.
+      initial_hypotheses: 400
+      matches_per_run: 200
+      top_k: 150
+      timeout_seconds: 2400
+
+    campaign:
+      dir: /Users/msinclair/agent/loam/campaign1
+      goal: binder-design
+      rules: [binder-protocol, binder-constraint]
+
+      # Skills a code-generator must consult before writing code. These must be
+      # the LEAF names `hermes skills list` prints in its first column, not the
+      # category in its second: install_skills.py links the top-level tree, but
+      # Hermes exposes the leaves. `structure-prediction` is a category and
+      # resolves to nothing; `chai` is the skill. A bad name is only
+      # shape-checked here and fails inside a leaf agent mid-round.
+      #
+      # One per funnel stage, and naming exactly one folding tool is deliberate:
+      # left to pick among chai/boltz/esmfold2/protenix, 150 validators will not
+      # all choose the same one and their results stop being comparable.
+      skills: [rfdiffusion3, proteinmpnn, chai, openmm, pyrosetta]
+
+    execution:
+      # All four of tool_name/function_name/endpoint/input_schema are REQUIRED
+      # for remote_mcp: _execution_config returns None if any is missing, and
+      # with hypothesis_orchestration enabled a None execution block makes
+      # load_profile reject the whole profile -- every Loam hook then goes
+      # inert, silently.
+      mode: remote_mcp
+      tool_name: mcp__hpc__run_code
+      function_name: run_code
+      endpoint: hpc-deployment
+      input_schema: '{"payload": "str", "workdir": "str|None", "timeout": "float", "venv_path": "str|None"}'
+      runtime: Aurora frameworks python 3.12 via Ensemble Launcher
+      workdir_root: /flare/FRAME-IDP/msinclair/hpc-run/work
+
+      # One leaf code-generator per validator instead of the default 3. At
+      # top_k: 150 the default would mean up to 600 agent sessions per turn,
+      # all funnelling through delegation.max_concurrent_children.
+      max_children: 1
+
+      # Handed VERBATIM to every code-generator child. The child runs on an
+      # Aurora node and cannot see this laptop, so anything not reachable from
+      # the node must not be referenced here.
+      setup: |
+        Run every scientific tool by activating its venv in a bash command
+        inside run_code (subprocess.run(["bash","-lc", CMD])), never by
+        importing it as a Python library. Use absolute paths only; the working
+        directory is not the project root.
+
+        Before writing any code, read the recipe for the tool you need with
+        skill_view. The campaign's skills carry the exact activation and CLI
+        invocation for each stage, and they are the authority over your
+        recollection: rfdiffusion3 (de novo backbone generation), proteinmpnn
+        (sequence design on a fixed backbone), chai (co-folding and interface
+        metrics), openmm (simulation and MMPBSA free energy), pyrosetta
+        (structural metrics).
+
+        Write all outputs under /flare/FRAME-IDP/msinclair/hpc-run/work, in a
+        subdirectory named for the hypothesis you were dispatched for. Inspect
+        an actual output file before reporting any aggregate number from it.
+
