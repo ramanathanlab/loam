@@ -201,7 +201,7 @@ class _OrchestrationHelpers:
     def _payload(self, base: Path, mode: str = "remote_mcp", workspace: bool = True) -> dict:
         state_file = base / "jnana.json"
         state_file.write_text(json.dumps({"hypotheses": [{"hypothesis_id": "h-1", "content": "Binder B binds T."}]}))
-        execution = {"mode": mode, "code_source": "generated", "max_children": 3, "runtime": "python3.12"}
+        execution = {"mode": mode, "runtime": "python3.12"}
         if mode == "remote_mcp":
             execution.update(
                 tool_name="mcp_hpc_run_code", endpoint="http://127.0.0.1:8000/mcp", function_name="run_code",

@@ -69,7 +69,7 @@ def create_server(cluster:bool=False,ckpt_dir=None, nnodes:int | None = None) ->
         # Values are serialized into every agent constructor; worker-side setup
         # must make BASE_DIR available. Do not mkdir it locally: it may be a
         # remote-only HPC filesystem path.
-        factory = HttpExchangeFactory(EXCHANGE_URL, auth_method="globus")
+        factory = HttpExchangeFactory(EXCHANGE_URL, auth_method="globus", retries=3)
         gc_executor = make_executor()
         served = False
         try:

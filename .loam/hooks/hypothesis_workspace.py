@@ -29,6 +29,7 @@ import os
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -64,6 +65,8 @@ SKILL_READ_TOOLS = ("skill_view", "skills_list")
 # overrides). The seed is copied per hypothesis, so a careless inputs_dir would
 # otherwise multiply a dataset by the number of hypotheses in the campaign.
 DEFAULT_MAX_INPUT_BYTES = 1 << 30
+# Bound on the child/validator report copied into a log entry.
+MAX_RESULT_CHARS = 4_000
 # A plan or hypothesis id becomes a path segment. Both come from model-written
 # goal tags, so anything that could climb out of the root ("..", "a/b") is
 # refused rather than cleaned up into a different, colliding name.
@@ -73,6 +76,10 @@ _RUN_ID = re.compile(r"r([1-9][0-9]*)")
 
 def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def _timestamp() -> str:
@@ -97,12 +104,15 @@ def safe_segment(value: str) -> str:
     return value
 
 
-def workspace_root(payload: Mapping[str, Any], plan_id: str, hypothesis_id: str) -> Path:
+def _base(payload: Mapping[str, Any]) -> Path:
     config = settings(payload)
     if config is None:
         raise ValueError("loam_workspace is not enabled")
-    base = Path(_text(config.get("root"))).expanduser()
-    return base / safe_segment(plan_id) / safe_segment(hypothesis_id)
+    return Path(_text(config.get("root"))).expanduser()
+
+
+def workspace_root(payload: Mapping[str, Any], plan_id: str, hypothesis_id: str) -> Path:
+    return _base(payload) / safe_segment(plan_id) / safe_segment(hypothesis_id)
 
 
 # The reasoner is plan-level, not per-hypothesis, so its record sits beside the
@@ -113,11 +123,7 @@ REASONER_FILE = "reasoner.json"
 
 
 def reasoner_root(payload: Mapping[str, Any], plan_id: str) -> Path:
-    config = settings(payload)
-    if config is None:
-        raise ValueError("loam_workspace is not enabled")
-    base = Path(_text(config.get("root"))).expanduser()
-    return base / safe_segment(plan_id) / REASONER_DIR
+    return _base(payload) / safe_segment(plan_id) / REASONER_DIR
 
 
 @contextlib.contextmanager
@@ -138,16 +144,20 @@ def _locked(root: Path) -> Iterator[None]:
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def _write_json(path: Path, value: Mapping[str, Any]) -> None:
+def _replace(path: Path, data: bytes) -> None:
     """Atomically replace ``path`` so a reader never sees a torn record."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        handle.write(json.dumps(dict(value), ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+    with tmp.open("wb") as handle:
+        handle.write(data)
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp, path)
+
+
+def _write_json(path: Path, value: Mapping[str, Any]) -> None:
+    _replace(path, (json.dumps(dict(value), ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8"))
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -311,7 +321,7 @@ def record_inputs(root: Path, entries: list[dict[str, Any]], source: str, how: s
         experiment = read_json(path)
         if not experiment:
             return
-        existing = {str(item.get("path")): item for item in experiment.get("inputs", []) if isinstance(item, Mapping)}
+        existing = {item["path"]: item for item in experiment.get("inputs", [])}
         changed, added = [], []
         for entry in entries:
             previous = existing.get(entry["path"])
@@ -523,13 +533,21 @@ def close_reasoner(root: Path, summary: str) -> None:
         )
 
 
-def _next_run_id(root: Path) -> str:
-    numbers = [
-        int(match.group(1))
-        for path in (root / "runs").iterdir()
+def _run_dirs(root: Path) -> list[tuple[int, Path]]:
+    """(number, folder) for every runs/rM/ folder, lowest number first."""
+
+    runs = root / "runs"
+    if not runs.is_dir():
+        return []
+    return sorted(
+        (int(match.group(1)), path)
+        for path in runs.iterdir()
         if path.is_dir() and (match := _RUN_ID.fullmatch(path.name))
-    ] if (root / "runs").is_dir() else []
-    return f"r{max(numbers, default=0) + 1}"
+    )
+
+
+def _next_run_id(root: Path) -> str:
+    return f"r{max((number for number, _ in _run_dirs(root)), default=0) + 1}"
 
 
 def _reserve_run_unlocked(root: Path, goal: str = "") -> str:
@@ -589,16 +607,12 @@ def _start_run_unlocked(root: Path, run_id: str, child_session_id: str, goal: st
 def _reserved_runs_unlocked(root: Path) -> list[tuple[str, str]]:
     """(run_id, reserved goal) for every run still ``reserved``, lowest id first."""
 
-    runs = root / "runs"
-    found: list[tuple[int, str, str]] = []
-    for path in runs.iterdir() if runs.is_dir() else []:
-        match = _RUN_ID.fullmatch(path.name) if path.is_dir() else None
-        if match is None:
-            continue
+    found: list[tuple[str, str]] = []
+    for _, path in _run_dirs(root):
         run = read_json(path / RUN_FILE)
         if run.get("state") == "reserved":
-            found.append((int(match.group(1)), path.name, _text(run.get("goal"))))
-    return [(run_id, goal) for _, run_id, goal in sorted(found)]
+            found.append((path.name, _text(run.get("goal"))))
+    return found
 
 
 def _match_reserved_unlocked(root: Path, goal: str) -> str:
@@ -728,12 +742,10 @@ def on_agent_started(
     ``workspace_error`` and the failure is reported on stderr.
     """
 
-    if settings(payload) is None:
+    if settings(payload) is None or role not in {"hypothesis-validator", "code-generator", "reasoner"}:
         return {}
-    # A code-generator needs its hypothesis; a reasoner is plan-level and has none.
-    if role not in {"hypothesis-validator", "code-generator", "reasoner"}:
-        return {}
-    if role in {"hypothesis-validator", "code-generator"} and not hypothesis_id:
+    # A reasoner is plan-level; the other two roles need their hypothesis.
+    if role != "reasoner" and not hypothesis_id:
         return {}
     session_id = _text(payload.get("child_session_id"))
     try:
@@ -864,12 +876,11 @@ class _Scope:
         # Read-only campaign reference data (workspace.shared_inputs) this call
         # reads in place rather than from data/; also recorded as inputs.
         self.shared_reads: list[dict[str, str]] = []
-        execution = payload.get("loam_execution")
-        execution = execution if isinstance(execution, Mapping) else {}
-        aliases = execution.get("workdir_aliases")
+        execution = _mapping(payload.get("loam_execution"))
+        aliases = _mapping(execution.get("workdir_aliases"))
         # Longest alias first, so a more specific spelling wins.
         self.aliases = sorted(
-            ((_text(a).rstrip("/"), _text(c).rstrip("/")) for a, c in (aliases.items() if isinstance(aliases, Mapping) else ())),
+            ((_text(alias).rstrip("/"), _text(canonical).rstrip("/")) for alias, canonical in aliases.items()),
             key=lambda pair: len(pair[0]),
             reverse=True,
         )
@@ -880,10 +891,8 @@ class _Scope:
         self.batch_root = self._canonical(batch_root) if batch_root else ""
         # Canonicalized here, after the aliases exist, so an HPC spelling of a
         # shared path matches whichever form a child writes.
-        shared = config.get("shared_inputs")
         configured_shared = tuple(
-            _text(item).rstrip("/") for item in (shared if isinstance(shared, (list, tuple)) else ())
-            if _text(item).startswith("/")
+            _text(item).rstrip("/") for item in config.get("shared_inputs") or () if _text(item).startswith("/")
         )
         # Two spellings, because the two branches compare differently: a local
         # path is matched after os.path.realpath (so a symlinked /var does not
@@ -893,7 +902,7 @@ class _Scope:
         self.shared_real = tuple(os.path.realpath(item) for item in configured_shared)
         # This run's own batches, as recorded by capture_code.
         run = read_json(self.root / "runs" / self.run_id / RUN_FILE) if self.run_id else {}
-        self.batches = {b for b in run.get("batches", []) if isinstance(b, str)}
+        self.batches = set(run.get("batches", []))
 
     def _canonical(self, path: str) -> str:
         """Rewrite an aliased HPC spelling (/lus/flare/projects/X) to its canonical one (/flare/X)."""
@@ -1174,21 +1183,17 @@ def _segment_targets(segment: list[str]) -> list[str]:
     return []
 
 
-def _arguments(payload: Mapping[str, Any]) -> Mapping[str, Any]:
-    value = payload.get("arguments")
-    return value if isinstance(value, Mapping) else {}
-
-
 def _violation(payload: Mapping[str, Any], scope: _Scope) -> str | None:
     tool = _text(payload.get("tool_name"))
-    args = _arguments(payload)
+    args = _mapping(payload.get("arguments"))
     if tool == "write_file":
         return scope.local_write(_text(args.get("path")))
     if tool == "patch":
-        text = _text(args.get("patch"))
-        paths = [_text(args.get("path"))] if _text(args.get("mode")) != "patch" else [
-            *_PATCH_FILE.findall(text), *(p for pair in _PATCH_MOVE.findall(text) for p in pair)
-        ]
+        if _text(args.get("mode")) == "patch":
+            text = _text(args.get("patch"))
+            paths = [*_PATCH_FILE.findall(text), *(path for pair in _PATCH_MOVE.findall(text) for path in pair)]
+        else:
+            paths = [_text(args.get("path"))]
         return next((problem for raw in paths if (problem := scope.local_write(raw))), None)
     if tool in _READ_TOOLS:
         return scope.local_read(_text(args.get("path")))
@@ -1198,13 +1203,10 @@ def _violation(payload: Mapping[str, Any], scope: _Scope) -> str | None:
         return scope.code(_text(args.get("code")))
     function = _hpc_function(tool)
     if function == "run_code":
-        return scope.remote(_text(args.get("workdir")), writing=True, required=True, label="workdir") or scope.code(
-            _text(args.get("payload"))
-        )
-    if function == "run_batch":
-        problem = _batch_identity(args, scope)
-        if problem:
-            return problem
+        workdir = _text(args.get("workdir"))
+        return scope.remote(workdir, writing=True, required=True, label="workdir") or scope.code(_text(args.get("payload")))
+    if function == "run_batch" and (problem := _batch_identity(args, scope)):
+        return problem
     if function == "batch_status":
         batch_id = _text(args.get("batch_id"))
         if batch_id not in scope.batches:
@@ -1239,8 +1241,7 @@ def _batch_identity(args: Mapping[str, Any], scope: _Scope) -> str | None:
     batch_id = _text(args.get("batch_id"))
     if not batch_id.startswith(prefix) or len(batch_id) == len(prefix):
         return f"pass batch_id='{prefix}<name>' so the batch is recorded as part of run {scope.run_id}"
-    given = args.get("labels")
-    given = given if isinstance(given, Mapping) else {}
+    given = _mapping(args.get("labels"))
     if any(_text(given.get(key)) != value for key, value in labels.items()):
         return f"pass labels={json.dumps(labels)} (other keys may be added)"
     return None
@@ -1256,7 +1257,7 @@ def fs_policy(payload: Mapping[str, Any], start: Mapping[str, Any] | None) -> di
     """
 
     config = settings(payload)
-    if config is None or not isinstance(start, Mapping) or _text(start.get("role")) != "code-generator":
+    if config is None or not start or _text(start.get("role")) != "code-generator":
         return None
     tool = _text(payload.get("tool_name"))
     # A skill read is read-only, and it is the one call a child in trouble most
@@ -1316,16 +1317,16 @@ def capture_code(payload: Mapping[str, Any], start: Mapping[str, Any] | None) ->
     Best effort; the caller isolates failures.
     """
 
-    if settings(payload) is None or not isinstance(start, Mapping) or _text(start.get("role")) != "code-generator":
+    owned = _code_generator_run(payload, start)
+    if owned is None:
         return
-    root, run_id = Path(_text(start.get("workspace"))), _text(start.get("run"))
-    if not _text(start.get("workspace")) or not _RUN_ID.fullmatch(run_id):
-        return
+    root, run_id = owned
     scope = _Scope(payload, start)
     _violation(payload, scope)  # the policy already allowed this call; this collects scope.reads
     entry = _call_entry(payload)
     if entry is None and not scope.reads and not scope.shared_reads:
         return
+    actor = {"role": "code-generator", "session_id": _text(start.get("child_session_id"))}
     with _locked(root):
         path = root / "runs" / run_id / RUN_FILE
         run = read_json(path)
@@ -1359,47 +1360,42 @@ def capture_code(payload: Mapping[str, Any], start: Mapping[str, Any] | None) ->
                         "what": f"reads campaign skill {entry['skill']}"
                         + ("" if entry.get("hashed") else " (version not pinned: skill not found locally)"),
                         "skill": {k: v for k, v in entry.items() if k in ("skill", "sha256", "bytes", "hashed", "skill_file")},
-                        "actor": {"role": "code-generator", "session_id": _text(start.get("child_session_id"))},
+                        "actor": actor,
                     },
                 )
         inputs = list(run.get("inputs", []))
-        known = {(i.get("plan_id"), i.get("hypothesis_id"), i.get("run"), i.get("path")) for i in inputs}
-        for read in scope.reads:
-            key = (read["plan_id"], read["hypothesis_id"], read["run"], read["path"])
-            if key in known:
+        known = {_input_key(item) for item in inputs}
+        for read in [*scope.reads, *scope.shared_reads]:
+            if _input_key(read) in known:
                 continue
-            known.add(key)
-            item = {**read, **_source_hash(scope.base, read)}
+            known.add(_input_key(read))
+            if "shared" in read:
+                item = {**read, **_local_input_hash(read["path"])}
+                what = f"reads shared campaign input {read['path']}"
+            else:
+                item = {**read, **_source_hash(scope.base, read)}
+                what = f"reads completed output {read['hypothesis_id']}/{read['path']} (plan {read['plan_id']})"
             inputs.append(item)
-            _append_log_unlocked(
-                root,
-                "note",
-                {
-                    "run": run_id,
-                    "what": f"reads completed output {read['hypothesis_id']}/{read['path']} (plan {read['plan_id']})",
-                    "input": item,
-                    "actor": {"role": "code-generator", "session_id": _text(start.get("child_session_id"))},
-                },
-            )
-        for read in scope.shared_reads:
-            key = (None, None, None, read["path"])
-            if key in known:
-                continue
-            known.add(key)
-            item = {**read, **_local_input_hash(read["path"])}
-            inputs.append(item)
-            _append_log_unlocked(
-                root,
-                "note",
-                {
-                    "run": run_id,
-                    "what": f"reads shared campaign input {read['path']}",
-                    "input": item,
-                    "actor": {"role": "code-generator", "session_id": _text(start.get("child_session_id"))},
-                },
-            )
+            _append_log_unlocked(root, "note", {"run": run_id, "what": what, "input": item, "actor": actor})
         run["inputs"] = inputs
         _write_json(path, run)
+
+
+def _input_key(item: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Identity of a recorded input; a shared input has no plan, hypothesis or run."""
+
+    return item.get("plan_id"), item.get("hypothesis_id"), item.get("run"), item.get("path")
+
+
+def _code_generator_run(payload: Mapping[str, Any], start: Mapping[str, Any] | None) -> tuple[Path, str] | None:
+    """(workspace root, run id) of a code-generator session that has a run, else None."""
+
+    if settings(payload) is None or not start or _text(start.get("role")) != "code-generator":
+        return None
+    workspace, run_id = _text(start.get("workspace")), _text(start.get("run"))
+    if not workspace or not _RUN_ID.fullmatch(run_id):
+        return None
+    return Path(workspace), run_id
 
 
 # --- declared decisions (loam_record_decision) --------------------------------------
@@ -1416,29 +1412,22 @@ def _decision_entry(args: Mapping[str, Any], session_id: str, role: str) -> dict
     what = _text(args.get("what"))
     if not what:
         return None
-    raw_alts = args.get("alternatives")
-    alternatives = (
-        [a[:MAX_DECISION_CHARS] for item in raw_alts if (a := _text(item))]
-        if isinstance(raw_alts, (list, tuple))
-        else []
-    )
-    try:
-        confidence: float | None = float(args["confidence"]) if args.get("confidence") is not None else None
-    except (TypeError, ValueError):
-        confidence = None
     entry: dict[str, Any] = {
         "ts": _timestamp(),
         "what": what[:MAX_DECISION_CHARS],
         "actor": {"role": role, "session_id": session_id},
     }
-    if _text(args.get("why")):
-        entry["why"] = _text(args.get("why"))[:MAX_DECISION_CHARS]
-    if alternatives:
-        entry["alternatives"] = alternatives
-    if _text(args.get("expected")):
-        entry["expected"] = _text(args.get("expected"))[:MAX_DECISION_CHARS]
-    if confidence is not None:
-        entry["confidence"] = confidence
+    for key in ("why", "expected"):
+        if value := _text(args.get(key)):
+            entry[key] = value[:MAX_DECISION_CHARS]
+    # Model-written arguments: anything but a list of strings is dropped, not trusted.
+    raw_alternatives = args.get("alternatives")
+    if isinstance(raw_alternatives, (list, tuple)):
+        if alternatives := [text[:MAX_DECISION_CHARS] for item in raw_alternatives if (text := _text(item))]:
+            entry["alternatives"] = alternatives
+    if args.get("confidence") is not None:
+        with contextlib.suppress(TypeError, ValueError):
+            entry["confidence"] = float(args["confidence"])
     return entry
 
 
@@ -1446,65 +1435,45 @@ def record_decision(payload: Mapping[str, Any], start: Mapping[str, Any] | None)
     """Append one declared decision inline to the caller's Pando record. Returns whether it stuck.
 
     Linked into the structure, not kept beside it: a code-generator's decisions
-    live in its ``runs/rM/run.json`` ``decisions`` list, a validator's in its
-    ``experiment.json`` ``decisions`` list, each also chained into ``log.jsonl``.
-    The decision is the only record of WHY a tier was chosen -- the model emits
-    no reasoning text and this deployment's provider returns no reasoning tokens
-    (see the trace capture) -- so it is captured from a tool the agent calls,
-    never scraped. Best effort and never raising into the tool handler: a
-    provenance write must not fail the agent's turn.
-
-    The reasoner has no hypothesis folder yet, so its decisions are handled with
-    the plan-level record added in a later group; until then a reasoner decision
-    returns False rather than being misfiled into a hypothesis.
+    live in its ``runs/rM/run.json``, a validator's in its ``experiment.json``
+    and the reasoner's in its plan-level ``reasoner.json``, each in a
+    ``decisions`` list and also chained into ``log.jsonl``. The decision is the
+    only record of WHY a tier was chosen -- the model emits no reasoning text and
+    this deployment's provider returns no reasoning tokens (see the trace
+    capture) -- so it is captured from a tool the agent calls, never scraped.
+    Returns False, never raising, when the record is missing or already closed.
     """
 
-    if settings(payload) is None or not isinstance(start, Mapping):
+    if settings(payload) is None or not start:
         return False
     role = _text(start.get("role"))
     session_id = _text(start.get("child_session_id")) or _text(payload.get("session_id"))
-    entry = _decision_entry(_arguments(payload), session_id, role)
-    if entry is None:
+    entry = _decision_entry(_mapping(payload.get("arguments")), session_id, role)
+    workspace = _text(start.get("workspace"))
+    if entry is None or not workspace:
         return False
-    root_text = _text(start.get("workspace"))
-    if not root_text:
-        return False
-    root = Path(root_text)
+    root = Path(workspace)
     log_fields = {key: value for key, value in entry.items() if key != "ts"}
     if role == "code-generator":
         run_id = _text(start.get("run"))
-        if not _RUN_ID.fullmatch(run_id or ""):
+        if not _RUN_ID.fullmatch(run_id):
             return False
-        with _locked(root):
-            path = root / "runs" / run_id / RUN_FILE
-            run = read_json(path)
-            if run.get("state") != "started":
-                return False  # a frozen run takes no more decisions
-            run["decisions"] = [*run.get("decisions", []), entry]
-            _write_json(path, run)
-            _append_log_unlocked(root, "decision", {"run": run_id, **log_fields})
-        return True
-    if role == "hypothesis-validator":
-        with _locked(root):
-            path = root / EXPERIMENT_FILE
-            experiment = read_json(path)
-            if experiment.get("state") != "open":
-                return False
-            experiment["decisions"] = [*experiment.get("decisions", []), entry]
-            _write_json(path, experiment)
-            _append_log_unlocked(root, "decision", log_fields)
-        return True
-    if role == "reasoner":
-        with _locked(root):
-            path = root / REASONER_FILE
-            record = read_json(path)
-            if record.get("state") != "open":
-                return False
-            record["decisions"] = [*record.get("decisions", []), entry]
-            _write_json(path, record)
-            _append_log_unlocked(root, "decision", log_fields)
-        return True
-    return False
+        path, open_state = root / "runs" / run_id / RUN_FILE, "started"
+        log_fields["run"] = run_id
+    elif role == "hypothesis-validator":
+        path, open_state = root / EXPERIMENT_FILE, "open"
+    elif role == "reasoner":
+        path, open_state = root / REASONER_FILE, "open"
+    else:
+        return False
+    with _locked(root):
+        record = read_json(path)
+        if record.get("state") != open_state:
+            return False  # a frozen run or closed record takes no more decisions
+        record["decisions"] = [*record.get("decisions", []), entry]
+        _write_json(path, record)
+        _append_log_unlocked(root, "decision", log_fields)
+    return True
 
 
 def record_dispatch(
@@ -1544,12 +1513,12 @@ def record_dispatch(
         experiment_path = root / EXPERIMENT_FILE
         experiment = read_json(experiment_path)
         if experiment:
-            already = any(isinstance(c, Mapping) and c.get("run") == run_id for c in experiment.get("children", []))
-            others = [c for c in experiment.get("children", []) if isinstance(c, Mapping) and c.get("run") != run_id]
+            children = experiment.get("children", [])
+            others = [c for c in children if c["run"] != run_id]
             child = {"run": run_id, "instruction_sha256": instruction_sha256, "rewritten": rewritten}
-            experiment["children"] = sorted([*others, child], key=lambda c: c.get("run", ""))
+            experiment["children"] = sorted([*others, child], key=lambda c: c["run"])
             _write_json(experiment_path, experiment)
-            if not already:
+            if len(others) == len(children):  # first dispatch of this run
                 _append_log_unlocked(
                     root,
                     "note",
@@ -1575,13 +1544,10 @@ def record_tool_metrics(
     where Hermes surfaces them; this function only places them in the workspace.
     """
 
-    if settings(payload) is None or not isinstance(start, Mapping):
+    owned = _code_generator_run(payload, start)
+    if owned is None:
         return None
-    if _text(start.get("role")) != "code-generator":
-        return None
-    root, run_id = Path(_text(start.get("workspace"))), _text(start.get("run"))
-    if not _text(start.get("workspace")) or not _RUN_ID.fullmatch(run_id):
-        return None
+    root, run_id = owned
     record = {**dict(metrics), "run": run_id}
     record.setdefault("observed_at", _timestamp())
     with _locked(root):
@@ -1600,7 +1566,7 @@ def _call_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
     Inline code is returned under ``code`` for the caller to save to src/.
     """
 
-    tool, args = _text(payload.get("tool_name")), _arguments(payload)
+    tool, args = _text(payload.get("tool_name")), _mapping(payload.get("arguments"))
     function = _hpc_function(tool)
     code = _text(args.get("payload")) if function == "run_code" else _text(args.get("code")) if tool == "execute_code" else ""
     entry: dict[str, Any] = {"tool": tool, "ts": _timestamp()}
@@ -1634,10 +1600,8 @@ def _call_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
 def _declared_skills(payload: Mapping[str, Any]) -> list[str]:
     """The skills this campaign names for its children (loam_campaign.skills)."""
 
-    campaign = payload.get("loam_campaign")
-    campaign = campaign if isinstance(campaign, Mapping) else {}
-    raw = campaign.get("skills")
-    return [name for item in (raw if isinstance(raw, (list, tuple)) else []) if (name := _text(item))]
+    skills = _mapping(payload.get("loam_campaign")).get("skills") or ()
+    return [name for item in skills if (name := _text(item))]
 
 
 def _skill_digest(name: str, file_path: str = "") -> dict[str, Any]:
@@ -1654,10 +1618,7 @@ def _skill_digest(name: str, file_path: str = "") -> dict[str, Any]:
     if not home or not _SEGMENT.fullmatch(name):
         return {"hashed": False}
     library = Path(home).expanduser() / "skills"
-    try:
-        matches = sorted(library.glob(f"*/{name}/SKILL.md")) or sorted(library.glob(f"{name}/SKILL.md"))
-    except OSError:
-        return {"hashed": False}
+    matches = sorted(library.glob(f"*/{name}/SKILL.md")) or sorted(library.glob(f"{name}/SKILL.md"))
     if not matches:
         return {"hashed": False}
     target = matches[0]
@@ -1702,15 +1663,13 @@ def _source_hash(base: Path, read: Mapping[str, str]) -> dict[str, str]:
 
     run = read_json(base / read["plan_id"] / read["hypothesis_id"] / "runs" / read["run"] / RUN_FILE)
     for item in run.get("manifest", []):
-        if isinstance(item, Mapping) and item.get("path") == read["path"] and item.get("sha256"):
-            return {"sha256": str(item["sha256"])}
+        if item["path"] == read["path"]:
+            return {"sha256": item["sha256"]}
     return {}
 
 
 # --- lifecycle at stop (subagent_stop) -----------------------------------------
 
-# Bound on the child/validator report copied into a log entry.
-MAX_RESULT_CHARS = 4_000
 # The body may be empty: a run with no output files is a valid, empty manifest.
 _MANIFEST_BLOCK = re.compile(r"^[ \t]*LOAM_MANIFEST[ \t]*\n(.*?)^[ \t]*END_LOAM_MANIFEST", re.DOTALL | re.MULTILINE)
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -1726,21 +1685,13 @@ def run_state(child_status: str) -> str:
     return "failed"
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _local_manifest(root: Path, run_id: str) -> list[dict[str, Any]]:
-    outputs = root / "outputs" / run_id
-    return [
-        {"path": path.relative_to(root).as_posix(), "sha256": _sha256_file(path), "bytes": path.stat().st_size}
-        for path in sorted(outputs.rglob("*"))
-        if path.is_file()
-    ]
+    entries = []
+    for path in sorted((root / "outputs" / run_id).rglob("*")):
+        if path.is_file():
+            sha256, size = _file_digest(path)
+            entries.append({"path": path.relative_to(root).as_posix(), "sha256": sha256, "bytes": size})
+    return entries
 
 
 def manifest_program(outputs_dir: str) -> str:
@@ -1820,6 +1771,7 @@ def remote_manifest(summary: str, run_id: str, prefix: str = "") -> tuple[list[d
     blocks = _MANIFEST_BLOCK.findall(summary)
     if not blocks:
         return [], "missing"
+    where = prefix or (f"outputs/{run_id}" if run_id else "")
     entries: list[dict[str, Any]] = []
     for line in blocks[-1].splitlines():
         if not line.strip():
@@ -1832,7 +1784,6 @@ def remote_manifest(summary: str, run_id: str, prefix: str = "") -> tuple[list[d
             return [], "invalid"
         if os.path.isabs(relative) or relative.split(os.sep)[0] == os.pardir or not _SHA256.fullmatch(digest):
             return [], "invalid"
-        where = prefix if prefix else (f"outputs/{run_id}" if run_id else "")
         entries.append({"path": f"{where}/{relative}" if where else relative, "sha256": digest, "bytes": size})
     return entries, "recorded"
 
@@ -1935,7 +1886,7 @@ def _audit_unlocked(root: Path, experiment: Mapping[str, Any], remote: bool) -> 
     """
 
     problems = [f"log.jsonl {problem}" for problem in verify_log(root)]
-    runs = [run_id for run_id in experiment.get("runs", []) if isinstance(run_id, str)]
+    runs = experiment.get("runs", [])
     for entry in sorted(root.iterdir()):
         transient = entry.name.startswith(".") and entry.name.endswith(".tmp")
         if entry.name not in LAYOUT_DIRS and entry.name not in RECORD_FILES and not transient:
@@ -1944,19 +1895,12 @@ def _audit_unlocked(root: Path, experiment: Mapping[str, Any], remote: bool) -> 
         for entry in sorted((root / folder).iterdir()) if (root / folder).is_dir() else []:
             if entry.name not in runs:
                 problems.append(f"{folder}/{entry.name} is not a run of this hypothesis")
+    if remote:
+        return problems  # remote outputs live on HPC; only local bytes can be re-hashed
     for run_id in runs:
         run = read_json(root / "runs" / run_id / RUN_FILE)
-        if run.get("state") != "completed" or remote or run.get("manifest_status") != "recorded":
-            continue  # remote outputs live on HPC; only local bytes can be re-hashed
-        recorded = {item["path"]: item.get("sha256") for item in run.get("manifest", []) if isinstance(item, Mapping)}
-        present = {path.relative_to(root).as_posix(): path for path in (root / "outputs" / run_id).rglob("*") if path.is_file()}
-        for relative, digest in recorded.items():
-            if relative not in present:
-                problems.append(f"{relative} was removed after run {run_id} finished")
-            elif _sha256_file(present[relative]) != digest:
-                problems.append(f"{relative} changed after run {run_id} finished")
-        for relative in sorted(set(present) - set(recorded)):
-            problems.append(f"{relative} was added after run {run_id} finished")
+        if run.get("state") == "completed" and run.get("manifest_status") == "recorded":
+            problems += manifest_changes(run.get("manifest", []), _local_manifest(root, run_id), run_id)
     return problems
 
 
@@ -1997,8 +1941,6 @@ def read_trace(db_path: Path, session_id: str, full: bool) -> list[dict[str, Any
     the reasoning/tool spine, not a second copy of the skill library.
     """
 
-    import sqlite3
-
     if not session_id:
         return []
     try:
@@ -2006,7 +1948,6 @@ def read_trace(db_path: Path, session_id: str, full: bool) -> list[dict[str, Any
         connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
     except sqlite3.Error:
         return []
-    rows: list[dict[str, Any]] = []
     try:
         connection.row_factory = sqlite3.Row
         cursor = connection.execute(
@@ -2014,13 +1955,11 @@ def read_trace(db_path: Path, session_id: str, full: bool) -> list[dict[str, Any
             "WHERE session_id = ? ORDER BY timestamp, id",
             (session_id,),
         )
-        for index, record in enumerate(cursor, start=1):
-            rows.append(_trace_row(index, record, full))
+        return [_trace_row(index, record, full) for index, record in enumerate(cursor, start=1)]
     except sqlite3.Error:
         return []
     finally:
         connection.close()
-    return rows
 
 
 def _trace_row(seq: int, record: Mapping[str, Any], full: bool) -> dict[str, Any]:
@@ -2053,16 +1992,8 @@ def write_trace(dest_dir: Path, rows: list[dict[str, Any]]) -> dict[str, Any] | 
 
     if not rows:
         return None
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    target = dest_dir / TRACE_FILE
-    body = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows)
-    data = body.encode("utf-8")
-    tmp = target.with_name(f".{target.name}.tmp")
-    with tmp.open("wb") as handle:
-        handle.write(data)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, target)
+    data = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows).encode("utf-8")
+    _replace(dest_dir / TRACE_FILE, data)
     return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data), "rows": len(rows)}
 
 
@@ -2071,9 +2002,9 @@ def capture_trace(payload: Mapping[str, Any], start: Mapping[str, Any]) -> bool:
 
     Linked into the record like everything else: the trace file is referenced by
     a {path, sha256, bytes, rows} pointer on the hub (run.json for a
-    code-generator, experiment.json for a validator) and announced in the chain.
-    The reasoner is plan-level and handled with its own record in a later group.
-    Best effort: a provenance copy must never raise into the stop path.
+    code-generator, experiment.json for a validator, reasoner.json for the
+    reasoner) and announced in the chain. Returns whether a trace was linked;
+    the caller isolates failures (``_capture_trace_safe``).
     """
 
     db_path = trace_db_path(payload)
@@ -2081,20 +2012,18 @@ def capture_trace(payload: Mapping[str, Any], start: Mapping[str, Any]) -> bool:
     if db_path is None or not session_id:
         return False
     root = Path(_text(start.get("workspace")))
-    role = _text(start.get("role"))
-    full = (settings(payload) or {}).get("trace_full") is True
-    spec = _trace_destination(root, role, _text(start.get("run")))
+    spec = _trace_destination(root, _text(start.get("role")), _text(start.get("run")))
     if spec is None:
         return False
-    dest, where, log_extra = spec
-    return _persist_trace(root, dest, where, log_extra, session_id, db_path, full)
+    full = (settings(payload) or {}).get("trace_full") is True
+    return _persist_trace(root, *spec, session_id, db_path, full)
 
 
 def _trace_destination(root: Path, role: str, run_id: str) -> tuple[Path, Path, dict[str, Any]] | None:
     """(trace dir, hub file, log fields) for a role, or None when it has no record."""
 
     if role == "code-generator":
-        if not _RUN_ID.fullmatch(run_id or ""):
+        if not _RUN_ID.fullmatch(run_id):
             return None
         return root / "runs" / run_id, root / "runs" / run_id / RUN_FILE, {"run": run_id}
     if role == "hypothesis-validator":
@@ -2136,21 +2065,18 @@ def backfill_traces(root: Path, db_path: Path, full: bool) -> list[str]:
 
     filled: list[str] = []
     experiment = read_json(root / EXPERIMENT_FILE)
-    if experiment and not experiment.get("trace"):
-        session_id = _text(experiment.get("validator_session_id"))
-        if session_id and _persist_trace(root, root / "validator", root / EXPERIMENT_FILE, {}, session_id, db_path, full):
+    session_id = _text(experiment.get("validator_session_id"))
+    if session_id and not experiment.get("trace"):
+        spec = _trace_destination(root, "hypothesis-validator", "")
+        if _persist_trace(root, *spec, session_id, db_path, full):
             filled.append("validator")
-    runs_dir = root / "runs"
-    for run_path in sorted(runs_dir.iterdir()) if runs_dir.is_dir() else []:
-        run_id = run_path.name
-        if not _RUN_ID.fullmatch(run_id):
-            continue
+    for _, run_path in _run_dirs(root):
         run = read_json(run_path / RUN_FILE)
-        if not run or run.get("trace"):
-            continue
         session_id = _text(run.get("child_session_id"))
-        if session_id and _persist_trace(root, run_path, run_path / RUN_FILE, {"run": run_id}, session_id, db_path, full):
-            filled.append(run_id)
+        if session_id and not run.get("trace"):
+            spec = _trace_destination(root, "code-generator", run_path.name)
+            if _persist_trace(root, *spec, session_id, db_path, full):
+                filled.append(run_path.name)
     return filled
 
 
@@ -2158,10 +2084,11 @@ def backfill_reasoner_trace(reasoner_dir: Path, db_path: Path, full: bool) -> bo
     """Fill a missing reasoner trace from the session id its record holds."""
 
     record = read_json(reasoner_dir / REASONER_FILE)
-    if not record or record.get("trace"):
-        return False
     session_id = _text(record.get("session_id"))
-    return bool(session_id and _persist_trace(reasoner_dir, reasoner_dir, reasoner_dir / REASONER_FILE, {}, session_id, db_path, full))
+    if not session_id or record.get("trace"):
+        return False
+    spec = _trace_destination(reasoner_dir, "reasoner", "")
+    return _persist_trace(reasoner_dir, *spec, session_id, db_path, full)
 
 
 def on_agent_stopped(
@@ -2177,20 +2104,20 @@ def on_agent_stopped(
     if settings(payload) is None or not _text(start.get("workspace")):
         return []
     root = Path(_text(start.get("workspace")))
-    execution = payload.get("loam_execution")
-    remote = isinstance(execution, Mapping) and _text(execution.get("mode")) == "remote_mcp"
+    remote = _remote(payload)
     role = _text(start.get("role"))
-    if role == "code-generator" and _text(start.get("run")):
-        run_id = _text(start.get("run"))
+    run_id = _text(start.get("run"))
+    if role == "code-generator" and run_id:
         run = finalize_run(
             root, run_id, _text(payload.get("child_status")) or "error", _text(payload.get("child_summary")), remote
         )
         # After finalize_run, so the trace pointer lands on the frozen run record.
         _capture_trace_safe(payload, start)
-        if remote and run is not None and run.get("state") == "completed" and run.get("manifest_status") not in VERIFIED_MANIFESTS:
-            _launch_verifier(payload, start, root, ["fill", "--run", run_id])
-        if remote and run is not None and run.get("batches"):
-            _launch_verifier(payload, start, root, ["batches", "--run", run_id])
+        if remote and run is not None:
+            if run["state"] == "completed" and run["manifest_status"] not in VERIFIED_MANIFESTS:
+                _launch_verifier(payload, start, root, ["fill", "--run", run_id])
+            if run.get("batches"):
+                _launch_verifier(payload, start, root, ["batches", "--run", run_id])
         return []
     if role == "hypothesis-validator" and completion is not None:
         problems = close_workspace(root, completion, remote)
@@ -2201,8 +2128,11 @@ def on_agent_stopped(
     if role == "reasoner":
         close_reasoner(root, _text(payload.get("child_summary")))
         _capture_trace_safe(payload, start)
-        return []
     return []
+
+
+def _remote(payload: Mapping[str, Any]) -> bool:
+    return _text(_mapping(payload.get("loam_execution")).get("mode")) == "remote_mcp"
 
 
 def _capture_trace_safe(payload: Mapping[str, Any], start: Mapping[str, Any]) -> None:
@@ -2227,8 +2157,7 @@ def _launch_verifier(payload: Mapping[str, Any], start: Mapping[str, Any], root:
 
     config = settings(payload) or {}
     python, url = _text(config.get("verifier_python")), _text(config.get("verifier_mcp_url"))
-    execution = payload.get("loam_execution")
-    execution = execution if isinstance(execution, Mapping) else {}
+    execution = _mapping(payload.get("loam_execution"))
     workdir_root = _text(execution.get("workdir_root"))
     if not (python and url and workdir_root):
         append_log(root, "note", {"what": f"verifier not configured; {' '.join(args)} not run (run stays as recorded)"})
@@ -2258,14 +2187,11 @@ def _launch_seed(payload: Mapping[str, Any], plan_id: str, hypothesis_id: str, r
     seed, so a validator restarting on an existing workspace does not re-copy.
     """
 
-    config = settings(payload) or {}
-    source = _text(config.get("remote_inputs_dir"))
-    execution = payload.get("loam_execution")
-    execution = execution if isinstance(execution, Mapping) else {}
-    if not source or _text(execution.get("mode")) != "remote_mcp":
+    source = _text((settings(payload) or {}).get("remote_inputs_dir"))
+    if not source or not _remote(payload):
         return
     recorded = read_json(root / EXPERIMENT_FILE).get("inputs", [])
-    if any(isinstance(item, Mapping) and item.get("how") == "copied_on_hpc" for item in recorded):
+    if any(item.get("how") == "copied_on_hpc" for item in recorded):
         return
     _launch_verifier(
         payload,
@@ -2300,8 +2226,8 @@ def record_verified_manifest(root: Path, run_id: str, entries: list[dict[str, An
 def manifest_changes(recorded: list[dict[str, Any]], fresh: list[dict[str, Any]], run_id: str) -> list[str]:
     """How a fresh hashing of a run's outputs differs from its recorded manifest."""
 
-    before = {item.get("path"): item.get("sha256") for item in recorded if isinstance(item, Mapping)}
-    after = {item.get("path"): item.get("sha256") for item in fresh if isinstance(item, Mapping)}
+    before = {item["path"]: item["sha256"] for item in recorded}
+    after = {item["path"]: item["sha256"] for item in fresh}
     problems = [f"{path} was removed after run {run_id} finished" for path in sorted(set(before) - set(after))]
     problems += [f"{path} changed after run {run_id} finished" for path in sorted(set(before) & set(after)) if before[path] != after[path]]
     problems += [f"{path} was added after run {run_id} finished" for path in sorted(set(after) - set(before))]

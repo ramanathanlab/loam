@@ -1,9 +1,8 @@
-"""Knowledge-graph pre-pass: caching, fallback, and how the tournament uses it."""
+"""Knowledge-graph pre-pass: caching, fallback, and config."""
 
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
 import os
 import sys
@@ -14,7 +13,6 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 HOOKS = ROOT / ".loam" / "hooks"
-JNANA_ROOT = Path(os.environ.get("JNANA_ROOT", ROOT.parent / "Jnana"))
 sys.path.insert(0, str(HOOKS))
 sys.path.insert(0, str(ROOT / ".loam" / "adapters" / "hermes" / "plugin"))
 import knowledge_brief  # noqa: E402
@@ -23,13 +21,6 @@ import loam_config  # noqa: E402
 LLM = {"base_url": "http://example.test/v1", "api_key": "k", "model": "m"}
 ON = {"enabled": True, "name": "OKN", "mcp_url": "https://kg.test/mcp", "max_tool_calls": 3,
       "timeout_seconds": 10, "max_brief_chars": 600}
-
-
-def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 class BriefTests(unittest.TestCase):
@@ -87,61 +78,6 @@ class BriefTests(unittest.TestCase):
             result = knowledge_brief.brief_for("goal D", {**ON, "timeout_seconds": 1}, LLM, self.dir)
         self.assertIn("TimeoutError", result["status"])
         self.assertEqual(result["brief"], "")
-
-
-class TournamentUsesBriefTests(unittest.TestCase):
-    def _run(self, knowledge, brief_result=None):
-        hook = _load("loam_tournament_knowledge", HOOKS / "hypothesis_tournament.py")
-        seen = {}
-
-        class FakeCoScientist:
-            def __init__(self, **kwargs):
-                self.memory = type("Memory", (), {"save": lambda _self: None})()
-                self.made = []
-
-            def start(self): pass
-            def stop(self): pass
-            def get_all_hypotheses(self): return self.made
-            def set_research_goal(self, goal): seen["goal"] = goal
-            def generate_hypotheses(self, count): self.made.extend(range(count))
-            def wait_for_completion(self): pass
-
-        tmp = Path(tempfile.mkdtemp())
-        config = {"state_file": str(tmp / "memory.json"), "initial_hypotheses": 2}
-        if knowledge is not None:
-            config["knowledge"] = knowledge
-        llm_config = type("C", (), {"base_url": "http://x/v1", "api_key": "k", "model": "m"})()
-        with patch.object(hook, "CoScientist", FakeCoScientist), \
-                patch("knowledge_brief.brief_for", return_value=brief_result or {}) as brief_for:
-            result = hook._ensure_initial_hypotheses(config, {"user_message": "Why does X bind Y?"}, llm_config)
-        return seen["goal"], result, brief_for
-
-    def test_knowledge_model_overrides_the_tournament_model(self) -> None:
-        _goal, _result, brief_for = self._run({**ON, "model": "inkling-bf16"},
-                                              {"status": "ok", "brief": "B", "tool_calls": 1,
-                                               "tools_used": [], "cached": False, "seconds": 1.0})
-        self.assertEqual(brief_for.call_args.args[2]["model"], "inkling-bf16")
-
-    def test_enabled_appends_brief_to_jnana_goal(self) -> None:
-        goal, result, brief_for = self._run(ON, {"status": "ok", "brief": "Background: KG facts", "tool_calls": 4,
-                                                 "tools_used": ["list_kgs"], "cached": False, "seconds": 3.0})
-        self.assertEqual(goal, "Why does X bind Y?\n\nBackground: KG facts")
-        self.assertEqual(result["knowledge"]["status"], "ok")
-        self.assertEqual(result["knowledge"]["brief_chars"], len("Background: KG facts"))
-        self.assertEqual(brief_for.call_args.args[2], {"base_url": "http://x/v1", "api_key": "k", "model": "m"})
-
-    def test_failed_brief_falls_back_to_plain_goal(self) -> None:
-        goal, result, _ = self._run(ON, {"status": "failed: ConnectionError", "brief": ""})
-        self.assertEqual(goal, "Why does X bind Y?")
-        self.assertEqual(result["knowledge"]["brief_chars"], 0)
-
-    def test_disabled_or_absent_never_calls_the_pre_pass(self) -> None:
-        for knowledge in (None, {**ON, "enabled": False}):
-            with self.subTest(knowledge=knowledge):
-                goal, result, brief_for = self._run(knowledge)
-                self.assertEqual(goal, "Why does X bind Y?")
-                self.assertNotIn("knowledge", result)
-                brief_for.assert_not_called()
 
 
 class ConfigTests(unittest.TestCase):

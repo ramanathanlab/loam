@@ -12,12 +12,10 @@ import json
 import sys
 from typing import Any
 
-from hypothesis_recall import context_for as hypothesis_context_for
-from hypothesis_steering_recall import context_for as steering_context_for
 from hypothesis_orchestration import context_for as orchestration_context_for
 from hypothesis_orchestration import is_campaign_child, prepare_payload, runbatch_nudge_for
-from hypothesis_tournament import context_for as tournament_context_for
-from memory_recall import context_for as memory_context_for
+from hypothesis_tournament import Tournament
+from parser import Parser
 from run_manifest import ensure as ensure_run_manifest
 
 
@@ -32,10 +30,11 @@ def main() -> int:
     try:
         payload = _payload()
         ensure_run_manifest(payload)
+        parser = Parser()
         contexts = [
-            memory_context_for(payload),
-            hypothesis_context_for(payload),
-            steering_context_for(payload),
+            parser.memory_context(payload),
+            parser.hypothesis_context(payload),
+            parser.steering_context(payload),
         ]
         # Orchestration-only extras. Gating the run_batch nudge here keeps it (and
         # its per-turn orchestration-state read) off every non-campaign Hermes
@@ -44,7 +43,7 @@ def main() -> int:
             contexts.append(runbatch_nudge_for(payload))
             if not is_campaign_child(payload):
                 prepare_payload(payload)
-                contexts.append(tournament_context_for(payload))
+                contexts.append(Tournament(payload).context())
                 contexts.append(orchestration_context_for(payload))
         context = "\n\n".join(part for part in contexts if part)
         if context:
