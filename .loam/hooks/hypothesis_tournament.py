@@ -244,10 +244,14 @@ class Tournament:
         coscientist.memory.save()
 
         result: dict[str, Any] = {
-            'status': 'completed',
+            'status': 'completed' if drained else 'seeded_partial',
             'goal_source': source,
             'generated_hypotheses': len(coscientist.get_all_hypotheses()) - existing,
         }
+        if not drained:
+            # Say so rather than reporting a clean seed: the pool is whatever
+            # landed before the budget ran out, and the next turn tops it up.
+            result['seed_wait'] = f'timed out after {self._wait_budget():.0f}s'
         if knowledge:
             result['knowledge'] = {
                 key: knowledge.get(key) for key in ('status', 'tool_calls', 'tools_used', 'cached', 'seconds')
