@@ -221,6 +221,10 @@ class LoamProfile:
     # inserts a phase and spends a child per candidate, so an existing campaign
     # keeps its current round shape until it asks for this.
     evidence_review: bool = False
+    # Widen the review phase past the active round to every pending candidate of
+    # the workflow, five per turn. For a campaign that ran before review existed
+    # and has a pile of pending claims; a deliberate catch-up, not a steady state.
+    evidence_review_backlog: bool = False
     campaign: CampaignConfig | None = None
     execution: ExecutionConfig | None = None
     hypothesis_tournament: HypothesisTournamentConfig | None = None
@@ -587,6 +591,7 @@ def load_profile() -> LoamProfile | None:
     orchestration_config = _as_mapping(raw.get("hypothesis_orchestration"))
     orchestration = orchestration_config is not None and orchestration_config.get("enabled") is True
     evidence_review = orchestration and (orchestration_config or {}).get("evidence_review") is True
+    evidence_review_backlog = evidence_review and (orchestration_config or {}).get("evidence_review_backlog") is True
     # Deliberately not required by orchestration: an existing profile has no
     # `campaign:` block, and rejecting it here would take every hook inert
     # rather than merely leaving the campaign context uninjected.
@@ -603,6 +608,7 @@ def load_profile() -> LoamProfile | None:
         duplicate_policy=policy,
         hypothesis_orchestration=orchestration,
         evidence_review=evidence_review,
+        evidence_review_backlog=evidence_review_backlog,
         campaign=campaign,
         execution=execution,
         hypothesis_tournament=_tournament_config(raw.get("hypothesis_tournament"), override),
@@ -647,6 +653,7 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
         "loam_duplicate_policy": profile.duplicate_policy,
         "loam_hypothesis_orchestration": profile.hypothesis_orchestration,
         "loam_evidence_review": profile.evidence_review,
+        "loam_evidence_review_backlog": profile.evidence_review_backlog,
     }
     campaign = profile.campaign
     if campaign is not None:

@@ -74,6 +74,22 @@ def extract_contract_object(summary: str) -> tuple[dict[str, Any] | None, str]:
     return extract_fenced_contract(summary, CONTRACT_VERSION)
 
 
+def _at_index(items: list[Mapping[str, Any]], value: Any) -> Mapping[str, Any] | None:
+    """The candidate evidence item a review's `index` refers to, if it refers to one.
+
+    Accepts the integer or its string form, because a model emitting JSON
+    sometimes quotes a number. A bool is not an index.
+    """
+
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        position = int(value)
+    except (TypeError, ValueError):
+        return None
+    return items[position] if 0 <= position < len(items) else None
+
+
 def independence_group(verification: str, source_url: str, unit_id: str) -> str:
     """Which claims count as one source rather than several.
 
@@ -124,10 +140,10 @@ def normalize_review(
     if not isinstance(items, list) or not items:
         return None, "invalid_reviews"
 
+    candidate_items = [row for row in candidate.get("evidence_candidates", []) if isinstance(row, Mapping)]
     allowed = {
         (row.get("hypothesis_key"), row.get("claim"), row.get("source_url"), row.get("stance")): row
-        for row in candidate.get("evidence_candidates", [])
-        if isinstance(row, Mapping)
+        for row in candidate_items
     }
     keys = {row.get("hypothesis_key") for row in candidate.get("hypotheses", []) if isinstance(row, Mapping)}
     unit_id = str(candidate_record.get("unit_id") or "")
@@ -140,16 +156,28 @@ def normalize_review(
         if not isinstance(item, Mapping):
             dropped += 1
             continue
-        identity = (
-            _stripped(item.get("hypothesis_key")),
-            _stripped(item.get("claim")),
-            _stripped(item.get("source_url")),
-            _stripped(item.get("stance")),
-        )
-        if identity not in allowed:
-            dropped += 1
-            continue
-        key, claim, source_url, stance = identity
+        # `index` is the reliable path and the one the reviewer is told to use:
+        # the fields below must otherwise match a 300-character claim byte for
+        # byte, and a model asked to copy that back is one normalized dash away
+        # from having its review silently dropped. An index resolves to the
+        # candidate's own item, so the identity cannot drift at all. Verbatim
+        # matching stays for an operator-authored review, which has no index.
+        source = _at_index(candidate_items, item.get("index"))
+        if source is None:
+            identity = (
+                _stripped(item.get("hypothesis_key")),
+                _stripped(item.get("claim")),
+                _stripped(item.get("source_url")),
+                _stripped(item.get("stance")),
+            )
+            if identity not in allowed:
+                dropped += 1
+                continue
+            source = allowed[identity]
+        key = source.get("hypothesis_key")
+        claim = source.get("claim")
+        source_url = source.get("source_url")
+        stance = source.get("stance")
         verdict = _stripped(item.get("verdict"))
         verification = _stripped(item.get("verification"))
         source_ref = _stripped(item.get("source_ref"))

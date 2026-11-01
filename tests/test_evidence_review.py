@@ -43,6 +43,8 @@ def _candidate(unit_id: str = "unit-1", child_session_id: str = "validator-sessi
         "event": "candidate_result",
         "record_version": "hypothesis_provenance_v1",
         "candidate_status": "pending",
+        # Every real candidate row carries one; the catch-up pass orders by it.
+        "observed_at": "2026-10-31T19:19:12+00:00",
         "candidate_id": "candidate-1",
         "unit_id": unit_id,
         "run_id": "run-1",
@@ -155,6 +157,32 @@ class ReviewContractTests(unittest.TestCase):
         )
         self.assertEqual(row["dropped_unmatched"], 1)
         self.assertEqual(row["evidence"], [])
+
+    def test_an_index_identifies_the_claim_even_when_the_text_is_retyped(self) -> None:
+        """The index is the identity, so a paraphrase cannot drop the verdict.
+
+        Byte-equality on a 300-character claim is the obvious failure mode of a
+        model-authored review: one normalized dash and the verdict vanishes as
+        unmatched. The claim and stance come from the candidate; only the verdict
+        is the reviewer's.
+        """
+
+        contract = _review_contract(index=0, claim="a loose paraphrase of the real claim",
+                                    stance="supports")
+        row, status = self.review.normalize_review(contract, _candidate())
+        self.assertEqual(status, "reviewed")
+        self.assertEqual(row["dropped_unmatched"], 0)
+        accepted = row["evidence"][0]
+        self.assertEqual(accepted["claim"], CLAIM_COMPUTED)
+        self.assertEqual(accepted["stance"], "contradicts", "the candidate's stance wins, not the review's")
+
+    def test_an_index_outside_the_candidate_falls_back_to_matching(self) -> None:
+        row, _ = self.review.normalize_review(_review_contract(index=99), _candidate())
+        self.assertEqual(row["dropped_unmatched"], 0, "the verbatim fields still matched")
+        row, _ = self.review.normalize_review(
+            _review_contract(index=99, claim="not a candidate claim"), _candidate()
+        )
+        self.assertEqual(row["dropped_unmatched"], 1)
 
     def test_a_claim_review_of_another_candidate_is_refused(self) -> None:
         contract = _review_contract()
@@ -301,6 +329,61 @@ class ReviewPhaseTests(unittest.TestCase):
             state = self.orchestration._round(payload, self.orchestration._rows(payload))
             self.assertEqual(state["phase"], "reasoner_due")
 
+    def test_an_earlier_rounds_candidate_is_reviewed_only_on_the_catch_up_opt_in(self) -> None:
+        """A campaign that ran before review existed has a pile of pending claims.
+
+        The review phase is scoped to the round, which is right for the steady
+        state and leaves that backlog unreviewed forever. The opt-in widens it
+        to the whole workflow, bounded per turn, and tags each reviewer with the
+        plan its candidate came from rather than the active one.
+        """
+
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            state = Path(payload["loam_state_dir"])
+            old = _candidate(unit_id="unit-old", child_session_id="older-validator")
+            old["candidate_id"] = "candidate-old"
+            old["observed_at"] = "2026-10-30T00:00:00+00:00"
+            with (state / "candidate-results.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(old) + "\n")
+            with (state / "hypothesis-orchestration.jsonl").open("a", encoding="utf-8") as handle:
+                for row in (
+                    {"event": "agent_started", "role": "hypothesis-validator", "plan_id": "plan-old",
+                     "hypothesis_id": "h-old", "workflow_id": "research-v1", "run_id": "run-0",
+                     "child_session_id": "older-validator", "child_subagent_id": "older-1"},
+                    {"event": "validator_completed", "role": "hypothesis-validator", "plan_id": "plan-old",
+                     "hypothesis_id": "h-old", "workflow_id": "research-v1", "run_id": "run-0",
+                     "child_session_id": "older-validator", "status": "completed"},
+                    {"event": "reasoner_completed", "role": "reasoner", "plan_id": "plan-old",
+                     "workflow_id": "research-v1", "run_id": "run-0", "summary": "done"},
+                ):
+                    handle.write(json.dumps(row) + "\n")
+
+            scoped = self.orchestration._round(payload, self.orchestration._rows(payload))
+            self.assertEqual([item["candidate_id"] for item in scoped["candidates"]], ["candidate-1"])
+
+            widened = {**payload, "loam_evidence_review_backlog": True}
+            state_with_backlog = self.orchestration._round(widened, self.orchestration._rows(widened))
+            ids = [item["candidate_id"] for item in state_with_backlog["candidates"]]
+            self.assertEqual(ids, ["candidate-old", "candidate-1"], "oldest first, so a bounded pass makes progress")
+            tasks = self.orchestration.canonical_delegation_args(widened)["tasks"]
+            self.assertIn("[loam-plan-id=plan-old]", tasks[0]["goal"])
+            self.assertIn("[loam-plan-id=plan-1]", tasks[1]["goal"])
+
+    def test_one_turn_dispatches_a_bounded_number_of_reviewers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            state = Path(payload["loam_state_dir"])
+            with (state / "candidate-results.jsonl").open("a", encoding="utf-8") as handle:
+                for number in range(9):
+                    extra = _candidate(unit_id=f"unit-{number}", child_session_id="validator-session")
+                    extra["candidate_id"] = f"candidate-extra-{number}"
+                    handle.write(json.dumps(extra) + "\n")
+            pending, _ = self.orchestration._review_state(
+                payload, self.orchestration._rows(payload), "plan-1"
+            )
+            self.assertEqual(len(pending), self.orchestration.REVIEW_BATCH)
+
     def test_a_reviewer_may_read_but_not_execute(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             payload = self._payload(Path(temporary))
@@ -339,6 +422,79 @@ class ReviewPhaseTests(unittest.TestCase):
             summary = self.orchestration._review_summary(payload, "plan-1")
             self.assertIn("1 claims accepted, 1 rejected, 3 unverifiable", summary)
             self.assertIn("NOT a refuted one", summary)
+
+
+class SteeringOrderTests(unittest.TestCase):
+    """Accepted evidence re-orders a round's dispatch; it never drops a selection."""
+
+    def setUp(self) -> None:
+        self.orchestration = _load("loam_steering_order")
+
+    def _payload(self, root: Path, priorities: dict[str, float] | None = None) -> dict:
+        state = root / "loam-state"
+        state.mkdir(parents=True, exist_ok=True)
+        (root / "jnana.json").write_text(
+            json.dumps({"hypotheses": [{"hypothesis_id": f"h-{n}", "content": f"Hypothesis {n}."} for n in (1, 2, 3)]}),
+            encoding="utf-8",
+        )
+        if priorities is not None:
+            (state / "hypothesis-steering.jsonl").write_text(
+                json.dumps({
+                    "event": "hypothesis_steering_snapshot",
+                    "workflow_id": "research-v1",
+                    "hypotheses": [
+                        {"hypothesis_id": key, "jnana_hypothesis_id": key, "steering_priority": value}
+                        for key, value in priorities.items()
+                    ],
+                }) + "\n",
+                encoding="utf-8",
+            )
+        return {
+            "repo_root": str(ROOT),
+            "workflow_id": "research-v1",
+            "session_id": "session-1",
+            "loam_state_dir": str(state),
+            "loam_hypothesis_tournament": {"state_file": str(root / "jnana.json"), "reports_dir": str(root)},
+        }
+
+    REPORT = {
+        "result": {
+            "top_hypotheses": [
+                {"hypothesis_id": "h-1", "elo_rating": 1420.0},
+                {"hypothesis_id": "h-2", "elo_rating": 1300.0},
+                {"hypothesis_id": "h-3", "elo_rating": 1200.0},
+            ]
+        }
+    }
+
+    def test_without_accepted_evidence_the_elo_order_stands(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            selected = self.orchestration._selected_hypotheses(payload, self.REPORT)
+            self.assertEqual([item["hypothesis"]["hypothesis_id"] for item in selected], ["h-1", "h-2", "h-3"])
+
+    def test_a_refuted_hypothesis_is_dispatched_last_but_still_dispatched(self) -> None:
+        """Last, not dropped: a refuted claim is not a refuted hypothesis.
+
+        What it buys is the truncation order -- a round cut short by a walltime
+        boundary spends its hour on the hypotheses evidence favours, and the one
+        its own evidence contradicts is what goes unfinished.
+        """
+
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary), {"h-1": -1.4, "h-2": 0.2, "h-3": 0.9})
+            selected = self.orchestration._selected_hypotheses(payload, self.REPORT)
+            self.assertEqual([item["hypothesis"]["hypothesis_id"] for item in selected], ["h-3", "h-2", "h-1"])
+            self.assertEqual(len(selected), 3, "nothing may be dropped")
+            top = next(item for item in selected if item["hypothesis"]["hypothesis_id"] == "h-1")
+            self.assertEqual(top["rank"], 1, "the Elo rank it was selected on is preserved")
+            self.assertEqual(top["dispatch_order"], 3)
+
+    def test_a_hypothesis_with_no_steering_entry_keeps_its_elo_place(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary), {"h-3": 0.9})
+            selected = self.orchestration._selected_hypotheses(payload, self.REPORT)
+            self.assertEqual([item["hypothesis"]["hypothesis_id"] for item in selected], ["h-3", "h-1", "h-2"])
 
 
 class AcceptanceTests(unittest.TestCase):

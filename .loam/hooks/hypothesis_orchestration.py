@@ -26,6 +26,12 @@ from parser import Parser
 # Must match DISPATCH_TOOL_NAME in .loam/adapters/hermes/plugin/__init__.py.
 DISPATCH_TOOL = 'loam_dispatch_round'
 
+# How many evidence reviewers one turn may dispatch. A round produces at most
+# top_k candidates, so this binds only the opt-in backlog catch-up -- which
+# would otherwise put a campaign's whole accumulated pile of pending candidates
+# into a single delegate_task batch.
+REVIEW_BATCH = 5
+
 
 # --- ledger -----------------------------------------------------------------
 
@@ -126,28 +132,40 @@ def _active_plan(rows: list[dict[str, Any]], workflow_id: str, run_id: str = '')
     return None
 
 
-def _plan_candidates(payload: Mapping[str, Any], rows: list[dict[str, Any]], plan_id: str) -> list[dict[str, Any]]:
-    """This plan's pending provenance candidates, each with the hypothesis it came from.
+def _plan_candidates(payload: Mapping[str, Any], rows: list[dict[str, Any]], plan_id: str,
+                     backlog: bool = False) -> list[dict[str, Any]]:
+    """Pending provenance candidates, each with the plan and hypothesis it came from.
 
     Candidate rows are written by `ledger.write_stop_and_candidate` and carry
     the producing child's session, not its plan, so the plan is recovered by
     joining on the validator's `agent_started` row.
+
+    `backlog` widens this past the active plan to every pending candidate of
+    this workflow. A campaign that ran before review existed has a pile of them
+    -- 11 on this one, carrying the refutations that motivated the role -- and
+    they are otherwise never reviewed, because the review phase is scoped to the
+    round. It is opt-in and bounded by REVIEW_BATCH, so the catch-up is a
+    deliberate act spread over turns rather than one enormous fan-out.
     """
 
-    hypothesis_by_session = {
-        row.get('child_session_id'): row.get('hypothesis_id', '')
+    origin = {
+        row.get('child_session_id'): (row.get('plan_id', ''), row.get('hypothesis_id', ''))
         for row in rows
         if row.get('event') == 'agent_started' and row.get('role') == 'hypothesis-validator'
-        and row.get('plan_id') == plan_id and row.get('child_session_id')
+        and row.get('child_session_id') and (backlog or row.get('plan_id') == plan_id)
     }
     candidates = []
     for row in Parser().rows(payload, 'candidate-results.jsonl'):
         if row.get('event') != 'candidate_result' or row.get('candidate_status') != 'pending':
             continue
         session_id = row.get('child_session_id')
-        if session_id not in hypothesis_by_session or not row.get('candidate_id'):
+        if session_id not in origin or not row.get('candidate_id'):
             continue
-        candidates.append({**row, 'plan_id': plan_id, 'hypothesis_id': hypothesis_by_session[session_id]})
+        candidate_plan, hypothesis_id = origin[session_id]
+        candidates.append({**row, 'plan_id': candidate_plan, 'hypothesis_id': hypothesis_id})
+    # Oldest first, so a bounded catch-up works through the backlog in order
+    # instead of re-picking whichever five the file happens to list first.
+    candidates.sort(key=lambda item: str(item.get('observed_at') or ''))
     return candidates
 
 
@@ -160,23 +178,26 @@ def _review_state(payload: Mapping[str, Any], rows: list[dict[str, Any]], plan_i
     put the round in a loop that never reaches its reasoner.
     """
 
+    # Keyed on candidate_id alone, not on the plan: candidate ids are unique,
+    # and a backlog candidate's reviewer is tagged with the plan the candidate
+    # came from rather than the active one.
     dispatched = {
         row.get('candidate_id')
         for row in rows
-        if row.get('event') == 'agent_started' and row.get('role') == 'evidence-reviewer'
-        and row.get('plan_id') == plan_id and row.get('candidate_id')
+        if row.get('event') == 'agent_started' and row.get('role') == 'evidence-reviewer' and row.get('candidate_id')
     }
     finished = {
         row.get('candidate_id')
         for row in rows
-        if row.get('event') == 'evidence_review_completed' and row.get('plan_id') == plan_id and row.get('candidate_id')
+        if row.get('event') == 'evidence_review_completed' and row.get('candidate_id')
     }
     reviewed = {str(row.get('candidate_id') or '') for row in Parser().rows(payload, hypothesis_review_file())}
+    backlog = payload.get('loam_evidence_review_backlog') is True
     pending = [
-        candidate for candidate in _plan_candidates(payload, rows, plan_id)
+        candidate for candidate in _plan_candidates(payload, rows, plan_id, backlog)
         if candidate['candidate_id'] not in dispatched and candidate['candidate_id'] not in reviewed
     ]
-    return pending, len(dispatched - finished)
+    return pending[:REVIEW_BATCH], len(dispatched - finished)
 
 
 def hypothesis_review_file() -> str:
@@ -225,11 +246,45 @@ def _round(payload: Mapping[str, Any], rows: list[dict[str, Any]]) -> dict[str, 
     return {'phase': 'validators_due', 'plan_id': plan_id, 'report': report[1]}
 
 
+def _steering_priorities(payload: Mapping[str, Any]) -> dict[str, float]:
+    """Each hypothesis's advisory steering priority, keyed by its Jnana id.
+
+    From the latest `hypothesis-steering.jsonl` snapshot, which
+    `project_hypothesis_steering.py` builds out of ACCEPTED evidence (weights
+    elo 0.35 / evidence 0.50 / uncertainty 0.15). Empty until a round's claims
+    have been reviewed and reconciled.
+    """
+
+    snapshot = Parser().snapshot(payload, 'hypothesis-steering.jsonl', 'hypothesis_steering_snapshot')
+    if not snapshot:
+        return {}
+    priorities: dict[str, float] = {}
+    for item in snapshot.get('hypotheses') or []:
+        if not isinstance(item, Mapping):
+            continue
+        key = str(item.get('jnana_hypothesis_id') or item.get('hypothesis_id') or '')
+        try:
+            priority = float(item.get('steering_priority'))
+        except (TypeError, ValueError):
+            continue
+        if key:
+            priorities[key] = priority
+    return priorities
+
+
 def _selected_hypotheses(payload: Mapping[str, Any], report: Mapping[str, Any]) -> list[dict[str, Any]] | None:
     """The ranked hypotheses this round validates, with their full text.
 
     None when the ranking is empty or any ranked hypothesis is missing from the
     Jnana state: a partial fan-out would silently drop one the tournament chose.
+
+    The tournament's Elo order decides WHICH hypotheses a round takes; accepted
+    evidence decides the order they are DISPATCHED in. Nothing is dropped --
+    evidence is advisory and a refutation of one claim is not a refutation of a
+    hypothesis -- but a hypothesis whose accepted contradictions outweigh its
+    support goes last, so it is the first thing a round truncated by a walltime
+    boundary fails to reach. `rank` keeps the Elo rank it was selected on, so
+    the two signals stay legible as two signals.
     """
     hypotheses = Tournament(payload).hypotheses()
     selected = []
@@ -238,6 +293,15 @@ def _selected_hypotheses(payload: Mapping[str, Any], report: Mapping[str, Any]) 
         if not hypothesis:
             return None
         selected.append({'rank': rank, 'elo_rating': ranking.get('elo_rating'), 'hypothesis': hypothesis})
+    priorities = _steering_priorities(payload)
+    if priorities:
+        for item in selected:
+            item['steering_priority'] = priorities.get(item['hypothesis']['hypothesis_id'])
+        # Stable, so hypotheses with no accepted evidence keep their Elo order
+        # among themselves rather than being shuffled by a 0.0 default.
+        selected.sort(key=lambda item: -(item.get('steering_priority') or 0.0))
+        for position, item in enumerate(selected, start=1):
+            item['dispatch_order'] = position
     return selected or None
 
 
@@ -543,7 +607,12 @@ def _reviewer_tasks(plan_id: str, candidates: list[dict[str, Any]], payload: Map
     for candidate in candidates:
         contract = candidate.get('candidate') or {}
         hypothesis_id = candidate.get('hypothesis_id', '')
-        artifacts = _artifact_manifest(payload, plan_id, hypothesis_id)
+        # The candidate's OWN plan, which is the active one for a round's own
+        # candidates and an earlier one for a backlog catch-up. It has to be the
+        # candidate's, or the review would be filed against the wrong round and
+        # the artifacts offered would be another plan's.
+        candidate_plan = candidate.get('plan_id') or plan_id
+        artifacts = _artifact_manifest(payload, candidate_plan, hypothesis_id)
         tasks.append({
             'goal': (
                 "Independently review each evidence claim in the attached provenance candidate: check "
@@ -551,7 +620,7 @@ def _reviewer_tasks(plan_id: str, candidates: list[dict[str, Any]], payload: Map
                 "return one verdict per claim in the required contract. You did not produce these "
                 "claims and you are not reviewing the validator's report, which you have not been "
                 "given. "
-                f"{_reviewer_tags(plan_id, hypothesis_id, candidate['candidate_id'])}"
+                f"{_reviewer_tags(candidate_plan, hypothesis_id, candidate['candidate_id'])}"
             ),
             # Ordered, so sort_keys stays off: the claims first, the artifacts
             # they must be checked against next, the role definition last.
@@ -561,7 +630,14 @@ def _reviewer_tasks(plan_id: str, candidates: list[dict[str, Any]], payload: Map
                     'candidate_id': candidate['candidate_id'],
                     'produced_by_unit_id': candidate.get('unit_id', ''),
                     'hypotheses': contract.get('hypotheses') or [],
-                    'evidence_candidates': contract.get('evidence_candidates') or [],
+                    # Indexed, and the review contract keys on the index: a
+                    # reviewer copying a 300-character claim back byte for byte
+                    # is one normalized dash away from having its verdict
+                    # dropped as unmatched.
+                    'evidence_candidates': [
+                        {'index': position, **item}
+                        for position, item in enumerate(contract.get('evidence_candidates') or [])
+                    ],
                     'campaign_artifacts': artifacts,
                     # Where to look when there is no manifest: the plan's own
                     # HPC workdir. A file read there still catches a number no
@@ -569,17 +645,16 @@ def _reviewer_tasks(plan_id: str, candidates: list[dict[str, Any]], payload: Map
                     # but nothing ties it to a declared run -- so Loam weights
                     # such an acceptance lower, and says so here rather than
                     # letting the reviewer believe it attested a hashed file.
-                    'artifact_root': _workdir(execution, plan_id, hypothesis_id),
+                    'artifact_root': _workdir(execution, candidate_plan, hypothesis_id),
                     'artifact_manifest_available': bool(artifacts),
                     'read_only_tools': read_only,
                     'reviewer_instructions': (
                         "Follow agent_definition above; it is your role specification and is provided in "
                         "full because you cannot read its file. "
                         "You may call ONLY the read-only tools listed in read_only_tools, and you cannot "
-                        "execute code: no run_code, no run_batch, no delegation. Check each claim in "
-                        "evidence_candidates exactly as it is written -- copy hypothesis_key, claim, "
-                        "source_url and stance back verbatim, because a review item that does not match "
-                        "its candidate item byte for byte is dropped. "
+                        "execute code: no run_code, no run_batch, no delegation. Return one review item "
+                        "per claim in evidence_candidates, identified by its `index` -- do not retype "
+                        "the claim text, and do not reorder or merge the claims. "
                         "campaign_artifacts lists every output file of this hypothesis's completed runs "
                         "with the sha256 Loam recorded when the run closed; read a file with "
                         "inspect_filesystem to confirm a reported number is genuinely in it. When that "

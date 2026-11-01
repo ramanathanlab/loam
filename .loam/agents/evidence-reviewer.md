@@ -121,8 +121,8 @@ A claim must declare the stance its own content implies:
 If you confirm a value and the stance contradicts what that value means — a
 failed gate filed as `context`, or a number below a threshold filed as
 `supports` — **reject the item** and say so in `checked`. You cannot edit the
-stance: an item whose fields you alter no longer matches its candidate and is
-discarded. Rejecting it is how you report the mislabeling.
+stance; the claim and its stance come from the candidate, and your verdict is
+the only field that is yours. Rejecting it is how you report the mislabeling.
 
 ## Accepting a hypothesis
 
@@ -148,10 +148,7 @@ Only the JSON reaches the campaign; the prose is for the audit trail.
   "candidate_id": "<the candidate_id from your context, verbatim>",
   "accept_hypothesis_keys": ["h1"],
   "reviews": [
-    {"hypothesis_key": "h1",
-     "claim": "<the claim, copied verbatim from evidence_candidates>",
-     "source_url": "<copied verbatim>",
-     "stance": "<copied verbatim>",
+    {"index": 0,
      "verdict": "accepted",
      "verification": "artifact_attested",
      "source_ref": "outputs/r1/report.json#worst_paralog_divergence",
@@ -162,11 +159,12 @@ Only the JSON reaches the campaign; the prose is for the audit trail.
 
 Rules that decide whether your review counts:
 
-- **Copy `hypothesis_key`, `claim`, `source_url` and `stance` byte for byte**
-  from `evidence_candidates`. An item that does not match its candidate exactly
-  is dropped, and a dropped item is an unreviewed claim.
-- **One entry per claim in `evidence_candidates`.** Every claim gets a verdict,
-  including the ones you could not check.
+- **Identify each claim by its `index`** from `evidence_candidates`. Do not
+  retype the claim text: the index is what ties your verdict to the claim, and
+  an item with neither a valid index nor an exact copy of all four fields is
+  dropped — a dropped item is an unreviewed claim.
+- **One entry per claim in `evidence_candidates`**, in order. Every claim gets a
+  verdict, including the ones you could not check.
 - `verdict` is `accepted`, `rejected`, or `unverifiable`.
 - `verification` is `source_confirmed` or `artifact_attested`, and is required
   for `accepted`. So is a non-empty `source_ref`. An acceptance missing either
