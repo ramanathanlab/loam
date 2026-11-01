@@ -454,7 +454,7 @@ round's claims have been reviewed and reconciled.
 | `.loam/README.md` global shim | `LOAM_ROOT` default (points at another user's checkout) |
 | `~/.hermes/loam.yaml` | `jnana_root`, all `state_dir` paths, the `:51900` / `:51911` endpoints and model ids |
 | `skills/hpc-deployment/set_env_akv.sh` | `HPC_GLOBUS_ENDPOINT_ID`, `HPC_BASE_DIR`, `HPC_CAMPAIGN_ID`, `HPC_INSPECT_ROOTS`, and the venv/paths inside `worker_init` of `HPC_ENDPOINT_CONFIG_JSON` |
-| `.hermes/.loam-home/config.yaml` | Argo/Minerva provider base URLs, API keys, and model ids |
+| `.hermes/.loam-home/config.yaml` | Argo/Minerva provider base URLs, API keys, and model ids; **and the `hpcctl` block's `command`, `args` and `HPC_ENV_FILE`, which name one user's venv, checkout and env file** |
 
 Two of these overlap with findings in the code review and are worth calling out
 to a newcomer specifically:
@@ -462,6 +462,12 @@ to a newcomer specifically:
 - **`HPC_ENDPOINT_CONFIG_JSON` pins `queue: debug` and `walltime: 00:30:00`.**
   Fine for a smoke test; on a longer campaign you will hit a walltime/ManagerLost
   wall. Change the queue and walltime for real runs.
+- **The `hpcctl` block's `HPC_MAX_WALLTIME` is a second, independent cap** that
+  `hpc_control.validate()` checks, so a short value there refuses a long
+  allocation requested through the `hpc_restart` tool even when the queue allows
+  it (`walltime 04:00:00 exceeds the cap of 01:00:00`). It is set to 12 h here;
+  the per-queue limits inside `hpc_control` still stop a debug block from asking
+  for more than its hour.
 - **The preflight is the real readiness contract, not the config comments.** If
   it passes, all three subsystems are genuinely talking. If it fails, read
   `state/preflight.json` — it names the model role or the Aurora probe that
