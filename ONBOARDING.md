@@ -389,35 +389,46 @@ for the campaign's work rather than the campaign's work.
 
 ### Running it unattended
 
+Copy `drive-campaign` next to `run-campaign` in the campaign directory and run
+it **instead of** the launcher — it starts the campaign itself:
+
 ```bash
-./run-campaign --drive --max-rounds 4 --max-hours 8
+./drive-campaign --max-rounds 4 --max-hours 8
 ```
 
-This polls the round phase and sends a turn only when one will do something,
-which matters because every coordinator turn re-runs the Jnana tournament before
-the orchestration hook even looks at the phase — a timer-driven loop pays minutes
-of ranking to be told the validators are still running. `--drive --help` lists
-the budgets and stop conditions; it stops on a round or wall-clock budget, a
-phase that will not advance, an HPC pool it cannot restore, a repeated reasoner
-brief, and consecutive rounds that accept no new evidence.
+It polls the round phase and types `continue` only when a turn will do
+something, which matters because every coordinator turn re-runs the Jnana
+tournament before the orchestration hook even looks at the phase — a
+timer-driven loop pays minutes of ranking to be told the validators are still
+running. `--help` lists the budgets and stop conditions: a round or wall-clock
+budget, a hard cap on nudges, a phase that will not advance, an HPC pool it
+cannot restore, a repeated reasoner brief, and consecutive rounds that accept no
+new evidence.
 
-Two things to know about it:
+Three things to know about it:
 
-- **Each turn is a fresh session.** `hermes -z` always starts one; neither
-  `-c <name>` nor `-r <id>` resumes a one-shot (measured). The campaign survives
-  that only because its state is on disk — the hook rebuilds the directive from
-  the ledger every turn. What a fresh session WOULD break is run identity, so
-  the driver pins the launch's `LOAM_RUN_ID` for every turn.
+- **It drives a real terminal, and it has to.** A campaign cannot be driven by
+  `hermes -z`: `loam_dispatch_round` fails there with *"delegate_task requires a
+  parent agent context"* (oneshot never sets the plugin manager's `_cli_ref`),
+  and a top-level delegation is backgrounded in any case, so the turn would exit
+  while its validators ran. The driver therefore runs the launcher in a
+  pseudo-terminal and keeps one session alive across rounds.
+- **It waits for quiet before typing.** Because delegation is asynchronous, the
+  agent usually takes its own next turn when a child's result arrives. A nudge
+  goes in only when the phase is actionable, the session has been silent for
+  `--idle-seconds`, and `--min-send-gap` has passed.
 - **It runs the preflight's real placement probe before any turn that dispatches
   work**, because a listening `:8000` is not evidence of a usable pool. On
   failure it lets the preflight restart what is missing, which is also how it
   survives a walltime boundary.
 
-Set `LOAM_NOTIFY_CMD` to a push command (the driver appends the message as a
-final quoted argument) if nobody will be reading the terminal:
+The session transcript lands in `state/driver/session-<stamp>.log` and every
+decision in `state/driver/driver.jsonl`. Set `LOAM_NOTIFY_CMD` to a push command
+(the driver appends the message as a final quoted argument) if nobody will be
+reading the terminal:
 
 ```bash
-LOAM_NOTIFY_CMD='curl -s https://ntfy.sh/<your-topic> -d' ./run-campaign --drive
+LOAM_NOTIFY_CMD='curl -s https://ntfy.sh/<your-topic> -d' ./drive-campaign
 ```
 
 Unattended acceptance needs `hypothesis_orchestration.evidence_review: true` in

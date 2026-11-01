@@ -54,6 +54,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import re
 import os
 import pty
 import select
@@ -76,6 +77,10 @@ WAITING = ("validators_running", "reviewers_running", "reasoner_running")
 # Phases whose turn will dispatch work onto HPC, so the pool must be usable
 # first. A reasoner or reviewer turn needs no GPU.
 NEEDS_POOL = ("idle", "validators_due")
+
+# CSI / OSC / single-character escapes, for keeping the session transcript
+# readable (see Session._pump).
+_ANSI = re.compile(rb"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
 
 
 def _now() -> str:
@@ -120,7 +125,11 @@ class Session:
                 return
             if not data:
                 return
-            self.log.write(data)
+            # Strip terminal control sequences before storing. The campaign
+            # renders a full TUI, so a raw capture is 90% cursor moves and box
+            # drawing -- unreadable, and ungreppable when a run has to be
+            # diagnosed afterwards, which is the only reason to keep it.
+            self.log.write(_ANSI.sub(b"", data).replace(b"\r\n", b"\n"))
             self.log.flush()
             self.bytes_seen += len(data)
             self.last_output = time.monotonic()
