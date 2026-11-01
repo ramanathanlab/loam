@@ -163,10 +163,13 @@ A round is a phase machine the orchestration hook reads out of the campaign's
 own ledger, not a script. Each turn it works out where the round stands and
 injects the next directive; `loam_dispatch_round` then launches that work from
 persisted state, so no agent has to transcribe a plan it cannot see in full.
+The tournament itself re-runs on every coordinator turn, before the phase is
+even read — which is why an unattended driver polls the phase instead of
+sleeping on a timer.
 
 | Phase | What the turn does |
 | --- | --- |
-| `idle` | the tournament ranks, and the round's hypotheses are selected |
+| `idle` | the next round opens: the latest ranking selects its hypotheses |
 | `validators_due` | one hypothesis-validator per selected hypothesis |
 | `validators_running` | nothing — a turn here only pays for a tournament |
 | `reviewers_due` | one evidence-reviewer per pending claim set *(opt-in)* |
@@ -199,7 +202,7 @@ The weights come from the verification mode it declares:
 | Mode | What it establishes |
 | --- | --- |
 | `source_confirmed` | an independent record was read and says what the claim says |
-| `artifact_attested` | the number provably came from an artifact of a declared run whose hash Loam recorded — the failure the boundary exists to catch. It says nothing about whether the metric is *true* |
+| `artifact_attested` | the number provably came from an artifact of a declared run — the failure the boundary exists to catch. It says nothing about whether the metric is *true*. It carries less when no recorded hash ties the file to its run, which is the case for a campaign running without the hypothesis workspace; Loam decides that from whether a manifest existed, not from the reviewer |
 | `unverifiable` | neither. A first-class verdict, not a rejection: most of what a computational campaign measures has no authoritative record to re-fetch |
 
 Accepted evidence is then reconciled into two projections — hypothesis state and
