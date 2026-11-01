@@ -74,9 +74,13 @@ from typing import Any
 # tournament to be told to wait.
 ACTIONABLE = ("idle", "validators_due", "reviewers_due", "reasoner_due")
 WAITING = ("validators_running", "reviewers_running", "reasoner_running")
-# Phases whose turn will dispatch work onto HPC, so the pool must be usable
-# first. A reasoner or reviewer turn needs no GPU.
-NEEDS_POOL = ("idle", "validators_due")
+# Phases whose turn needs a usable execution endpoint before it is worth taking.
+# `validators_due` and `idle` dispatch GPU work. `reviewers_due` needs no GPU
+# but does need `inspect_filesystem`: a reviewer that cannot read the artifact a
+# claim was computed from has no choice but `unverifiable`, so dispatching
+# reviewers against a dead endpoint converts a whole round's evidence into
+# nothing at a fraction of the cost of waiting. Only the reasoner needs nothing.
+NEEDS_POOL = ("idle", "validators_due", "reviewers_due")
 
 # CSI / OSC / single-character escapes, for keeping the session transcript
 # readable (see Session._pump).
