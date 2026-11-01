@@ -1149,6 +1149,13 @@ def _record_review(payload: Mapping[str, Any], rows: list[dict[str, Any]], start
         # Whether a hash-bearing manifest existed to attest against is Loam's
         # fact about this campaign, not the reviewer's claim about its work.
         manifest_available=bool(_artifact_manifest(payload, start.get('plan_id', ''), hypothesis_id)),
+        # Which candidate key restates the hypothesis the validator was
+        # ASSIGNED, so verified evidence about an already-ranked hypothesis does
+        # not need the reviewer's endorsement of the wording. Only when there is
+        # exactly one key and Loam knows the assignment: with several, which one
+        # restates the assignment and which is a new proposal is the reviewer's
+        # call, and a new proposal must still be endorsed to enter the ledger.
+        assigned_keys=[keys[0]] if hypothesis_id and len(keys) == 1 and keys[0] else [],
         # The Jnana id is Loam's, not the reviewer's: it is what links accepted
         # evidence to the Elo the tournament assigned, and a model-written id
         # would silently detach the two.

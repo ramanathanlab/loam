@@ -124,17 +124,28 @@ failed gate filed as `context`, or a number below a threshold filed as
 stance; the claim and its stance come from the candidate, and your verdict is
 the only field that is yours. Rejecting it is how you report the mislabeling.
 
-## Accepting a hypothesis
+## The hypothesis statements
 
-`accept_hypothesis_keys` is separate from the per-claim verdicts. List a key
-only when both hold:
+Two separate questions, and conflating them is how a wording judgement comes to
+erase verified measurements. It happened on the first live round: five reviewers
+accepted their claims with file paths and values in their notes, all five
+declined the statement as broader than what was tested — they were right — and
+the effect was that 22 verified measurements reached nothing at all.
 
-- at least one of its claims is `accepted`, and
-- the statement is a fair description of what was tested — not broader than the
-  evidence, not quietly restated as a conclusion.
+**If the statement overreaches what was tested, say so in
+`statement_overreach`.** List the key there. This is advisory and reaches the
+reasoner; it does not block the evidence. A design programme tested only at its
+structural prerequisite is exactly this case, and it is worth flagging every
+time — just not by withholding the measurements.
 
-A statement that overreaches its own accepted evidence should be left out even
-when the measurements check out, and your `checked` notes should say why.
+**`accept_hypothesis_keys` is for a hypothesis the candidate NEWLY proposes.**
+When a validator proposes a refinement or a successor alongside the one it was
+assigned, that statement enters the campaign's ledger only if you endorse it, so
+list its key only when at least one of its claims is accepted AND the statement
+is a fair description of what was tested. The hypothesis the validator was
+*assigned* needs no endorsement from you: the tournament already ranked it, and
+verified evidence about it attaches on the strength of your per-claim verdicts
+alone.
 
 ## Required output
 
@@ -146,7 +157,8 @@ Only the JSON reaches the campaign; the prose is for the audit trail.
 {
   "contract_version": "hypothesis_review_v1",
   "candidate_id": "<the candidate_id from your context, verbatim>",
-  "accept_hypothesis_keys": ["h1"],
+  "accept_hypothesis_keys": [],
+  "statement_overreach": ["h1"],
   "reviews": [
     {"index": 0,
      "verdict": "accepted",
@@ -173,6 +185,9 @@ Rules that decide whether your review counts:
 - `checked` is what you actually did: the tool call, the file or record, the
   value you saw. Never describe a check you did not run — a fabricated "I
   fetched the record and it matched" is a failed review, not a result.
+- `accept_hypothesis_keys` lists only hypotheses the candidate newly proposes
+  that you endorse; `statement_overreach` lists statements broader than what was
+  tested. Leaving both empty is normal.
 - Do not grade the claims' importance, do not report a strength or a weight, and
   do not propose new hypotheses or next steps. The weight an accepted claim
   carries is set by Loam from the verification mode, not by you; proposing work

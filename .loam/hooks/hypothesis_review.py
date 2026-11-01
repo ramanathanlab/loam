@@ -33,7 +33,7 @@ record to re-fetch.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from hypothesis_provenance import extract_fenced_contract
 
@@ -112,6 +112,7 @@ def normalize_review(
     *,
     ranking_hypothesis_ids: Mapping[str, str] | None = None,
     manifest_available: bool = True,
+    assigned_keys: Iterable[str] = (),
 ) -> tuple[dict[str, Any] | None, str]:
     """Turn one reviewer's contract into the review row the reconciler accepts.
 
@@ -228,13 +229,34 @@ def normalize_review(
     accepted_keys = {row["hypothesis_key"] for row in evidence}
     approved = value.get("accept_hypothesis_keys")
     approved = {_stripped(key) for key in approved} if isinstance(approved, list) else set()
-    # A hypothesis enters the ledger only if the reviewer approved its statement
-    # AND at least one of its claims survived review: approval alone would admit
-    # a statement nothing backs, and accepted evidence alone would admit a
-    # statement the reviewer declined to stand behind. The reconciler also
-    # refuses accepted evidence attached to an unaccepted hypothesis, so the
-    # evidence of a key that fails this test is dropped with it.
-    accept = sorted((approved & accepted_keys) & keys)
+    assigned = {_stripped(key) for key in assigned_keys} & keys
+    overreach = value.get("statement_overreach")
+    overreach = {_stripped(key) for key in overreach} & keys if isinstance(overreach, list) else set()
+
+    # Evidence attaches to a hypothesis when (a) the reviewer endorsed that
+    # hypothesis, or (b) it is the hypothesis this validator was ASSIGNED and at
+    # least one of its claims survived review.
+    #
+    # (b) exists because the first live round found the two questions conflated.
+    # All five reviewers accepted their claims -- with file paths, line numbers
+    # and values in their notes -- and all five returned
+    # `accept_hypothesis_keys: []`, declining the statement as broader than what
+    # was tested. They were right to: the statements are design programmes and
+    # the round tested a structural prerequisite. But the effect was that 22
+    # verified measurements reached nothing, because a wording judgement vetoed
+    # the lot.
+    #
+    # The two questions are genuinely different. "Does this number come from
+    # that artifact?" is what the acceptance boundary is for, and it was
+    # answered. "Is this statement a fair description of what was tested?" is
+    # editorial, and for a hypothesis the tournament ALREADY ranked it is not
+    # the reviewer's to veto -- evidence about an existing hypothesis does not
+    # need permission to attach, only verification. Endorsement still gates a
+    # hypothesis the candidate NEWLY proposes, which is what that gate was for.
+    #
+    # The overreach judgement is kept, not discarded: `statement_overreach`
+    # records it for the reasoner and the audit.
+    accept = sorted(((approved | assigned) & accepted_keys) & keys)
     evidence = [row for row in evidence if row["hypothesis_key"] in set(accept)]
 
     row = {
@@ -246,6 +268,11 @@ def normalize_review(
         "evidence": evidence,
         "review_verdicts": counts,
         "review_audit": audit,
+        "assigned_hypothesis_keys": sorted(assigned),
+        "endorsed_hypothesis_keys": sorted(approved & keys),
+        # Advisory, and deliberately not a veto: the statement is broader than
+        # what this round tested. The reasoner is told; the evidence still lands.
+        "statement_overreach": sorted(overreach),
         "dropped_unmatched": dropped,
         "declined_hypothesis_keys": sorted(((approved | accepted_keys) & keys) - set(accept)),
     }

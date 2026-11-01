@@ -191,12 +191,41 @@ class ReviewContractTests(unittest.TestCase):
         self.assertIsNone(row)
         self.assertEqual(status, "candidate_id_mismatch")
 
-    def test_a_hypothesis_needs_both_approval_and_surviving_evidence(self) -> None:
+    def test_a_new_proposal_needs_the_reviewers_endorsement(self) -> None:
+        """Endorsement still gates a hypothesis the candidate newly proposes."""
+
         contract = _review_contract()
         contract["accept_hypothesis_keys"] = []
         row, _ = self.review.normalize_review(contract, _candidate())
         self.assertEqual(row["accept_hypothesis_keys"], [])
-        self.assertEqual(row["evidence"], [], "evidence of an unaccepted hypothesis must not be accepted")
+        self.assertEqual(row["evidence"], [], "evidence of an unendorsed new hypothesis must not be accepted")
+
+    def test_evidence_about_the_assigned_hypothesis_needs_no_endorsement(self) -> None:
+        """A wording judgement must not erase verified measurements.
+
+        Observed on the first live round: five reviewers accepted their claims
+        -- with file paths, line numbers and values in their notes -- and all
+        five declined the statement as broader than what was tested. They were
+        right, and the effect was that 22 verified measurements reached nothing.
+        The tournament already ranked the assigned hypothesis; evidence about it
+        attaches on the per-claim verdicts alone, and the overreach is recorded
+        rather than discarded.
+        """
+
+        contract = _review_contract()
+        contract["accept_hypothesis_keys"] = []
+        contract["statement_overreach"] = ["h1"]
+        row, _ = self.review.normalize_review(contract, _candidate(), assigned_keys=["h1"])
+        self.assertEqual(row["accept_hypothesis_keys"], ["h1"])
+        self.assertEqual(len(row["evidence"]), 1)
+        self.assertEqual(row["statement_overreach"], ["h1"])
+        self.assertEqual(row["endorsed_hypothesis_keys"], [])
+
+    def test_an_assigned_key_with_no_accepted_claim_stays_out(self) -> None:
+        contract = _review_contract(verdict="rejected", verification="", source_ref="")
+        row, _ = self.review.normalize_review(contract, _candidate(), assigned_keys=["h1"])
+        self.assertEqual(row["accept_hypothesis_keys"], [])
+        self.assertEqual(row["evidence"], [])
 
     def test_one_units_claims_share_an_independence_group(self) -> None:
         """Five failed gates from one validator are not five independent contradictions.
