@@ -52,11 +52,14 @@ def read_document(path: Path, limit: int) -> tuple[dict[str, str], str]:
     return fields, '\n'.join(lines[end + 1:]).strip()[:limit]
 
 
+AGENT_NAMES = ('reasoner', 'hypothesis-validator', 'code-generator', 'evidence-reviewer')
+
+
 def agent_registry(payload: Mapping[str, Any]) -> dict[str, AgentSpec]:
-    """Load the three checked-in agent definitions."""
+    """Load the checked-in agent definitions."""
     directory = Path(payload.get('repo_root') or '.') / '.loam' / 'agents'
     registry = {}
-    for name in ('reasoner', 'hypothesis-validator', 'code-generator'):
+    for name in AGENT_NAMES:
         path = directory / f'{name}.md'
         fields, body = read_document(path, 24_000)
         if fields.get('name') != name:
@@ -85,7 +88,7 @@ def _find(payload: Mapping[str, Any], kind: str, name: str) -> Path:
 
 def _scopes(value: str, path: Path) -> frozenset[str]:
     """Parse `scope:`: space- or comma-separated agent names, or `all`."""
-    tiers = ('reasoner', 'hypothesis-validator', 'code-generator')
+    tiers = AGENT_NAMES
     parts = value.replace(',', ' ').split()
     if not parts:
         raise ValueError(f'rules file must declare a scope ({"|".join(tiers)}, or all): {path}')

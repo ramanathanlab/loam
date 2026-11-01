@@ -88,6 +88,19 @@ Do not substitute one mode for the other or guess missing execution fields.
   number of real calls you actually made, so the parent can re-dispatch. Never
   report a designed-but-unexecuted artifact as `executed`, and never downgrade a
   transient back-off into a terminal scientific finding.
+- RESUME YOUR OWN COMPLETED WORK rather than recomputing it. Before computing
+  an output, check whether this campaign already produced it: the workdir is on
+  a shared filesystem that outlives any one allocation, so a stage interrupted
+  by walltime leaves its finished intermediates behind. If an expected output
+  exists and verifies — the manifest records it and its hash still matches —
+  reuse it and say so in your Result; recompute only what is missing or fails
+  verification. An allocation is commonly shorter than the work, and a stage
+  that restarts from zero after every interruption may never finish.
+  This is NOT the convenience-artifact exception forbidden above. That rule
+  concerns substituting something lying around for an authoritative fetch you
+  were told to perform. This is your own output, produced by this campaign under
+  a recorded manifest, re-verified before reuse. An unverifiable or
+  hash-mismatched artifact is not evidence: recompute it.
 - Keep the snippet minimal and deterministic.
 - Do not embed secrets; use only credentials or environment references explicitly supplied by the parent.
 - Follow the configured execution mode. `remote_mcp` never executes locally; `local` does not invoke an MCP server.

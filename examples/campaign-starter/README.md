@@ -20,10 +20,10 @@ recognize in a ledger six weeks from now.
 | `campaigns/<goal>.md` | stays here | `campaign.dir` points at this directory. |
 | `rules/<name>.md` | stays here | Same. |
 | — | `<loam-repo>/.hermes/.loam-home/config.yaml` | Copy `examples/hermes-config.yaml.example`. Shared across campaigns. |
-| — | this directory | Copy `<loam-repo>/run-campaign` here. |
+| — | this directory | Copy `<loam-repo>/run-campaign` and `<loam-repo>/drive-campaign` here. |
 
 So: `loam.yaml` moves to `~/.hermes/`, the `campaigns/` and `rules/` directories
-stay put, and you add `run-campaign` beside them.
+stay put, and you add `run-campaign` and `drive-campaign` beside them.
 
 ## Checklist
 
@@ -50,7 +50,9 @@ Each item is something no script can do for you.
    `HPC_BASE_DIR`, `HPC_CAMPAIGN_ID`, `HPC_INSPECT_ROOTS`, and the venv paths
    inside `worker_init`. If you let the preflight auto-start the allocation,
    export `HPC_ENV_FILE` pointing at the file you actually edited — its default
-   is `set_env.sh`, which is somebody else's endpoint.
+   is `set_env.sh`, a template whose `FILL_IN` markers make `launch.sh` refuse
+   to start — so forgetting this fails loudly rather than running on someone
+   else's endpoint.
 7. **A Loam venv** at `~/.loam-venv-312`, or export `LOAM_PREFLIGHT_PYTHON`.
 
 ## Writing the goal and the rules
@@ -130,17 +132,28 @@ Begin the campaign.
 
 Do not restate the objective — the goal file, the rules, and the round's
 directive are all injected for you, and a retyped copy can contradict the file
-without the provenance record showing it. For an unattended run:
-
-```bash
-./run-campaign -z "Begin the campaign."
-```
+without the provenance record showing it.
 
 Afterwards, one scheduler step happens per turn — tournament → validators →
-reasoner brief → next tournament — so `continue` advances a round. Watch
-`state/hypothesis-campaign.jsonl` for the orchestration ledger,
+(review) → reasoner brief → next tournament — so `continue` advances a round.
+Watch `state/hypothesis-campaign.jsonl` for the orchestration ledger,
 `state/tournament-reports/` for each round's ranking, and
-`state/parent-memory.jsonl` for accepted findings.
+`state/hypothesis-memory.jsonl` for accepted findings.
+
+For an unattended run, use the driver **instead of** the launcher — it starts
+the campaign itself and types for you, only when the round phase says a turn
+will do something:
+
+```bash
+./drive-campaign --max-rounds 4 --max-hours 8
+```
+
+`./run-campaign -z "..."` is NOT the unattended form: a one-shot turn cannot
+dispatch a round at all (the dispatch tool has no parent-agent context there,
+and a delegation is backgrounded), so it takes one scheduler step and exits.
+Unattended acceptance also needs `hypothesis_orchestration.evidence_review:
+true` in the profile, or a round's claims stay `pending` until a person writes
+the review JSONL by hand.
 
 See `ONBOARDING.md` in the repo for the full version of any step here.
 

@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HOOKS = ROOT / ".loam" / "hooks"
 ORCHESTRATION = HOOKS / "hypothesis_orchestration.py"
-TIERS = ("reasoner", "hypothesis-validator", "code-generator")
+TIERS = ("reasoner", "hypothesis-validator", "code-generator", "evidence-reviewer")
 sys.path.insert(0, str(HOOKS))
 import campaign as policy  # noqa: E402
 

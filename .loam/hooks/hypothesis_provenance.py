@@ -32,15 +32,26 @@ def stable_id(kind: str, material: Mapping[str, Any]) -> str:
     return f"{kind}_{hashlib.sha256(encoded).hexdigest()}"
 
 
-def extract_contract_object(summary: str) -> tuple[dict[str, Any] | None, str]:
+def extract_fenced_contract(summary: str, version: str) -> tuple[dict[str, Any] | None, str]:
+    """The last fenced JSON object in a child's summary declaring ``version``.
+
+    Shared by every contract an agent emits this way, so a second contract type
+    does not fork the extraction rules -- which fences count, which JSON parses
+    -- into a near-copy that then drifts from this one.
+    """
+
     for match in _FENCED_JSON.finditer(summary or ""):
         try:
             value = json.loads(match.group(1))
         except json.JSONDecodeError:
             continue
-        if isinstance(value, dict) and value.get("contract_version") == CONTRACT_VERSION:
+        if isinstance(value, dict) and value.get("contract_version") == version:
             return value, "present"
     return None, "absent"
+
+
+def extract_contract_object(summary: str) -> tuple[dict[str, Any] | None, str]:
+    return extract_fenced_contract(summary, CONTRACT_VERSION)
 
 
 def normalize_candidate(value: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str]:
