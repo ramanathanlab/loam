@@ -246,30 +246,47 @@ def _round(payload: Mapping[str, Any], rows: list[dict[str, Any]]) -> dict[str, 
     return {'phase': 'validators_due', 'plan_id': plan_id, 'report': report[1]}
 
 
-def _steering_priorities(payload: Mapping[str, Any]) -> dict[str, float]:
-    """Each hypothesis's advisory steering priority, keyed by its Jnana id.
+ELO_PRIOR = 1200.0
 
-    From the latest `hypothesis-steering.jsonl` snapshot, which
-    `project_hypothesis_steering.py` builds out of ACCEPTED evidence (weights
-    elo 0.35 / evidence 0.50 / uncertainty 0.15). Empty until a round's claims
-    have been reviewed and reconciled.
+
+def _steering_order_keys(payload: Mapping[str, Any]) -> dict[str, tuple[float, float]]:
+    """Each hypothesis's (steering_priority, evidence_rating), by its Jnana id.
+
+    Both come from the latest `hypothesis-steering.jsonl` snapshot, which
+    `project_hypothesis_steering.py` builds out of ACCEPTED evidence. It is
+    empty until a round's claims have been reviewed and reconciled.
+
+    Two keys, not one, because `steering_priority` is a blend of z-scores
+    (elo 0.35 / evidence 0.50 / uncertainty 0.15) and a z-score needs a
+    population. Measured on this campaign's own data: with ONE hypothesis
+    carrying accepted evidence every z-score is 0.0 by construction, so the
+    priority is 0.0 and ordering by it alone would do nothing for the first
+    several rounds -- exactly when a refutation is most worth acting on.
+    `evidence_rating` is absolute (`ELO_PRIOR + scale * log_odds`), so it
+    separates a net-contradicted hypothesis from one with no evidence at all
+    even in a population of one, and it breaks the tie underneath the priority.
     """
 
     snapshot = Parser().snapshot(payload, 'hypothesis-steering.jsonl', 'hypothesis_steering_snapshot')
     if not snapshot:
         return {}
-    priorities: dict[str, float] = {}
+    keys: dict[str, tuple[float, float]] = {}
     for item in snapshot.get('hypotheses') or []:
         if not isinstance(item, Mapping):
             continue
         key = str(item.get('jnana_hypothesis_id') or item.get('hypothesis_id') or '')
+        if not key:
+            continue
         try:
             priority = float(item.get('steering_priority'))
         except (TypeError, ValueError):
             continue
-        if key:
-            priorities[key] = priority
-    return priorities
+        try:
+            rating = float(item.get('evidence_rating'))
+        except (TypeError, ValueError):
+            rating = ELO_PRIOR
+        keys[key] = (priority, rating)
+    return keys
 
 
 def _selected_hypotheses(payload: Mapping[str, Any], report: Mapping[str, Any]) -> list[dict[str, Any]] | None:
@@ -293,13 +310,18 @@ def _selected_hypotheses(payload: Mapping[str, Any], report: Mapping[str, Any]) 
         if not hypothesis:
             return None
         selected.append({'rank': rank, 'elo_rating': ranking.get('elo_rating'), 'hypothesis': hypothesis})
-    priorities = _steering_priorities(payload)
-    if priorities:
+    keys = _steering_order_keys(payload)
+    if keys:
         for item in selected:
-            item['steering_priority'] = priorities.get(item['hypothesis']['hypothesis_id'])
+            key = keys.get(item['hypothesis']['hypothesis_id'])
+            if key is not None:
+                item['steering_priority'], item['evidence_rating'] = key
         # Stable, so hypotheses with no accepted evidence keep their Elo order
-        # among themselves rather than being shuffled by a 0.0 default.
-        selected.sort(key=lambda item: -(item.get('steering_priority') or 0.0))
+        # among themselves rather than being shuffled by the neutral default.
+        selected.sort(key=lambda item: (
+            -(item.get('steering_priority') or 0.0),
+            -(item.get('evidence_rating') or ELO_PRIOR),
+        ))
         for position, item in enumerate(selected, start=1):
             item['dispatch_order'] = position
     return selected or None

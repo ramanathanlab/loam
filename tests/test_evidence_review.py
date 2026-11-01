@@ -443,7 +443,9 @@ class SteeringOrderTests(unittest.TestCase):
                     "event": "hypothesis_steering_snapshot",
                     "workflow_id": "research-v1",
                     "hypotheses": [
-                        {"hypothesis_id": key, "jnana_hypothesis_id": key, "steering_priority": value}
+                        {"hypothesis_id": key, "jnana_hypothesis_id": key,
+                         "steering_priority": value if isinstance(value, (int, float)) else value[0],
+                         "evidence_rating": 1200.0 if isinstance(value, (int, float)) else value[1]}
                         for key, value in priorities.items()
                     ],
                 }) + "\n",
@@ -489,6 +491,21 @@ class SteeringOrderTests(unittest.TestCase):
             top = next(item for item in selected if item["hypothesis"]["hypothesis_id"] == "h-1")
             self.assertEqual(top["rank"], 1, "the Elo rank it was selected on is preserved")
             self.assertEqual(top["dispatch_order"], 3)
+
+    def test_a_lone_refutation_still_changes_the_order(self) -> None:
+        """A z-score needs a population, and the first refutation has none.
+
+        `steering_priority` blends z-scores, so with ONE hypothesis carrying
+        accepted evidence every term is 0.0 by construction -- measured on this
+        campaign's own reconciled data. Ordering on priority alone would do
+        nothing for the first several rounds, exactly when a refutation is most
+        worth acting on, so `evidence_rating` (absolute) breaks the tie.
+        """
+
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary), {"h-1": (0.0, 1172.9)})
+            selected = self.orchestration._selected_hypotheses(payload, self.REPORT)
+            self.assertEqual([item["hypothesis"]["hypothesis_id"] for item in selected], ["h-2", "h-3", "h-1"])
 
     def test_a_hypothesis_with_no_steering_entry_keeps_its_elo_place(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
