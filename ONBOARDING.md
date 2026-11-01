@@ -365,8 +365,10 @@ objective in the first message is a second, unversioned copy that can contradict
 the file without the provenance record showing it.
 
 `run-campaign` forwards its arguments to `hermes`, so `./run-campaign -z "Begin
-the campaign."` takes exactly **one** turn and exits. That is one scheduler step,
-not a campaign: see *Running it unattended* below for the loop.
+the campaign."` takes exactly **one** turn and exits — and that turn cannot
+dispatch a round, because `loam_dispatch_round` has no parent-agent context
+under `-z` and a top-level delegation is backgrounded in any case. It is a
+diagnostic, not an unattended launch: see *Running it unattended* below.
 
 ### What advances a round
 
