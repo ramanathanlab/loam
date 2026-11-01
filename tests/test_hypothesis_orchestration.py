@@ -325,6 +325,56 @@ class HypothesisOrchestrationTests(unittest.TestCase):
         self.assertIsNone(result)
 
 
+    def test_a_validator_whose_api_failed_is_flagged_untested_to_the_reasoner(self) -> None:
+        """A child whose API calls failed exits cleanly, so Hermes calls it completed.
+
+        The reasoner must not read that as a result. Its hypothesis is UNTESTED,
+        not refuted -- a provider failure is evidence about the run, not the
+        science -- or the brief retires good hypotheses for infrastructure
+        reasons. Observed on a live campaign: five validators returned "API call
+        failed after 3 retries: Connection error." and the round synthesized a
+        brief from them.
+        """
+
+        orchestration = _load("loam_orchestration_lifecycle")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = self._payload(Path(temporary))
+            orchestration.context_for(payload)
+            plan_id = orchestration._plan_id(orchestration.Tournament(payload).latest_report()[0], payload)
+
+            for index, (hypothesis_id, summary) in enumerate(
+                (
+                    ("h-1", "### Hypothesis\nh-1\n### Outcome\nsupported\n### Evidence Score\n+0.75 — reliable"),
+                    ("h-2", "API call failed after 3 retries: Connection error."),
+                ),
+                start=1,
+            ):
+                child = {
+                    **payload,
+                    "child_subagent_id": f"validator-{index}",
+                    "child_session_id": f"validator-session-{index}",
+                    "child_goal": (
+                        "Validate a hypothesis "
+                        f"[loam-agent-role=hypothesis-validator] [loam-plan-id={plan_id}] "
+                        f"[loam-hypothesis-id={hypothesis_id}]"
+                    ),
+                }
+                orchestration.record_start(child)
+                orchestration.record_stop({**child, "child_status": "completed", "child_summary": summary})
+
+            reasoner = orchestration.context_for(payload)
+
+        self.assertIn("Delegate exactly one reasoner", reasoner)
+        # The ledger's verdict reaches the reasoner, not just Hermes' status.
+        self.assertIn('"failure_class": "child_api_failure"', reasoner)
+        self.assertIn('"observation_status": "failed"', reasoner)
+        self.assertIn('"observation_status": "observed"', reasoner)
+        # And it is told what that means, in the terms that matter.
+        self.assertIn("1 of 2 threads did not produce an observation", reasoner)
+        self.assertIn("UNTESTED, not refuted", reasoner)
+        # One thread did observe, so it must not claim the round failed entirely.
+        self.assertNotIn("the round did not run", reasoner)
+
     def test_completed_validators_request_reasoner_and_next_turn_uses_brief(self) -> None:
         orchestration = _load("loam_orchestration_lifecycle")
         with tempfile.TemporaryDirectory() as temporary:

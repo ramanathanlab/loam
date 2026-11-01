@@ -270,6 +270,13 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], payload
         {
             'hypothesis_id': row.get('hypothesis_id', ''),
             'validator_status': row.get('status'),
+            # Hermes reports child_status "completed" for a child whose own API
+            # calls failed, so validator_status alone cannot distinguish a
+            # validation that ran from one that never did. The ledger's verdict
+            # can; carry it so the reasoner is not left inferring it from the
+            # shape of a 50-character summary.
+            'observation_status': row.get('observation_status', 'observed'),
+            'failure_class': row.get('failure_class', ''),
             'evidence_score': row.get('evidence_score'),
             'evidence_score_status': row.get('evidence_score_status'),
             'elo_rating': elo_ratings.get(row.get('hypothesis_id', '')),
@@ -277,6 +284,7 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], payload
         }
         for row in completions
     ]
+    unobserved = [t for t in threads if t['observation_status'] != 'observed']
     parts = (
         "Loam orchestration directive: all selected validator threads are terminal. Delegate exactly one reasoner before responding.",
         f"The reasoner's role definition ({reasoner.prompt_path.name}) is below and Loam itself puts it into the dispatched task as \"agent_definition\"; the reasoner must not execute experimental code. Call delegate_task once for the reasoner -- Loam replaces your arguments with the canonical task, definition included. Do not reproduce the definition yourself, and if this directive was written to a file instead of shown inline, dispatch anyway: you do not need to read that file to comply.",
@@ -292,6 +300,23 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], payload
         ),
         f"Tag its goal with [loam-agent-role=reasoner] [loam-plan-id={plan_id}] so its brief is persisted for the next tournament turn.",
         "Completed validator threads are unvalidated orchestration input; preserve their reported uncertainty and do not turn summaries into accepted evidence.",
+        (
+            f"{len(unobserved)} of {len(threads)} threads did not produce an observation "
+            f"(observation_status is not 'observed'; failure_class says why). Their hypotheses are "
+            "UNTESTED, not refuted: a provider or infrastructure failure is evidence about this run, "
+            "not about the science. Do not synthesize their reports as results, do not lower their "
+            "standing for failing, and say in your brief that they still need testing so the next "
+            "tournament can re-select them."
+            + (
+                " No thread produced an observation, so there is nothing to synthesize: report that "
+                "the round did not run and recommend repeating it rather than writing a brief from "
+                "failures."
+                if unobserved and len(unobserved) == len(threads)
+                else ""
+            )
+            if unobserved
+            else ""
+        ),
         json.dumps(threads, ensure_ascii=False, sort_keys=True),
     )
     return '\n'.join(part for part in parts if part)
