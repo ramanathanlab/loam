@@ -91,6 +91,35 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _preflight_fault(probe: subprocess.CompletedProcess) -> str:
+    """The inference fault in a failed preflight report, or "" if it is the pool's.
+
+    The gate checks inference and the execution endpoint in one pass and prints
+    its report as JSON on failure. The two faults need opposite responses: a
+    dead pool wants a restart, while a revoked or exhausted inference
+    credential wants a person -- restarting an allocation cannot fix it, and
+    burning the allocation trying is the worst available outcome.
+    """
+
+    for stream in (probe.stderr, probe.stdout):
+        try:
+            report = json.loads(stream or "")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(report, dict):
+            continue
+        error = str(report.get("error") or "")
+        # `hpc` present means inference passed and the endpoint is the problem.
+        if "hpc" in report and "inference" in report:
+            return ""
+        if error and "inference" not in report:
+            lowered = error.lower()
+            if any(word in lowered for word in ("smoke", "model", "revoked", "limit", "unauthorized", "api")):
+                return error
+        return ""
+    return ""
+
+
 class Session:
     """One campaign launch, running in a pseudo-terminal we can type into."""
 
@@ -186,6 +215,7 @@ class Driver:
         self.sends = 0
         self.pool_failures = 0
         self.unreadable = 0
+        self.inference_fault = ""
         self.phase_repeats = 0
         self.last_phase = ""
         self.last_send = 0.0
@@ -326,17 +356,35 @@ class Driver:
             "--hermes-home", str(self.campaign / ".hermes" / "home"),
             "--timeout", str(self.args.probe_timeout),
         ]
-        probe = subprocess.run([*base, "--no-auto-start"], capture_output=True, text=True)
+        # A health check must not bring up inference as a side effect. The
+        # launcher decides whether this campaign needs the ALCF proxy (ours sets
+        # ALCF_PROXY=0 because the judge is on an SSH tunnel instead), and that
+        # export lives in the launcher's own environment, not the driver's -- so
+        # without this the probe tried to start a proxy from an interpreter that
+        # does not exist here and reported THAT as the fault.
+        environment = {**os.environ, "ALCF_PROXY": os.environ.get("ALCF_PROXY", "0")}
+        probe = subprocess.run([*base, "--no-auto-start"], capture_output=True, text=True, env=environment)
         if probe.returncode == 0:
             self.pool_failures = 0
             return True
+        # The preflight checks inference AND the endpoint. Restarting an
+        # allocation does not fix a revoked API key, and trying wastes the
+        # allocation while reporting the wrong cause -- so separate them.
+        # Observed 2026-11-01: Argo returned "ACCESS REVOKED … Monthly limit
+        # exceeded" for every model, and the driver set about restarting a
+        # perfectly healthy 2-node capacity block.
+        fault = _preflight_fault(probe)
+        if fault:
+            self.log("inference_unavailable", detail=fault[:300])
+            self.inference_fault = fault
+            return False
         # Failed: let the preflight start what is missing and wait for it. This
         # is the block-boundary path -- min_blocks=1 requests a replacement
         # within minutes and the pool rebuilds onto it unaided, but the server
         # may need restarting onto the new block.
         self.log("pool_unready", detail=(probe.stderr or probe.stdout).strip()[-400:])
         repair = subprocess.run([*base, "--wait-seconds", str(self.args.hpc_wait_seconds)],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, env=environment)
         if repair.returncode == 0:
             self.log("pool_restored")
             self.pool_failures = 0
@@ -496,6 +544,9 @@ class Driver:
                 self.last_phase = phase
 
                 if phase in NEEDS_POOL and not self.pool_ready():
+                    if self.inference_fault:
+                        # Not retried: no number of attempts fixes a credential.
+                        return self.finish(f"inference is unavailable: {self.inference_fault[:200]}")
                     if self.pool_failures >= self.args.pool_failures:
                         return self.finish(f"HPC pool unusable after {self.pool_failures} restart attempts")
                     time.sleep(self.args.poll_seconds)
