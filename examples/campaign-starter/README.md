@@ -50,7 +50,9 @@ Each item is something no script can do for you.
    `HPC_BASE_DIR`, `HPC_CAMPAIGN_ID`, `HPC_INSPECT_ROOTS`, and the venv paths
    inside `worker_init`. If you let the preflight auto-start the allocation,
    export `HPC_ENV_FILE` pointing at the file you actually edited — its default
-   is `set_env.sh`, which is somebody else's endpoint.
+   is `set_env.sh`, a template whose `FILL_IN` markers make `launch.sh` refuse
+   to start — so forgetting this fails loudly rather than running on someone
+   else's endpoint.
 7. **A Loam venv** at `~/.loam-venv-312`, or export `LOAM_PREFLIGHT_PYTHON`.
 
 ## Writing the goal and the rules

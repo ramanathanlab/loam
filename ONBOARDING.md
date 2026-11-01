@@ -86,10 +86,13 @@ This is the `hpc-deployment` skill. From that skill's SKILL.md §Deployment:
    `set_env.sh`) — the single definition point. See the hardcoded-value table
    below for everything a new user must change.
 
-   Both files are tracked and they name **different** endpoints and base dirs.
-   This step sources whichever you edited, so the choice is yours — but the
-   preflight's HPC auto-start defaults to `set_env.sh` regardless, so if you
-   edited the other one and intend to let it start an allocation, export
+   The per-user copies (`set_env_akv.sh`, `set_env_hari.sh`,
+   `set_env_msinclair.sh`) are tracked and name **different** endpoints, base
+   dirs and allocation shapes. This step sources whichever you edited, so the
+   choice is yours — but the preflight's HPC auto-start defaults to
+   `set_env.sh`, which is a template that refuses to run until its `FILL_IN`
+   markers are filled, so if you edited one of the per-user copies and intend
+   to let it start an allocation, export
    `HPC_ENV_FILE=$PWD/skills/hpc-deployment/set_env_akv.sh`. Bringing the server
    up yourself here avoids the question entirely, which is what a real run should
    do anyway.

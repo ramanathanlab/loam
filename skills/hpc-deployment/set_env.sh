@@ -1,9 +1,21 @@
 #!/bin/bash
+# TEMPLATE. Copy this to set_env_<you>.sh, fill every FILL_IN, and point
+# HPC_ENV_FILE at your copy.
+#
+# This file is run-campaign's DEFAULT when HPC_ENV_FILE is unset, so it
+# deliberately does not run: launch.sh greps for FILL_IN and refuses to start.
+# It used to hold one person's real endpoint, base directory and campaign id,
+# which meant a launch that forgot HPC_ENV_FILE silently started an allocation
+# on a stranger's endpoint and wrote into their tree. Those values now live in
+# set_env_hari.sh alongside the other per-user copies.
+#
+# The Copper block below is general and worth keeping; only the identity fields
+# are blanked.
 
-export HPC_GLOBUS_ENDPOINT_ID="3724d6df-cdaa-47c7-8f1d-61b86847627e"
+export HPC_GLOBUS_ENDPOINT_ID="FILL_IN_endpoint_manager_uuid"
 export HPC_POOL_SIZE=1
-export HPC_BASE_DIR="/lus/flare/projects/datascience/hari/loam/skills/hpc-deployment/run"
-export HPC_CAMPAIGN_ID="test2"
+export HPC_BASE_DIR="FILL_IN_absolute_path_on_the_parallel_filesystem"
+export HPC_CAMPAIGN_ID="FILL_IN_campaign_id"
 export HPC_SYSTEM="aurora"
 # Nodes in the allocation. Both the PBS request (`nodes_per_block` below)
 # and the EL cluster's leaf count must agree.
@@ -19,8 +31,8 @@ export HPC_MCP_TRANSPORT="http"
 # Keys match globus_compute_endpoint_configs/alcf_aurora/user_config_template.yaml.j2.
 #
 # The shared venv and code the compute-node workers import from.
-HPC_VENV="/lus/flare/projects/datascience/hari/loam/venv"
-HPC_WORKER_PYTHONPATH="/lus/flare/projects/datascience/hari/loam/skills/hpc-deployment/scripts"
+HPC_VENV="FILL_IN_absolute_path_to_the_on_node_venv"
+HPC_WORKER_PYTHONPATH="FILL_IN_absolute_path_to_hpc_deployment_scripts"
 
 # Copper (ALCF cooperative caching) accelerates importing the shared venv from
 # Lustre when many nodes start at once. Turn it on with `export HPC_USE_COPPER=1`
