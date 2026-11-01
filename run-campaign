@@ -45,16 +45,20 @@
 #                          (default 900).
 #   LOAM_ENABLED           defaults to 1. Set 0 to launch Hermes with the Loam
 #                          plugin inert.
-#   LOAM_NOTIFY_CMD        with --drive, a command the driver appends a
-#                          one-line JSON-quoted message to after each round and
-#                          at stop (e.g. a phone-push script). Unset: silent.
+#   LOAM_NOTIFY_CMD        read by the DRIVER (see below), not by this script:
+#                          a command it appends a one-line JSON-quoted message
+#                          to after each round and at stop. Unset: silent.
 #
 # Modes:
-#   ./run-campaign                 interactive Hermes (type `continue` per round)
-#   ./run-campaign --drive [opts]  unattended: scripts/drive_campaign.py polls
-#                                  the round phase and sends a turn only when
-#                                  one will do something. `--drive --help` lists
-#                                  its budgets and stop conditions.
+#   ./run-campaign           interactive Hermes; type `continue` to advance a round.
+#   ./drive-campaign [opts]  unattended. The driver runs THIS script inside a
+#                            pseudo-terminal and types for you, because a
+#                            campaign cannot be driven by `hermes -z`: the
+#                            dispatch tool needs a parent-agent context oneshot
+#                            never creates, and a top-level delegation is
+#                            backgrounded, so the turn would exit while its
+#                            validators ran. `./drive-campaign --help` lists its
+#                            budgets and stop conditions.
 #
 # Passed through to the preflight (see scripts/campaign_preflight.py):
 #   ALCF_PROXY=0           do not auto-start the local inference proxy.
@@ -225,17 +229,4 @@ echo "run-campaign: campaign '$CAMPAIGN_NAME'" >&2
 echo "  state:  $LOAM_STATE_DIR" >&2
 echo "  loam:   $LOAM_REPO" >&2
 echo "  hermes: $HERMES_HOME" >&2
-
-# --drive hands the launch to the round driver instead of an interactive Hermes.
-# It runs HERE, after the environment above is assembled, because every turn the
-# driver sends must see the same state dir, the same Hermes home and -- the part
-# that matters -- the same LOAM_RUN_ID. `hermes -z` always starts a fresh session
-# (measured 2026-11-01: neither -c <name> nor -r <id> resumes a one-shot), so
-# run identity is the only thing holding a driven round together. It is minted
-# once above and exported, so each turn joins this run instead of orphaning it.
-if [[ "${1:-}" == "--drive" ]]; then
-  shift
-  echo "  drive:  scripts/drive_campaign.py, run_id $LOAM_RUN_ID" >&2
-  exec python3 "$LOAM_REPO/scripts/drive_campaign.py" "$@"
-fi
 exec hermes "$@"
