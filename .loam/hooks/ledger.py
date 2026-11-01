@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -106,9 +107,45 @@ def build_start_record(payload: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _observation_status(child_status: str) -> str:
+# A child whose own API calls failed still exits normally, so Hermes reports
+# child_status "completed" and its summary is the provider's error. Trusting
+# child_status alone therefore files an infrastructure failure as an observation
+# that is eligible to carry findings. Observed 2026-10-31: five validators and
+# five code-generators returned "API call failed after 3 retries: Connection
+# error." and every one was recorded observed/completed, so a round advanced to
+# its reasoner on validations that never ran.
+#
+# Matched only at the START of the summary, and only within a short one: a
+# validator reporting that a provider failed mid-investigation is writing a real
+# report that happens to quote the message, and must not be reclassified.
+_CHILD_API_FAILURE = re.compile(
+    r"\A\s*(?:API call failed after \d+ retries"
+    r"|Upstream stream ended before completion"
+    r"|Error code: 429\b)",
+)
+_CHILD_API_FAILURE_MAX_CHARS = 600
+
+
+def _child_api_failed(child_summary: str) -> bool:
+    """True when a summary is wholly a provider failure rather than a report."""
+
+    summary = child_summary.strip()
+    if len(summary) > _CHILD_API_FAILURE_MAX_CHARS:
+        return False
+    return bool(_CHILD_API_FAILURE.match(summary))
+
+
+def _failure_class(child_status: str, child_summary: str = "") -> str:
+    """Why a child produced no observation; empty when it genuinely completed."""
+
     if child_status == "completed":
-        return "observed"
+        return "child_api_failure" if _child_api_failed(child_summary) else ""
+    return child_status
+
+
+def _observation_status(child_status: str, child_summary: str = "") -> str:
+    if child_status == "completed":
+        return "failed" if _child_api_failed(child_summary) else "observed"
     if child_status in {"interrupted", "cancelled"}:
         return "excluded"
     return "failed"
@@ -146,7 +183,7 @@ def build_stop_record(payload: Mapping[str, Any]) -> dict[str, Any]:
         "unit_id": unit_id,
         "agent_role": _text(payload.get("child_role")),
         "status": child_status,
-        "observation_status": _observation_status(child_status),
+        "observation_status": _observation_status(child_status, _text(payload.get("child_summary"))),
         # A child summary is unvalidated model output. Store it only as audit
         # material; v1 intentionally projects no findings, evidence, or credit.
         "child_summary": _text(payload.get("child_summary")),
@@ -154,7 +191,7 @@ def build_stop_record(payload: Mapping[str, Any]) -> dict[str, Any]:
         "evidence_refs": [],
         "artifact_refs": [],
         "cost": {"elapsed_ms": max(0, duration_ms)},
-        "failure_class": "" if child_status == "completed" else child_status,
+        "failure_class": _failure_class(child_status, _text(payload.get("child_summary"))),
     }
 
 

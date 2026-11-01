@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import hypothesis_workspace
+import ledger
 from campaign import CampaignContext, agent_registry, campaign_context, campaign_field, campaign_text, skills_text
 from hypothesis_tournament import Tournament
 from parser import Parser
@@ -716,6 +717,21 @@ def record_start(payload: Mapping[str, Any]) -> None:
         Parser().append(payload, 'hypothesis-campaign.jsonl', {**record, 'event': 'hypothesis_validation_started'})
 
 
+def _ledger_observation(payload: Mapping[str, Any]) -> tuple[str, str] | None:
+    """The lifecycle ledger's verdict on this child, as (observation_status, failure_class).
+
+    None when it cannot be determined, so a caller records nothing rather than
+    asserting a child was observed. Read through ledger so there is one
+    definition of what counts as an observation, not a second copy here.
+    """
+
+    status = str(payload.get('child_status') or '')
+    if not status:
+        return None
+    summary = str(payload.get('child_summary') or '')
+    return ledger._observation_status(status, summary), ledger._failure_class(status, summary)
+
+
 def record_stop(payload: Mapping[str, Any]) -> None:
     """Record a tagged child's terminal result as unvalidated orchestration input."""
     rows = _rows(payload)
@@ -740,6 +756,15 @@ def record_stop(payload: Mapping[str, Any]) -> None:
         'status': payload.get('child_status') or 'error',
         'summary': summary,
     }
+    # Hermes reports child_status "completed" for a child whose own API calls
+    # failed -- the process exited cleanly and its summary is the provider's
+    # error. Carry the ledger's verdict so a round can tell a validation that
+    # ran from one that never did; observed 2026-10-31, five validators returned
+    # "API call failed after 3 retries" and the round still advanced to its
+    # reasoner as though five hypotheses had been tested.
+    observation = _ledger_observation(payload)
+    if observation is not None:
+        record.update(observation_status=observation[0], failure_class=observation[1])
     if role == 'hypothesis-validator':
         score = _evidence_score(summary)
         # A score only counts if a code-generator child actually completed an
