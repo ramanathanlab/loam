@@ -391,7 +391,8 @@ for the campaign's work rather than the campaign's work.
 
 Watch progress in `<campaign-dir>/state/` — `hypothesis-campaign.jsonl` is the
 orchestration ledger, `tournament-reports/` holds each round's ranking, and
-`parent-memory.jsonl` accumulates the accepted, source-backed findings.
+`hypothesis-memory.jsonl` holds the accepted, source-backed findings once a
+round's claims have been reviewed and reconciled.
 
 ---
 

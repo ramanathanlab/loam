@@ -302,7 +302,7 @@ the campaign's queue and node count once the server is up.
 
 Watch `state/hypothesis-campaign.jsonl` for the orchestration ledger,
 `state/tournament-reports/` for each round's ranking, and
-`state/parent-memory.jsonl` for accepted findings.
+`state/hypothesis-memory.jsonl` for accepted findings.
 
 ## Known-good values, as run 2026-10-30
 

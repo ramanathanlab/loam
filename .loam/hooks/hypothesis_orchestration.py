@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+import hypothesis_review
 import hypothesis_workspace
 import ledger
 from campaign import CampaignContext, agent_registry, campaign_context, campaign_field, campaign_text, skills_text
@@ -125,6 +126,65 @@ def _active_plan(rows: list[dict[str, Any]], workflow_id: str, run_id: str = '')
     return None
 
 
+def _plan_candidates(payload: Mapping[str, Any], rows: list[dict[str, Any]], plan_id: str) -> list[dict[str, Any]]:
+    """This plan's pending provenance candidates, each with the hypothesis it came from.
+
+    Candidate rows are written by `ledger.write_stop_and_candidate` and carry
+    the producing child's session, not its plan, so the plan is recovered by
+    joining on the validator's `agent_started` row.
+    """
+
+    hypothesis_by_session = {
+        row.get('child_session_id'): row.get('hypothesis_id', '')
+        for row in rows
+        if row.get('event') == 'agent_started' and row.get('role') == 'hypothesis-validator'
+        and row.get('plan_id') == plan_id and row.get('child_session_id')
+    }
+    candidates = []
+    for row in Parser().rows(payload, 'candidate-results.jsonl'):
+        if row.get('event') != 'candidate_result' or row.get('candidate_status') != 'pending':
+            continue
+        session_id = row.get('child_session_id')
+        if session_id not in hypothesis_by_session or not row.get('candidate_id'):
+            continue
+        candidates.append({**row, 'plan_id': plan_id, 'hypothesis_id': hypothesis_by_session[session_id]})
+    return candidates
+
+
+def _review_state(payload: Mapping[str, Any], rows: list[dict[str, Any]], plan_id: str) -> tuple[list[dict[str, Any]], int]:
+    """The plan's candidates still awaiting a reviewer, and how many reviewers are in flight.
+
+    A candidate is "awaiting" only until a reviewer is DISPATCHED for it, not
+    until a review row appears: a reviewer that returns no usable contract still
+    consumed its turn at the claim, and re-dispatching on a missing review would
+    put the round in a loop that never reaches its reasoner.
+    """
+
+    dispatched = {
+        row.get('candidate_id')
+        for row in rows
+        if row.get('event') == 'agent_started' and row.get('role') == 'evidence-reviewer'
+        and row.get('plan_id') == plan_id and row.get('candidate_id')
+    }
+    finished = {
+        row.get('candidate_id')
+        for row in rows
+        if row.get('event') == 'evidence_review_completed' and row.get('plan_id') == plan_id and row.get('candidate_id')
+    }
+    reviewed = {str(row.get('candidate_id') or '') for row in Parser().rows(payload, hypothesis_review_file())}
+    pending = [
+        candidate for candidate in _plan_candidates(payload, rows, plan_id)
+        if candidate['candidate_id'] not in dispatched and candidate['candidate_id'] not in reviewed
+    ]
+    return pending, len(dispatched - finished)
+
+
+def hypothesis_review_file() -> str:
+    """The review JSONL the reconciler reads, whoever authored its rows."""
+
+    return 'hypothesis-reviews.jsonl'
+
+
 def _plan_id(report_path: Path, payload: Mapping[str, Any]) -> str:
     material = '\0'.join((str(report_path), payload.get('workflow_id', ''), payload.get('session_id', '')))
     return f'plan_{hashlib.sha256(material.encode()).hexdigest()[:16]}'
@@ -134,6 +194,7 @@ def _round(payload: Mapping[str, Any], rows: list[dict[str, Any]]) -> dict[str, 
     """Where the coordinator's round stands.
 
     phase is one of: reasoner_running, reasoner_due (with completions),
+    reviewers_running, reviewers_due (with the candidates to review),
     validators_running, validators_due (with the tournament report), or idle.
     """
     active = _active_plan(rows, payload.get('workflow_id', ''), payload.get('loam_run_id', ''))
@@ -142,6 +203,17 @@ def _round(payload: Mapping[str, Any], rows: list[dict[str, Any]]) -> dict[str, 
         if _reasoner_started(rows, plan_id):
             return {'phase': 'reasoner_running', 'plan_id': plan_id}
         if len(completions) == len(starts):
+            # Review sits between the validators and the reasoner on purpose:
+            # the reasoner then reads a brief whose evidence has already been
+            # accepted or refused by an agent that did not produce it, instead
+            # of synthesizing from candidates nobody checked.
+            if payload.get('loam_evidence_review') is True:
+                pending, running = _review_state(payload, rows, plan_id)
+                if pending:
+                    return {'phase': 'reviewers_due', 'plan_id': plan_id, 'candidates': pending,
+                            'completions': completions}
+                if running:
+                    return {'phase': 'reviewers_running', 'plan_id': plan_id}
             return {'phase': 'reasoner_due', 'plan_id': plan_id, 'completions': completions}
         return {'phase': 'validators_running', 'plan_id': plan_id}
     report = Tournament(payload).latest_report()
@@ -188,6 +260,8 @@ def context_for(payload: dict[str, Any]) -> str:
     state = _round(payload, rows)
     if state['phase'] == 'reasoner_due':
         return _reasoner_directive(state['plan_id'], state['completions'], payload)
+    if state['phase'] == 'reviewers_due':
+        return _reviewer_directive(payload, len(state['candidates']))
     if state['phase'] == 'validators_due':
         selected = _selected_hypotheses(payload, state['report'])
         return _validator_directive(payload, len(selected)) if selected else ''
@@ -263,6 +337,55 @@ def _validator_directive(payload: Mapping[str, Any], count: int) -> str:
     ))
 
 
+def _review_summary(payload: Mapping[str, Any], plan_id: str) -> str:
+    """What independent review decided about this round's claims, for the reasoner.
+
+    Empty when review is off, so a campaign without reviewers reads exactly the
+    directive it read before.
+    """
+
+    if payload.get('loam_evidence_review') is not True:
+        return ''
+    reviews = [row for row in Parser().rows(payload, hypothesis_review_file()) if row.get('plan_id') == plan_id]
+    if not reviews:
+        return (
+            "Independent review is enabled but produced no review of this round's claims, so nothing "
+            "from it has been accepted. Treat every validator claim as unchecked."
+        )
+    totals = {'accepted': 0, 'rejected': 0, 'unverifiable': 0}
+    for review in reviews:
+        for verdict, count in (review.get('review_verdicts') or {}).items():
+            if verdict in totals:
+                totals[verdict] += int(count or 0)
+    accepted = sum(len(review.get('evidence') or []) for review in reviews)
+    return (
+        f"Independent review of this round: {len(reviews)} candidate(s) reviewed by agents that did not "
+        f"produce the claims -- {totals['accepted']} claims accepted, {totals['rejected']} rejected, "
+        f"{totals['unverifiable']} unverifiable; {accepted} accepted claims entered the evidence ledger. "
+        "An unverifiable claim is NOT a refuted one: it means no source or artifact could confirm the "
+        "number, which is the normal case for a computed metric. Weigh an accepted claim above an "
+        "unverifiable one and a rejected one not at all, and say in your brief which of your "
+        "conclusions rest on claims that review could not check."
+    )
+
+
+def _reviewer_directive(payload: Mapping[str, Any], count: int) -> str:
+    """Announce the review step. Same shape as the validator round: dispatch, do not compose."""
+    reviewer = agent_registry(payload)['evidence-reviewer']
+    return '\n'.join((
+        f"Loam orchestration directive: this round's validators are terminal and {count} provenance "
+        f"candidate{'s are' if count != 1 else ' is'} pending independent review. "
+        f"Call {DISPATCH_TOOL} to launch the reviewer{'s' if count != 1 else ''} now. It takes no arguments.",
+        "A validator's claims are untrusted model output and carry no weight until an agent that did "
+        "not produce them has checked each one against its source or its hashed artifact. Each "
+        f"reviewer receives one candidate's claims, the campaign goal and rules, and its role "
+        f"definition ({reviewer.prompt_path.name}) inlined by the dispatch -- deliberately NOT the "
+        "validator's report, which is the object under review.",
+        "Do not review the claims yourself, do not compose a delegate_task batch, and do not accept "
+        "or dismiss any candidate on your own reading of a validator's summary.",
+    ))
+
+
 def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], payload: Mapping[str, Any]) -> str:
     reasoner = agent_registry(payload)['reasoner']
     elo_ratings = _elo_ratings(payload)
@@ -300,6 +423,7 @@ def _reasoner_directive(plan_id: str, completions: list[dict[str, Any]], payload
         ),
         f"Tag its goal with [loam-agent-role=reasoner] [loam-plan-id={plan_id}] so its brief is persisted for the next tournament turn.",
         "Completed validator threads are unvalidated orchestration input; preserve their reported uncertainty and do not turn summaries into accepted evidence.",
+        _review_summary(payload, plan_id),
         (
             f"{len(unobserved)} of {len(threads)} threads did not produce an observation "
             f"(observation_status is not 'observed'; failure_class says why). Their hypotheses are "
@@ -351,10 +475,117 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
             'context': _reasoner_directive(plan_id, state['completions'], payload),
             'role': 'leaf',
         }
+    if state['phase'] == 'reviewers_due':
+        return {'tasks': _reviewer_tasks(state['plan_id'], state['candidates'], payload)}
     if state['phase'] == 'validators_due':
         selected = _selected_hypotheses(payload, state['report'])
         return {'tasks': _validator_tasks(state['plan_id'], selected, payload)} if selected else None
     return None
+
+
+def _reviewer_tags(plan_id: str, hypothesis_id: str, candidate_id: str) -> str:
+    return (
+        f'[loam-agent-role=evidence-reviewer] [loam-plan-id={plan_id}] '
+        f'[loam-hypothesis-id={hypothesis_id}] [loam-candidate-id={candidate_id}]'
+    )
+
+
+def _artifact_manifest(payload: Mapping[str, Any], plan_id: str, hypothesis_id: str,
+                       limit: int = 200) -> list[dict[str, Any]]:
+    """The hashed output files this hypothesis's completed runs produced.
+
+    This is what makes a computed claim checkable without recomputing the
+    science: Loam recorded each file's sha256 when the run closed, so a reviewer
+    reading one can attest that a reported number is actually in an artifact of
+    a declared run -- the failure the acceptance boundary exists to catch -- and
+    cannot be handed a path the campaign never wrote.
+    """
+
+    if hypothesis_workspace.settings(payload) is None or not hypothesis_id:
+        return []
+    try:
+        root = hypothesis_workspace.workspace_root(payload, plan_id, hypothesis_id)
+    except Exception:
+        return []
+    entries: list[dict[str, Any]] = []
+    runs = root / 'runs'
+    if not runs.is_dir():
+        return []
+    for directory in sorted(runs.iterdir()):
+        try:
+            run = hypothesis_workspace.read_json(directory / hypothesis_workspace.RUN_FILE)
+        except (OSError, ValueError):
+            continue
+        if run.get('state') != 'completed':
+            continue
+        for item in run.get('manifest') or []:
+            if not isinstance(item, Mapping) or not item.get('path'):
+                continue
+            entries.append({
+                'run': directory.name,
+                'manifest_status': run.get('manifest_status', ''),
+                'path': item.get('path'),
+                'sha256': item.get('sha256', ''),
+                'bytes': item.get('bytes'),
+            })
+            if len(entries) >= limit:
+                return entries
+    return entries
+
+
+def _reviewer_tasks(plan_id: str, candidates: list[dict[str, Any]], payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    reviewer = agent_registry(payload)['evidence-reviewer']
+    execution = payload.get('loam_execution') or {}
+    campaign = campaign_context(payload)
+    names = hpc_tool_names(execution)
+    read_only = sorted({names[key] for key in ('inspect_filesystem', 'batch_status', 'list_batches') if key in names})
+    tasks = []
+    for candidate in candidates:
+        contract = candidate.get('candidate') or {}
+        hypothesis_id = candidate.get('hypothesis_id', '')
+        tasks.append({
+            'goal': (
+                "Independently review each evidence claim in the attached provenance candidate: check "
+                "it against its own source or against the hashed artifact it was computed from, and "
+                "return one verdict per claim in the required contract. You did not produce these "
+                "claims and you are not reviewing the validator's report, which you have not been "
+                "given. "
+                f"{_reviewer_tags(plan_id, hypothesis_id, candidate['candidate_id'])}"
+            ),
+            # Ordered, so sort_keys stays off: the claims first, the artifacts
+            # they must be checked against next, the role definition last.
+            'context': json.dumps(
+                {
+                    'loam_review_contract': hypothesis_review.CONTRACT_VERSION,
+                    'candidate_id': candidate['candidate_id'],
+                    'produced_by_unit_id': candidate.get('unit_id', ''),
+                    'hypotheses': contract.get('hypotheses') or [],
+                    'evidence_candidates': contract.get('evidence_candidates') or [],
+                    'campaign_artifacts': _artifact_manifest(payload, plan_id, hypothesis_id),
+                    'read_only_tools': read_only,
+                    'reviewer_instructions': (
+                        "Follow agent_definition above; it is your role specification and is provided in "
+                        "full because you cannot read its file. "
+                        "You may call ONLY the read-only tools listed in read_only_tools, and you cannot "
+                        "execute code: no run_code, no run_batch, no delegation. Check each claim in "
+                        "evidence_candidates exactly as it is written -- copy hypothesis_key, claim, "
+                        "source_url and stance back verbatim, because a review item that does not match "
+                        "its candidate item byte for byte is dropped. "
+                        "campaign_artifacts lists every output file of this hypothesis's completed runs "
+                        "with the sha256 Loam recorded when the run closed; read a file with "
+                        "inspect_filesystem to confirm a reported number is genuinely in it. "
+                        "'unverifiable' is a real verdict, not a failure: say it whenever you could not "
+                        "check a claim, and never accept one you did not actually read a source or an "
+                        "artifact for."
+                    ),
+                    **campaign_field(campaign, 'evidence-reviewer'),
+                    'agent_definition': reviewer.prompt_body,
+                },
+                ensure_ascii=False,
+            ),
+            'role': 'leaf',
+        })
+    return tasks
 
 
 def _validator_tasks(plan_id: str, selected: list[dict[str, Any]], payload: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -711,9 +942,10 @@ def record_start(payload: Mapping[str, Any]) -> None:
     goal = payload.get('child_goal', '')
     role = _marker(goal, 'loam-agent-role')
     plan_id = _marker(goal, 'loam-plan-id')
-    if role not in ('reasoner', 'hypothesis-validator', 'code-generator') or not plan_id:
+    if role not in ('reasoner', 'hypothesis-validator', 'code-generator', 'evidence-reviewer') or not plan_id:
         return
     hypothesis_id = _marker(goal, 'loam-hypothesis-id')
+    candidate_id = _marker(goal, 'loam-candidate-id')
     record = {
         'event': 'agent_started',
         'observed_at': _now(),
@@ -725,6 +957,10 @@ def record_start(payload: Mapping[str, Any]) -> None:
         'child_subagent_id': payload.get('child_subagent_id', ''),
         'child_session_id': payload.get('child_session_id', ''),
     }
+    if candidate_id:
+        # The review step keys on this: a dispatched candidate is not
+        # re-dispatched, whatever its reviewer goes on to return.
+        record['candidate_id'] = candidate_id
     statement = ''
     if role == 'hypothesis-validator' and hypothesis_workspace.settings(payload) is not None:
         hypothesis = Tournament(payload).hypotheses().get(hypothesis_id) or {}
@@ -757,6 +993,77 @@ def _ledger_observation(payload: Mapping[str, Any]) -> tuple[str, str] | None:
     return ledger._observation_status(status, summary), ledger._failure_class(status, summary)
 
 
+def _record_review(payload: Mapping[str, Any], rows: list[dict[str, Any]], start: Mapping[str, Any],
+                   summary: str) -> dict[str, Any]:
+    """Turn a finished reviewer's contract into the review row the reconciler reads.
+
+    The row goes to `hypothesis-reviews.jsonl` -- the same file an operator
+    writes by hand -- so acceptance downstream is unchanged: only its author is.
+    Returns the fields describing what happened, for the orchestration record.
+    """
+
+    candidate_id = start.get('candidate_id', '')
+    if not candidate_id:
+        return {'review_status': 'no_candidate_tag'}
+    if ledger._observation_status(str(payload.get('child_status') or ''), summary) != 'observed':
+        # A provider failure is not a review. Leaving no review row means the
+        # candidate stays pending for a later round rather than being silently
+        # treated as checked and found wanting.
+        return {'review_status': 'unobserved'}
+    candidate = next(
+        (
+            row for row in Parser().rows(payload, 'candidate-results.jsonl')
+            if row.get('event') == 'candidate_result' and row.get('candidate_id') == candidate_id
+        ),
+        None,
+    )
+    if candidate is None:
+        return {'review_status': 'candidate_missing'}
+    if candidate.get('child_session_id') == payload.get('child_session_id'):
+        # Structurally impossible today, and refused anyway: the whole point of
+        # this step is that the acceptor is not the producer.
+        return {'review_status': 'self_review_refused'}
+    contract, presence = hypothesis_review.extract_contract_object(summary)
+    if presence == 'absent' or contract is None:
+        return {'review_status': 'contract_absent'}
+    hypothesis_id = start.get('hypothesis_id', '')
+    keys = [
+        row.get('hypothesis_key')
+        for row in ((candidate.get('candidate') or {}).get('hypotheses') or [])
+        if isinstance(row, Mapping)
+    ]
+    row, status = hypothesis_review.normalize_review(
+        contract,
+        candidate,
+        # The Jnana id is Loam's, not the reviewer's: it is what links accepted
+        # evidence to the Elo the tournament assigned, and a model-written id
+        # would silently detach the two.
+        ranking_hypothesis_ids={key: hypothesis_id for key in keys if key},
+    )
+    if row is None:
+        return {'review_status': status}
+    Parser().append(payload, hypothesis_review_file(), {
+        'record_version': 'loam_evidence_review_v1',
+        'event': 'evidence_review',
+        'observed_at': _now(),
+        'run_id': payload.get('loam_run_id', ''),
+        'workflow_id': payload.get('workflow_id', ''),
+        'plan_id': start.get('plan_id', ''),
+        'hypothesis_id': hypothesis_id,
+        'reviewer_session_id': payload.get('child_session_id', ''),
+        'reviewer_unit_id': payload.get('child_subagent_id', ''),
+        'reviewed_unit_id': candidate.get('unit_id', ''),
+        'acceptance_basis': 'independent_agent_review',
+        **row,
+    })
+    return {
+        'review_status': status,
+        'review_verdicts': row['review_verdicts'],
+        'accepted_evidence': len(row['evidence']),
+        'accepted_hypothesis_keys': row['accept_hypothesis_keys'],
+    }
+
+
 def record_stop(payload: Mapping[str, Any]) -> None:
     """Record a tagged child's terminal result as unvalidated orchestration input."""
     rows = _rows(payload)
@@ -767,7 +1074,11 @@ def record_stop(payload: Mapping[str, Any]) -> None:
     plan_id = start['plan_id']
     hypothesis_id = start['hypothesis_id']
     summary = payload.get('child_summary', '').strip()
-    events = {'reasoner': 'reasoner_completed', 'hypothesis-validator': 'validator_completed'}
+    events = {
+        'reasoner': 'reasoner_completed',
+        'hypothesis-validator': 'validator_completed',
+        'evidence-reviewer': 'evidence_review_completed',
+    }
     record = {
         'event': events.get(role, 'code_generator_completed'),
         'observed_at': _now(),
@@ -790,6 +1101,9 @@ def record_stop(payload: Mapping[str, Any]) -> None:
     observation = _ledger_observation(payload)
     if observation is not None:
         record.update(observation_status=observation[0], failure_class=observation[1])
+    if role == 'evidence-reviewer':
+        record['candidate_id'] = start.get('candidate_id', '')
+        record.update(_record_review(payload, rows, start, summary))
     if role == 'hypothesis-validator':
         score = _evidence_score(summary)
         # A score only counts if a code-generator child actually completed an
@@ -915,10 +1229,10 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
                 "You cannot see the selected hypotheses in full, so a batch you compose yourself "
                 "is a substitute for the campaign's work, not the campaign's work."
             )
-        if phase in ('validators_due', 'validators_running') and tool_name != DISPATCH_TOOL:
+        if phase in ('validators_due', 'validators_running', 'reviewers_due', 'reviewers_running') and tool_name != DISPATCH_TOOL:
             return _block(
                 "The active campaign plan is pending. Do not execute or inspect work as coordinator; "
-                f"call {DISPATCH_TOOL} first and let the validators report."
+                f"call {DISPATCH_TOOL} first and let this round's children report."
             )
         return None
 
@@ -929,6 +1243,23 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     execution = payload.get('loam_execution') or {}
     if role == 'reasoner':
         return _block('reasoner has no tool capability; return the synthesis to the harness')
+
+    if role == 'evidence-reviewer':
+        # Read-only by construction. A reviewer that could run code could
+        # recompute the number it is supposed to be checking, which turns an
+        # independent attestation back into the producer's own claim.
+        if tool_name == 'delegate_task':
+            return _block('evidence-reviewer must not delegate; return your review contract')
+        observation = ('inspect_filesystem', 'batch_status', 'list_batches')
+        names = hpc_tool_names(execution)
+        allowed = {names[key] for key in observation if key in names}
+        if tool_name in allowed or tool_name in ('skills_list', 'skill_view'):
+            return None
+        return _block(
+            "evidence-reviewer may call only the read-only tools "
+            f"{sorted(allowed | {'skill_view', 'skills_list'})}: you check claims against sources and "
+            "recorded artifacts, and you must not execute, recompute or produce anything"
+        )
 
     if role == 'code-generator':
         if tool_name == 'delegate_task':

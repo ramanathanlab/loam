@@ -142,7 +142,7 @@ Afterwards, one scheduler step happens per turn — tournament → validators �
 reasoner brief → next tournament — so `continue` advances a round. Watch
 `state/hypothesis-campaign.jsonl` for the orchestration ledger,
 `state/tournament-reports/` for each round's ranking, and
-`state/parent-memory.jsonl` for accepted findings.
+`state/hypothesis-memory.jsonl` for accepted findings.
 
 See `ONBOARDING.md` in the repo for the full version of any step here.
 
