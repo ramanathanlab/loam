@@ -364,12 +364,9 @@ Do **not** restate the objective. The goal file already reaches every tier as
 objective in the first message is a second, unversioned copy that can contradict
 the file without the provenance record showing it.
 
-To launch unattended instead — the usual choice for a long allocation —
-`run-campaign` forwards its arguments to `hermes`, which takes a one-shot prompt:
-
-```bash
-./run-campaign -z "Begin the campaign."
-```
+`run-campaign` forwards its arguments to `hermes`, so `./run-campaign -z "Begin
+the campaign."` takes exactly **one** turn and exits. That is one scheduler step,
+not a campaign: see *Running it unattended* below for the loop.
 
 ### What advances a round
 
@@ -380,14 +377,53 @@ ledger, works out where the round is, and injects the next action:
 |---|---|---|
 | 1 | Tournament runs, then: *N validators planned* | calls `loam_dispatch_round` |
 | 2 | (validators still running → nothing) | waits |
-| 3 | all validators complete → reasoner directive | synthesizes the brief |
-| 4 | brief steers a fresh tournament | next round begins |
+| 3 | all validators complete → *N candidates pending review* (only with `evidence_review: true`) | dispatches the reviewers |
+| 4 | reviewers complete → reasoner directive | synthesizes the brief |
+| 5 | brief steers a fresh tournament | next round begins |
 
-So a round is roughly two to three turns, and you advance it by giving Hermes
+So a round is roughly three to four turns, and you advance it by giving Hermes
 another turn — `continue` is enough. The directive is self-contained and the
 selected hypotheses deliberately never enter the parent's context in full, so do
 not compose a `delegate_task` batch by hand: a batch you write is a substitute
 for the campaign's work rather than the campaign's work.
+
+### Running it unattended
+
+```bash
+./run-campaign --drive --max-rounds 4 --max-hours 8
+```
+
+This polls the round phase and sends a turn only when one will do something,
+which matters because every coordinator turn re-runs the Jnana tournament before
+the orchestration hook even looks at the phase — a timer-driven loop pays minutes
+of ranking to be told the validators are still running. `--drive --help` lists
+the budgets and stop conditions; it stops on a round or wall-clock budget, a
+phase that will not advance, an HPC pool it cannot restore, a repeated reasoner
+brief, and consecutive rounds that accept no new evidence.
+
+Two things to know about it:
+
+- **Each turn is a fresh session.** `hermes -z` always starts one; neither
+  `-c <name>` nor `-r <id>` resumes a one-shot (measured). The campaign survives
+  that only because its state is on disk — the hook rebuilds the directive from
+  the ledger every turn. What a fresh session WOULD break is run identity, so
+  the driver pins the launch's `LOAM_RUN_ID` for every turn.
+- **It runs the preflight's real placement probe before any turn that dispatches
+  work**, because a listening `:8000` is not evidence of a usable pool. On
+  failure it lets the preflight restart what is missing, which is also how it
+  survives a walltime boundary.
+
+Set `LOAM_NOTIFY_CMD` to a push command (the driver appends the message as a
+final quoted argument) if nobody will be reading the terminal:
+
+```bash
+LOAM_NOTIFY_CMD='curl -s https://ntfy.sh/<your-topic> -d' ./run-campaign --drive
+```
+
+Unattended acceptance needs `hypothesis_orchestration.evidence_review: true` in
+the profile. Without it a round's claims stay `pending` unless a person writes
+the review JSONL by hand, so the campaign measures things that never reach
+steering. See [`.loam/reconcile/README.md`](.loam/reconcile/README.md#who-authors-the-review).
 
 Watch progress in `<campaign-dir>/state/` — `hypothesis-campaign.jsonl` is the
 orchestration ledger, `tournament-reports/` holds each round's ranking, and
