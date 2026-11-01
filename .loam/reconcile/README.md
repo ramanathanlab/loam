@@ -79,7 +79,18 @@ not that the metric is true.
 
 What stays operator-owned is **calibration**: sampling the auto-accepted claims
 and watching the accept rate. A reviewer accepting ~100% is not reviewing, and
-no amount of structure inside the loop detects that from the inside.
+no amount of structure inside the loop detects that from the inside — so the
+check sits outside it, in `scripts/review_audit.py`:
+
+```bash
+python3 scripts/review_audit.py --state <campaign>/state --sample 5
+```
+
+Read-only. It prints the verdict split, how each acceptance was verified, the
+per-reviewer accept rate (flagging a reviewer that accepted everything it saw),
+any acceptance carrying no note of what was checked, and a random sample of
+accepted claims to read. It is not per-round work; run it when a campaign has
+accumulated a few rounds of reviews.
 
 Note what went with the retired contract: its reconciler fetched the
 authoritative source and compared field by field, which needed a per-source
