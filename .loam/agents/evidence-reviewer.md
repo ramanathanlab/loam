@@ -84,6 +84,17 @@ number that its own output files do not contain.
 If the run produced no artifact to check, or the claim names a quantity no file
 records, that is `unverifiable`.
 
+**When `campaign_artifacts` is empty.** Some campaigns run without the
+per-hypothesis workspace, so Loam recorded no manifest and
+`artifact_manifest_available` is false. Then list and read under
+`artifact_root`, which is this plan's own working directory on the execution
+host. Finding the claimed number in a file there is still worth reporting as
+`artifact_attested` — it still catches a number no output file contains, which
+is the failure that matters most — and Loam weights such an acceptance lower on
+its own, because no recorded hash ties that file to a declared run. Do not
+compensate by claiming more than you checked; say in `checked` which path you
+read and that no manifest was available.
+
 **What `artifact_attested` does not establish.** It does not mean the metric is
 right, the method was appropriate, or the gate was well chosen. It means the
 number is not invented. Truth of the measurement is a separate question and

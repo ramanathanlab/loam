@@ -54,6 +54,13 @@ WEIGHT_POLICY: dict[str, dict[str, float]] = {
     # The number provably came from a hashed artifact; its truth is a separate,
     # often unanswerable question, so this carries less than a confirmed source.
     "artifact_attested": {"strength": 0.7, "reliability": 0.7, "relevance": 0.8},
+    # Same check with the hash missing, because the campaign runs without the
+    # per-hypothesis workspace and Loam recorded no manifest. The reviewer read
+    # a file under the plan's own HPC workdir and found the number there, which
+    # is worth something -- it still catches a number no output file contains --
+    # but nothing ties that file to a declared run, so it cannot carry the
+    # weight of an attested one. Selected by the hook, never by the reviewer.
+    "artifact_attested_unhashed": {"strength": 0.6, "reliability": 0.5, "relevance": 0.8},
 }
 
 MAX_NOTE_CHARS = 2_000
@@ -88,6 +95,7 @@ def normalize_review(
     candidate_record: Mapping[str, Any],
     *,
     ranking_hypothesis_ids: Mapping[str, str] | None = None,
+    manifest_available: bool = True,
 ) -> tuple[dict[str, Any] | None, str]:
     """Turn one reviewer's contract into the review row the reconciler accepts.
 
@@ -171,7 +179,11 @@ def normalize_review(
         )
         if verdict != "accepted":
             continue
-        weights = WEIGHT_POLICY[verification]
+        policy = verification
+        if verification == "artifact_attested" and not manifest_available:
+            policy = "artifact_attested_unhashed"
+            audit[-1]["attestation"] = "unhashed"
+        weights = WEIGHT_POLICY[policy]
         evidence.append(
             {
                 "hypothesis_key": key,

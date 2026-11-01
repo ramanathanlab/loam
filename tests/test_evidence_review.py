@@ -124,6 +124,24 @@ class ReviewContractTests(unittest.TestCase):
                 self.assertEqual(row["review_verdicts"]["unverifiable"], 1)
                 self.assertIn("downgraded", row["review_audit"][0]["checked"])
 
+    def test_an_attestation_without_a_recorded_hash_carries_less(self) -> None:
+        """Whether a manifest existed is Loam's fact, not the reviewer's claim.
+
+        A campaign running without the per-hypothesis workspace has no recorded
+        sha256 to attest against, so the reviewer can only read a file under the
+        plan's workdir. That still catches a number no output file contains, but
+        nothing ties the file to a declared run -- so the hook, not the
+        reviewer, selects the weaker weight.
+        """
+
+        hashed, _ = self.review.normalize_review(_review_contract(), _candidate())
+        unhashed, _ = self.review.normalize_review(
+            _review_contract(), _candidate(), manifest_available=False
+        )
+        self.assertLess(unhashed["evidence"][0]["reliability"], hashed["evidence"][0]["reliability"])
+        self.assertEqual(unhashed["review_audit"][0]["attestation"], "unhashed")
+        self.assertEqual(unhashed["review_audit"][0]["verification"], "artifact_attested")
+
     def test_an_edited_claim_is_dropped_rather_than_accepted(self) -> None:
         """A review item must match its candidate item exactly.
 

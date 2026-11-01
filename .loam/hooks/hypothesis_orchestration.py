@@ -543,6 +543,7 @@ def _reviewer_tasks(plan_id: str, candidates: list[dict[str, Any]], payload: Map
     for candidate in candidates:
         contract = candidate.get('candidate') or {}
         hypothesis_id = candidate.get('hypothesis_id', '')
+        artifacts = _artifact_manifest(payload, plan_id, hypothesis_id)
         tasks.append({
             'goal': (
                 "Independently review each evidence claim in the attached provenance candidate: check "
@@ -561,7 +562,15 @@ def _reviewer_tasks(plan_id: str, candidates: list[dict[str, Any]], payload: Map
                     'produced_by_unit_id': candidate.get('unit_id', ''),
                     'hypotheses': contract.get('hypotheses') or [],
                     'evidence_candidates': contract.get('evidence_candidates') or [],
-                    'campaign_artifacts': _artifact_manifest(payload, plan_id, hypothesis_id),
+                    'campaign_artifacts': artifacts,
+                    # Where to look when there is no manifest: the plan's own
+                    # HPC workdir. A file read there still catches a number no
+                    # output file contains, which is the failure that matters,
+                    # but nothing ties it to a declared run -- so Loam weights
+                    # such an acceptance lower, and says so here rather than
+                    # letting the reviewer believe it attested a hashed file.
+                    'artifact_root': _workdir(execution, plan_id, hypothesis_id),
+                    'artifact_manifest_available': bool(artifacts),
                     'read_only_tools': read_only,
                     'reviewer_instructions': (
                         "Follow agent_definition above; it is your role specification and is provided in "
@@ -573,7 +582,12 @@ def _reviewer_tasks(plan_id: str, candidates: list[dict[str, Any]], payload: Map
                         "its candidate item byte for byte is dropped. "
                         "campaign_artifacts lists every output file of this hypothesis's completed runs "
                         "with the sha256 Loam recorded when the run closed; read a file with "
-                        "inspect_filesystem to confirm a reported number is genuinely in it. "
+                        "inspect_filesystem to confirm a reported number is genuinely in it. When that "
+                        "list is empty (artifact_manifest_available is false, i.e. this campaign runs "
+                        "without the per-hypothesis workspace) list and read under artifact_root "
+                        "instead: finding the number in a file there is still worth reporting as "
+                        "artifact_attested, and Loam weights it lower on its own because no recorded "
+                        "hash ties that file to a declared run. "
                         "'unverifiable' is a real verdict, not a failure: say it whenever you could not "
                         "check a claim, and never accept one you did not actually read a source or an "
                         "artifact for."
@@ -1035,6 +1049,9 @@ def _record_review(payload: Mapping[str, Any], rows: list[dict[str, Any]], start
     row, status = hypothesis_review.normalize_review(
         contract,
         candidate,
+        # Whether a hash-bearing manifest existed to attest against is Loam's
+        # fact about this campaign, not the reviewer's claim about its work.
+        manifest_available=bool(_artifact_manifest(payload, start.get('plan_id', ''), hypothesis_id)),
         # The Jnana id is Loam's, not the reviewer's: it is what links accepted
         # evidence to the Elo the tournament assigned, and a model-written id
         # would silently detach the two.
