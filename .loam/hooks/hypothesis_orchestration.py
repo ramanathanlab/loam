@@ -12,7 +12,6 @@ import hashlib
 import json
 import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -21,7 +20,7 @@ import hypothesis_workspace
 import ledger
 from campaign import CampaignContext, agent_registry, campaign_context, campaign_field, campaign_text, skills_text
 from hypothesis_tournament import Tournament
-from parser import Parser
+from parser import REVIEWS_FILE, Parser
 
 # Must match DISPATCH_TOOL_NAME in .loam/adapters/hermes/plugin/__init__.py.
 DISPATCH_TOOL = 'loam_dispatch_round'
@@ -37,10 +36,6 @@ REVIEW_BATCH = 5
 
 def _rows(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     return Parser().rows(payload, 'hypothesis-orchestration.jsonl')
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _session(payload: Mapping[str, Any]) -> str:
@@ -98,10 +93,28 @@ def _strip_tags(value: str) -> str:
     return ' '.join(re.sub(r'\[loam-[a-z-]+=[^\]]*\]', ' ', value).split())
 
 
+TAG = '[loam-{key}={value}]'
+
+
+def _role_tags(role: str, **fields: str) -> str:
+    """The `[loam-...=...]` block `record_start` reads a child's identity from.
+
+    One builder for every dispatch site. The format is a parsing contract --
+    `_strip_tags` above and `record_start` both depend on it -- and it was being
+    spelled out by hand at four call sites, where a typo in one would have
+    detached that child from its plan rather than failing loudly. A field left
+    empty is omitted, so an optional id (a run, a candidate) is simply absent
+    instead of being emitted blank.
+    """
+
+    pairs = [('agent-role', role)]
+    pairs += [(key.replace('_', '-'), value) for key, value in fields.items() if value]
+    return ' '.join(TAG.format(key=key, value=value) for key, value in pairs)
+
+
 def _child_tags(plan_id: str, hypothesis_id: str, run_id: str = '') -> str:
-    """The tags record_start reads a child's role, plan and hypothesis from."""
-    tags = f'[loam-agent-role=code-generator] [loam-plan-id={plan_id}] [loam-hypothesis-id={hypothesis_id}]'
-    return f'{tags} [loam-run-id={run_id}]' if run_id else tags
+    """The tags record_start reads a code-generator's role, plan and hypothesis from."""
+    return _role_tags('code-generator', plan_id=plan_id, hypothesis_id=hypothesis_id, run_id=run_id)
 
 
 # --- round state ------------------------------------------------------------
@@ -191,19 +204,13 @@ def _review_state(payload: Mapping[str, Any], rows: list[dict[str, Any]], plan_i
         for row in rows
         if row.get('event') == 'evidence_review_completed' and row.get('candidate_id')
     }
-    reviewed = {str(row.get('candidate_id') or '') for row in Parser().rows(payload, hypothesis_review_file())}
+    reviewed = {str(row.get('candidate_id') or '') for row in Parser().rows(payload, REVIEWS_FILE)}
     backlog = payload.get('loam_evidence_review_backlog') is True
     pending = [
         candidate for candidate in _plan_candidates(payload, rows, plan_id, backlog)
         if candidate['candidate_id'] not in dispatched and candidate['candidate_id'] not in reviewed
     ]
     return pending[:REVIEW_BATCH], len(dispatched - finished)
-
-
-def hypothesis_review_file() -> str:
-    """The review JSONL the reconciler reads, whoever authored its rows."""
-
-    return 'hypothesis-reviews.jsonl'
 
 
 def _plan_id(report_path: Path, payload: Mapping[str, Any]) -> str:
@@ -432,7 +439,7 @@ def _review_summary(payload: Mapping[str, Any], plan_id: str) -> str:
 
     if payload.get('loam_evidence_review') is not True:
         return ''
-    reviews = [row for row in Parser().rows(payload, hypothesis_review_file()) if row.get('plan_id') == plan_id]
+    reviews = [row for row in Parser().rows(payload, REVIEWS_FILE) if row.get('plan_id') == plan_id]
     if not reviews:
         return (
             "Independent review is enabled but produced no review of this round's claims, so nothing "
@@ -570,10 +577,8 @@ def canonical_delegation_args(payload: Mapping[str, Any]) -> dict[str, Any] | No
 
 
 def _reviewer_tags(plan_id: str, hypothesis_id: str, candidate_id: str) -> str:
-    return (
-        f'[loam-agent-role=evidence-reviewer] [loam-plan-id={plan_id}] '
-        f'[loam-hypothesis-id={hypothesis_id}] [loam-candidate-id={candidate_id}]'
-    )
+    return _role_tags('evidence-reviewer', plan_id=plan_id, hypothesis_id=hypothesis_id,
+                      candidate_id=candidate_id)
 
 
 def _artifact_manifest(payload: Mapping[str, Any], plan_id: str, hypothesis_id: str,
@@ -717,8 +722,7 @@ def _validator_tasks(plan_id: str, selected: list[dict[str, Any]], payload: Mapp
                 "whether the evidence is sufficient -- record it with the loam_record_decision tool before "
                 "you act on it; your reasoning is not otherwise kept. "
                 "Then return the required report headings, including a bare decimal Evidence Score. "
-                f"[loam-agent-role=hypothesis-validator] [loam-plan-id={plan_id}] "
-                f"[loam-hypothesis-id={hypothesis_id}]"
+                + _role_tags('hypothesis-validator', plan_id=plan_id, hypothesis_id=hypothesis_id)
             ),
             # Ordered on purpose, so sort_keys stays off: the assignment first, and the
             # long role definition last, where its length cannot bury the hypothesis.
@@ -1059,7 +1063,7 @@ def record_start(payload: Mapping[str, Any]) -> None:
     candidate_id = _marker(goal, 'loam-candidate-id')
     record = {
         'event': 'agent_started',
-        'observed_at': _now(),
+        'observed_at': ledger.utc_now(),
         'run_id': payload.get('loam_run_id', ''),
         'workflow_id': payload.get('workflow_id', ''),
         'plan_id': plan_id,
@@ -1163,10 +1167,10 @@ def _record_review(payload: Mapping[str, Any], rows: list[dict[str, Any]], start
     )
     if row is None:
         return {'review_status': status}
-    Parser().append(payload, hypothesis_review_file(), {
+    Parser().append(payload, REVIEWS_FILE, {
         'record_version': 'loam_evidence_review_v1',
         'event': 'evidence_review',
-        'observed_at': _now(),
+        'observed_at': ledger.utc_now(),
         'run_id': payload.get('loam_run_id', ''),
         'workflow_id': payload.get('workflow_id', ''),
         'plan_id': start.get('plan_id', ''),
@@ -1202,7 +1206,7 @@ def record_stop(payload: Mapping[str, Any]) -> None:
     }
     record = {
         'event': events.get(role, 'code_generator_completed'),
-        'observed_at': _now(),
+        'observed_at': ledger.utc_now(),
         'run_id': payload.get('loam_run_id', ''),
         'workflow_id': payload.get('workflow_id', ''),
         'plan_id': plan_id,
@@ -1313,7 +1317,7 @@ def workspace_stop(payload: Mapping[str, Any]) -> None:
     if problems:
         Parser().append(payload, 'hypothesis-campaign.jsonl', {
             'event': 'workspace_violation',
-            'observed_at': _now(),
+            'observed_at': ledger.utc_now(),
             'run_id': payload.get('loam_run_id', ''),
             'workflow_id': payload.get('workflow_id', ''),
             'plan_id': start['plan_id'],

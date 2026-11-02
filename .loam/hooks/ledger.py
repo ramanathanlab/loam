@@ -37,7 +37,14 @@ def _text(value: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _timestamp() -> str:
+def utc_now() -> str:
+    """The one ISO-8601 UTC timestamp every ledger row is stamped with.
+
+    Public and shared: each hook that appends a row had grown its own
+    private copy of this line, so a change of format would have had to be
+    found in a dozen places. Every writer under `.loam/hooks/` calls this.
+    """
+
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -91,7 +98,7 @@ def build_start_record(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "record_version": LEDGER_VERSION,
         "event": "subagent_start",
-        "observed_at": _timestamp(),
+        "observed_at": utc_now(),
         "run_id": parent_session_id,
         "workflow_id": _text(payload.get("workflow_id")),
         "loam_profile": _text(payload.get("loam_profile")),
@@ -172,7 +179,7 @@ def build_stop_record(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "record_version": LEDGER_VERSION,
         "event": "subagent_stop",
-        "observed_at": _timestamp(),
+        "observed_at": utc_now(),
         "run_id": parent_session_id,
         "workflow_id": _text(payload.get("workflow_id")),
         "loam_profile": _text(payload.get("loam_profile")),
@@ -225,7 +232,7 @@ def build_candidate_records(stop_record: Mapping[str, Any]) -> list[dict[str, An
             {
                 "record_version": version,
                 "event": "candidate_result",
-                "observed_at": _timestamp(),
+                "observed_at": utc_now(),
                 "unit_id": _text(stop_record.get("unit_id")),
                 "run_id": _text(stop_record.get("run_id")),
                 "workflow_id": _text(stop_record.get("workflow_id")),

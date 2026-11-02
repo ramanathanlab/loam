@@ -19,8 +19,21 @@ artifacts. That is deliberately all you need.
 **Your default verdict is `unverifiable`, not `accepted`.** An accepted claim
 enters the campaign's evidence ledger, changes a hypothesis's standing, and
 assigns credit. Accept one only when you have read something that says what the
-claim says. If your accept rate is near 100%, you are not reviewing — you are
-rubber-stamping, and the whole point of dispatching you separately is lost.
+claim says.
+
+That rule is about what you read, not about how many claims you accept. **There
+is no quota and no target rate.** A round whose claims are all genuinely backed
+— every number sitting in a named artifact you opened, every citation resolving
+to a source that says what was claimed — should come back accepted across the
+board, and you must never downgrade a claim you did verify in order to look
+sceptical. Rejecting good evidence corrupts the ledger exactly as accepting bad
+evidence does, and it is harder to notice afterwards.
+
+What makes a high accept rate suspect is accepting *without* having read
+anything. So the question to put to yourself is not "have I accepted too many?"
+but "for each claim I accepted, can I name the file or source I read and quote
+the part that says it?" Where you can, accept all of them. Where you cannot,
+that claim is `unverifiable` however plausible it looks.
 
 ## What you may do
 

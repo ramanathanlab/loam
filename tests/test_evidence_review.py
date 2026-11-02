@@ -620,5 +620,37 @@ class AcceptanceTests(unittest.TestCase):
             self.assertEqual(self.acceptance.reconcile(payload)["failed"], 0)
 
 
+class DispatchTagTests(unittest.TestCase):
+    """The `[loam-...]` tag block is a parsing contract, so one builder emits it.
+
+    `record_start` reads a child's role, plan, hypothesis and candidate out of
+    its goal text. A tag misspelled at one dispatch site would not fail loudly
+    -- it would quietly attribute that child to no plan -- so these pin the
+    format and the omit-when-empty rule rather than any one site's wording.
+    """
+
+    def setUp(self) -> None:
+        self.orchestration = _load("loam_dispatch_tags")
+
+    def test_role_comes_first_and_an_empty_field_is_omitted(self) -> None:
+        tags = self.orchestration._role_tags("evidence-reviewer", plan_id="plan-1", run_id="")
+        self.assertEqual(tags, "[loam-agent-role=evidence-reviewer] [loam-plan-id=plan-1]")
+
+    def test_an_emitted_tag_block_survives_the_strip_that_parses_it(self) -> None:
+        tags = self.orchestration._reviewer_tags("plan-1", "hyp-1", "candidate-1")
+        self.assertEqual(
+            tags,
+            "[loam-agent-role=evidence-reviewer] [loam-plan-id=plan-1] "
+            "[loam-hypothesis-id=hyp-1] [loam-candidate-id=candidate-1]",
+        )
+        # _strip_tags drops a model-written tag so a child cannot relabel itself
+        # into another plan; it has to recognize the tags Loam itself writes.
+        self.assertEqual(self.orchestration._strip_tags(f"work. {tags}"), "work.")
+
+    def test_a_code_generator_run_id_appears_only_when_there_is_one(self) -> None:
+        self.assertNotIn("loam-run-id", self.orchestration._child_tags("plan-1", "hyp-1"))
+        self.assertIn("[loam-run-id=r3]", self.orchestration._child_tags("plan-1", "hyp-1", "r3"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -43,8 +43,11 @@ accepted evidence carries a claim, a `source_url` and a stance.
 **`parent-memory.jsonl` therefore has no writer at all.** Removing the projector
 was described at the time as leaving the file with exactly one writer, the
 reasoner, "as its one durable findings cache". That was wrong: `tool_policy`
-grants the reasoner no tool capability whatsoever (`reasoner has no tool
-capability; return the synthesis to the harness`), so it cannot open a file.
+grants the reasoner no file capability at all (`reasoner has no tool
+capability; return the synthesis to the harness`), so it cannot open a file. Its
+one permitted call is `loam_record_decision`, exempted for every tier because it
+records provenance rather than executing anything, and that writes into the
+plan's own `reasoner.json` — never into a campaign ledger.
 Measured 2026-11-01, after four dispatched rounds: the file does not exist.
 `reasoner.md` has been corrected to stop promising a write target the role
 cannot reach, and the durable findings path is now accepted evidence →

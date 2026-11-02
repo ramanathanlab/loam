@@ -133,6 +133,9 @@ def main() -> int:
         if seen >= 3 and counts.get("accepted", 0) == seen:
             flag = "   <-- accepted everything it saw"
         print(f"  {reviewer[:24]:<24} {seen:>3} claims, accept rate {_rate(counts.get('accepted', 0), seen)}{flag}")
+    print("  (a flagged reviewer is one to READ, not one to disbelieve: a round whose claims")
+    print("   are all genuinely artifact-backed should accept all of them. What separates that")
+    print("   from rubber-stamping is the `checked` note -- see the counts above and the sample.)")
 
     if args.sample and accepted_items:
         if args.seed is not None:

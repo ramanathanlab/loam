@@ -22,51 +22,45 @@ nothing is not retried on every turn.
 
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from ledger import append_record
-from parser import Parser
-
-ACCEPTANCE_LOG = "hypothesis-acceptance.jsonl"
-REVIEWS_FILE = "hypothesis-reviews.jsonl"
-CANDIDATES_FILE = "candidate-results.jsonl"
-HYPOTHESIS_LEDGER = "hypothesis-ledger.jsonl"
-EVIDENCE_LEDGER = "evidence-ledger.jsonl"
-CREDIT_LEDGER = "credit-ledger.jsonl"
-MEMORY_FILE = "hypothesis-memory.jsonl"
-STEERING_FILE = "hypothesis-steering.jsonl"
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from ledger import append_record, utc_now
+from parser import (
+    ACCEPTANCE_LOG,
+    CANDIDATES_FILE,
+    CREDIT_LEDGER,
+    EVIDENCE_LEDGER,
+    HYPOTHESIS_LEDGER,
+    MEMORY_FILE,
+    REVIEWS_FILE,
+    STEERING_FILE,
+    Parser,
+)
 
 
 def _load(payload: Mapping[str, Any], module_name: str) -> Any:
-    """Import a `.loam/reconcile/` module under a private name.
+    """Import a reconciler as `reconcile.<name>`.
 
-    `reconcile/hypothesis_provenance.py` and `hooks/hypothesis_provenance.py`
-    share a module name and are different modules; importing the reconciler
-    normally would either collide in `sys.modules` or shadow the hook one for
-    the rest of the process. Load it by path under a prefixed name instead.
+    `.loam/reconcile/` is a package (it has an `__init__.py`) purely so this is
+    an ordinary import. Without the package, `reconcile/hypothesis_provenance.py`
+    and `hooks/hypothesis_provenance.py` -- two different modules -- compete for
+    one name in `sys.modules`, and whichever lost would be shadowed for the rest
+    of the process. The package qualifies the name instead, so the two coexist
+    and no by-path loading is needed.
+
+    The reconcilers stay importable as scripts as well; each puts `hooks/` on
+    `sys.path` itself, which is what lets them run standalone from a shell.
     """
 
-    path = Path(payload.get("repo_root") or ".") / ".loam" / "reconcile" / f"{module_name}.py"
-    alias = f"_loam_reconcile_{module_name}"
-    if alias in sys.modules:
-        return sys.modules[alias]
-    spec = importlib.util.spec_from_file_location(alias, path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load reconciler {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[alias] = module
-    spec.loader.exec_module(module)
-    return module
+    root = str(Path(payload.get("repo_root") or ".").resolve() / ".loam")
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    return importlib.import_module(f"reconcile.{module_name}")
 
 
 def _reconciled(parser: Parser, payload: Mapping[str, Any]) -> set[str]:
@@ -153,7 +147,7 @@ def _log(
         ACCEPTANCE_LOG,
         {
             "event": "candidate_reconciled" if not error else "candidate_reconcile_failed",
-            "observed_at": _now(),
+            "observed_at": utc_now(),
             "run_id": payload.get("loam_run_id", ""),
             "workflow_id": payload.get("workflow_id", ""),
             "candidate_id": candidate_id,
