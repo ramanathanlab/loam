@@ -1,17 +1,12 @@
 model:
-  default: nemotron-3-ultra
-  provider: custom:alcf-minerva-via-proxy-(localhost:51911)
-  base_url: http://localhost:51911/v1
-  api_key: local-no-auth   # scripts/alcf_inference_proxy.py injects the ALCF token
+  default: argo:gpt-5.6-sol
+  provider: custom
+  base_url: http://localhost:61612/v1
+  api_key: local-no-auth   # Argo tunnel on :61612 is no-auth
 _config_version: 33
 plugins:
   enabled:
     - loam-hooks
-custom_providers:
-  - name: ALCF Minerva via proxy (localhost:51911)
-    base_url: http://localhost:51911/v1
-    api_key: local-no-auth   # scripts/alcf_inference_proxy.py injects the ALCF token
-    model: gpt-oss-120b
 onboarding:
   seen:
     tool_progress_prompt: true
@@ -19,21 +14,26 @@ onboarding:
 delegation:
   max_spawn_depth: 2
   orchestrator_enabled: true
-  max_concurrent_children: 5
+  max_concurrent_children: 160
 mcp_servers:
   hpc:
     url: http://127.0.0.1:8000/mcp
     timeout: 900
-    connect_timeout: 60
+    connect_timeout: 120
   hpcctl:                       # -> mcp__hpcctl__hpc_allocation_status / hpc_restart
-    command: /Users/architvasan/.loam-venv-312/bin/python
+    command: /Users/msinclair/agent/loam/campaign1/.venv/bin/python
     args: [
-          /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/skills/hpc-deployment/scripts/hpc_control.py]
+          /Users/msinclair/github/loam/skills/hpc-deployment/scripts/hpc_control.py]
     env:
       HPC_ENV_FILE: 
-        /Users/architvasan/Desktop/Projects/Agentic_Crazy_Campaign/loam/skills/hpc-deployment/set_env_akv.sh
+        /Users/msinclair/github/loam/skills/hpc-deployment/set_env_msinclair.sh
       HPC_ALLOWED_QUEUES: debug,debug-scaling,capacity
-      HPC_MAX_NODES: "4"
+      HPC_MAX_NODES: "20"
+      # 12 h, not 1 h: these caps are what hpc_control.validate() checks, so a
+      # 1 h cap here REFUSES a capacity allocation through the hpcctl tool
+      # (`walltime 04:00:00 exceeds the cap of 01:00:00`) even though the queue
+      # allows 168 h. The per-queue limits in hpc_control already stop a debug
+      # block from asking for more than its hour.
       HPC_MAX_WALLTIME: "12:00:00"
     timeout: 300                # a restart waits up to 180 s for the old server to exit
 approvals:

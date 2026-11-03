@@ -86,10 +86,13 @@ This is the `hpc-deployment` skill. From that skill's SKILL.md §Deployment:
    `set_env.sh`) — the single definition point. See the hardcoded-value table
    below for everything a new user must change.
 
-   Both files are tracked and they name **different** endpoints and base dirs.
-   This step sources whichever you edited, so the choice is yours — but the
-   preflight's HPC auto-start defaults to `set_env.sh` regardless, so if you
-   edited the other one and intend to let it start an allocation, export
+   The per-user copies (`set_env_akv.sh`, `set_env_hari.sh`,
+   `set_env_msinclair.sh`) are tracked and name **different** endpoints, base
+   dirs and allocation shapes. This step sources whichever you edited, so the
+   choice is yours — but the preflight's HPC auto-start defaults to
+   `set_env.sh`, which is a template that refuses to run until its `FILL_IN`
+   markers are filled, so if you edited one of the per-user copies and intend
+   to let it start an allocation, export
    `HPC_ENV_FILE=$PWD/skills/hpc-deployment/set_env_akv.sh`. Bringing the server
    up yourself here avoids the question entirely, which is what a real run should
    do anyway.
@@ -361,12 +364,11 @@ Do **not** restate the objective. The goal file already reaches every tier as
 objective in the first message is a second, unversioned copy that can contradict
 the file without the provenance record showing it.
 
-To launch unattended instead — the usual choice for a long allocation —
-`run-campaign` forwards its arguments to `hermes`, which takes a one-shot prompt:
-
-```bash
-./run-campaign -z "Begin the campaign."
-```
+`run-campaign` forwards its arguments to `hermes`, so `./run-campaign -z "Begin
+the campaign."` takes exactly **one** turn and exits — and that turn cannot
+dispatch a round, because `loam_dispatch_round` has no parent-agent context
+under `-z` and a top-level delegation is backgrounded in any case. It is a
+diagnostic, not an unattended launch: see *Running it unattended* below.
 
 ### What advances a round
 
@@ -377,18 +379,69 @@ ledger, works out where the round is, and injects the next action:
 |---|---|---|
 | 1 | Tournament runs, then: *N validators planned* | calls `loam_dispatch_round` |
 | 2 | (validators still running → nothing) | waits |
-| 3 | all validators complete → reasoner directive | synthesizes the brief |
-| 4 | brief steers a fresh tournament | next round begins |
+| 3 | all validators complete → *N candidates pending review* (only with `evidence_review: true`) | dispatches the reviewers |
+| 4 | reviewers complete → reasoner directive | synthesizes the brief |
+| 5 | brief steers a fresh tournament | next round begins |
 
-So a round is roughly two to three turns, and you advance it by giving Hermes
+So a round is roughly three to four turns, and you advance it by giving Hermes
 another turn — `continue` is enough. The directive is self-contained and the
 selected hypotheses deliberately never enter the parent's context in full, so do
 not compose a `delegate_task` batch by hand: a batch you write is a substitute
 for the campaign's work rather than the campaign's work.
 
+### Running it unattended
+
+Copy `drive-campaign` next to `run-campaign` in the campaign directory and run
+it **instead of** the launcher — it starts the campaign itself:
+
+```bash
+./drive-campaign --max-rounds 4 --max-hours 8
+```
+
+It polls the round phase and types `continue` only when a turn will do
+something, which matters because every coordinator turn re-runs the Jnana
+tournament before the orchestration hook even looks at the phase — a
+timer-driven loop pays minutes of ranking to be told the validators are still
+running. `--help` lists the budgets and stop conditions: a round or wall-clock
+budget, a hard cap on nudges, a phase that will not advance, an HPC pool it
+cannot restore, a repeated reasoner brief, and consecutive rounds that accept no
+new evidence.
+
+Three things to know about it:
+
+- **It drives a real terminal, and it has to.** A campaign cannot be driven by
+  `hermes -z`: `loam_dispatch_round` fails there with *"delegate_task requires a
+  parent agent context"* (oneshot never sets the plugin manager's `_cli_ref`),
+  and a top-level delegation is backgrounded in any case, so the turn would exit
+  while its validators ran. The driver therefore runs the launcher in a
+  pseudo-terminal and keeps one session alive across rounds.
+- **It waits for quiet before typing.** Because delegation is asynchronous, the
+  agent usually takes its own next turn when a child's result arrives. A nudge
+  goes in only when the phase is actionable, the session has been silent for
+  `--idle-seconds`, and `--min-send-gap` has passed.
+- **It runs the preflight's real placement probe before any turn that dispatches
+  work**, because a listening `:8000` is not evidence of a usable pool. On
+  failure it lets the preflight restart what is missing, which is also how it
+  survives a walltime boundary.
+
+The session transcript lands in `state/driver/session-<stamp>.log` and every
+decision in `state/driver/driver.jsonl`. Set `LOAM_NOTIFY_CMD` to a push command
+(the driver appends the message as a final quoted argument) if nobody will be
+reading the terminal:
+
+```bash
+LOAM_NOTIFY_CMD='curl -s https://ntfy.sh/<your-topic> -d' ./drive-campaign
+```
+
+Unattended acceptance needs `hypothesis_orchestration.evidence_review: true` in
+the profile. Without it a round's claims stay `pending` unless a person writes
+the review JSONL by hand, so the campaign measures things that never reach
+steering. See [`.loam/reconcile/README.md`](.loam/reconcile/README.md#who-authors-the-review).
+
 Watch progress in `<campaign-dir>/state/` — `hypothesis-campaign.jsonl` is the
 orchestration ledger, `tournament-reports/` holds each round's ranking, and
-`parent-memory.jsonl` accumulates the accepted, source-backed findings.
+`hypothesis-memory.jsonl` holds the accepted, source-backed findings once a
+round's claims have been reviewed and reconciled.
 
 ---
 
@@ -401,7 +454,7 @@ orchestration ledger, `tournament-reports/` holds each round's ranking, and
 | `.loam/README.md` global shim | `LOAM_ROOT` default (points at another user's checkout) |
 | `~/.hermes/loam.yaml` | `jnana_root`, all `state_dir` paths, the `:51900` / `:51911` endpoints and model ids |
 | `skills/hpc-deployment/set_env_akv.sh` | `HPC_GLOBUS_ENDPOINT_ID`, `HPC_BASE_DIR`, `HPC_CAMPAIGN_ID`, `HPC_INSPECT_ROOTS`, and the venv/paths inside `worker_init` of `HPC_ENDPOINT_CONFIG_JSON` |
-| `.hermes/.loam-home/config.yaml` | Argo/Minerva provider base URLs, API keys, and model ids |
+| `.hermes/.loam-home/config.yaml` | Argo/Minerva provider base URLs, API keys, and model ids; **and the `hpcctl` block's `command`, `args` and `HPC_ENV_FILE`, which name one user's venv, checkout and env file** |
 
 Two of these overlap with findings in the code review and are worth calling out
 to a newcomer specifically:
@@ -409,6 +462,12 @@ to a newcomer specifically:
 - **`HPC_ENDPOINT_CONFIG_JSON` pins `queue: debug` and `walltime: 00:30:00`.**
   Fine for a smoke test; on a longer campaign you will hit a walltime/ManagerLost
   wall. Change the queue and walltime for real runs.
+- **The `hpcctl` block's `HPC_MAX_WALLTIME` is a second, independent cap** that
+  `hpc_control.validate()` checks, so a short value there refuses a long
+  allocation requested through the `hpc_restart` tool even when the queue allows
+  it (`walltime 04:00:00 exceeds the cap of 01:00:00`). It is set to 12 h here;
+  the per-queue limits inside `hpc_control` still stop a debug block from asking
+  for more than its hour.
 - **The preflight is the real readiness contract, not the config comments.** If
   it passes, all three subsystems are genuinely talking. If it fails, read
   `state/preflight.json` — it names the model role or the Aurora probe that

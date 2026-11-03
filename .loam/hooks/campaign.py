@@ -52,11 +52,22 @@ def read_document(path: Path, limit: int) -> tuple[dict[str, str], str]:
     return fields, '\n'.join(lines[end + 1:]).strip()[:limit]
 
 
+# The campaign's tiers, in escalation order. Deliberately an explicit allowlist
+# rather than a glob of `.loam/agents/*.md`: this same tuple is what `_scopes`
+# validates a rules file's `scope:` against, and what `tool_policy` keys its
+# per-role boundaries on, so a name appearing here is a claim that the tier's
+# boundary has been written. Globbing would let an `.md` dropped into the
+# directory become a dispatchable role with no policy of its own -- failing open
+# on exactly the thing these names gate. Adding a tier is meant to be an edit
+# here plus a `tool_policy` branch, not a file copy.
+AGENT_NAMES = ('reasoner', 'hypothesis-validator', 'code-generator', 'evidence-reviewer')
+
+
 def agent_registry(payload: Mapping[str, Any]) -> dict[str, AgentSpec]:
-    """Load the three checked-in agent definitions."""
+    """Load the checked-in agent definitions."""
     directory = Path(payload.get('repo_root') or '.') / '.loam' / 'agents'
     registry = {}
-    for name in ('reasoner', 'hypothesis-validator', 'code-generator'):
+    for name in AGENT_NAMES:
         path = directory / f'{name}.md'
         fields, body = read_document(path, 24_000)
         if fields.get('name') != name:
@@ -85,7 +96,7 @@ def _find(payload: Mapping[str, Any], kind: str, name: str) -> Path:
 
 def _scopes(value: str, path: Path) -> frozenset[str]:
     """Parse `scope:`: space- or comma-separated agent names, or `all`."""
-    tiers = ('reasoner', 'hypothesis-validator', 'code-generator')
+    tiers = AGENT_NAMES
     parts = value.replace(',', ' ').split()
     if not parts:
         raise ValueError(f'rules file must declare a scope ({"|".join(tiers)}, or all): {path}')

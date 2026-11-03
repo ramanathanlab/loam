@@ -2,7 +2,7 @@
 name: evidence-integrity
 applies: always
 scope: all
-enforced_by: partially -- a source-located claim travels as a hypothesis_provenance_v1 candidate that is accepted only through explicit review; the rest is advisory
+enforced_by: partially -- an outcome bearing on the hypothesis, a refutation included, travels as a hypothesis_provenance_v1 candidate that is accepted only through explicit review -- by an operator, or by an independent evidence-reviewer when `evidence_review` is on; the rest is advisory
 ---
 
 - A datum you did not produce in this campaign has an authoritative source.

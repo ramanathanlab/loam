@@ -180,8 +180,9 @@ DISPATCH_TOOL_SCHEMA: dict[str, Any] = {
     "name": DISPATCH_TOOL_NAME,
     "description": (
         "Launch the campaign work Loam has already planned for this round: one "
-        "hypothesis-validator per selected hypothesis, or the reasoner once every "
-        "validator has reported. Takes no arguments -- the plan comes from persisted "
+        "hypothesis-validator per selected hypothesis, then an independent "
+        "evidence-reviewer per pending claim set, then the reasoner once those have "
+        "reported. Takes no arguments -- the plan comes from persisted "
         "campaign state, not from you. Call this instead of composing a delegate_task "
         "batch yourself; you cannot see the hypotheses in full and transcribing them "
         "has failed before."

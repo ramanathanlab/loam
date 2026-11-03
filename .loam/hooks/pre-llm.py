@@ -12,6 +12,7 @@ import json
 import sys
 from typing import Any
 
+import hypothesis_acceptance
 from hypothesis_orchestration import context_for as orchestration_context_for
 from hypothesis_orchestration import is_campaign_child, prepare_payload, runbatch_nudge_for
 from hypothesis_tournament import Tournament
@@ -30,6 +31,17 @@ def main() -> int:
     try:
         payload = _payload()
         ensure_run_manifest(payload)
+        orchestrating = payload.get("loam_hypothesis_orchestration") is True
+        coordinator = orchestrating and not is_campaign_child(payload)
+        # Acceptance BEFORE the projections are read below, so a round whose
+        # reviewers finished last turn steers this one. Reconciliation applies
+        # reviews an independent reviewer already wrote; it decides nothing
+        # itself. Coordinator only: one writer per campaign, not one per child.
+        if coordinator and payload.get("loam_evidence_review") is True:
+            try:
+                hypothesis_acceptance.reconcile(payload)
+            except Exception as exc:
+                print(f"loam acceptance failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         parser = Parser()
         contexts = [
             parser.memory_context(payload),
@@ -39,9 +51,9 @@ def main() -> int:
         # Orchestration-only extras. Gating the run_batch nudge here keeps it (and
         # its per-turn orchestration-state read) off every non-campaign Hermes
         # session's hot path; it self-gates to code-generator children within.
-        if payload.get("loam_hypothesis_orchestration") is True:
+        if orchestrating:
             contexts.append(runbatch_nudge_for(payload))
-            if not is_campaign_child(payload):
+            if coordinator:
                 prepare_payload(payload)
                 contexts.append(Tournament(payload).context())
                 contexts.append(orchestration_context_for(payload))

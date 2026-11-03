@@ -5,13 +5,31 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
+# One home for the state filenames the hooks, the reconcilers and the audit
+# scripts all have to agree on. These are identities, not tunables: two modules
+# naming the same ledger by two different strings is a silent split-brain rather
+# than a configuration. What a deployment legitimately changes is the DIRECTORY
+# they live in, and that is `format_path` below -- payload, then LOAM_STATE_DIR,
+# then a per-file override env var -- so a campaign relocates its whole state
+# dir instead of renaming ledgers one at a time.
+PARENT_MEMORY_FILE = 'parent-memory.jsonl'
+MEMORY_FILE = 'hypothesis-memory.jsonl'
+STEERING_FILE = 'hypothesis-steering.jsonl'
+CANDIDATES_FILE = 'candidate-results.jsonl'
+REVIEWS_FILE = 'hypothesis-reviews.jsonl'
+ACCEPTANCE_LOG = 'hypothesis-acceptance.jsonl'
+HYPOTHESIS_LEDGER = 'hypothesis-ledger.jsonl'
+EVIDENCE_LEDGER = 'evidence-ledger.jsonl'
+CREDIT_LEDGER = 'credit-ledger.jsonl'
+
+
 class Parser:
     def __init__(
         self,
-        parent_memory_file: str = 'parent-memory.jsonl',
-        memory_file: str = 'hypothesis-memory.jsonl',
+        parent_memory_file: str = PARENT_MEMORY_FILE,
+        memory_file: str = MEMORY_FILE,
         memory_event: str = 'hypothesis_memory_snapshot',
-        steering_file: str = 'hypothesis-steering.jsonl',
+        steering_file: str = STEERING_FILE,
         steering_event: str = 'hypothesis_steering_snapshot',
         max_findings: int = 12,
         max_hypotheses: int = 6,

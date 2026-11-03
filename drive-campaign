@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Unattended round advancement. See scripts/drive_campaign.py for why this
+# drives a pseudo-terminal rather than looping `hermes -z`.
+#
+# Run it from the campaign directory, the same place you run ./run-campaign:
+#
+#     cd ~/campaigns/my-campaign
+#     ./drive-campaign --max-rounds 4 --max-hours 8
+#
+# It launches the campaign itself (./launch.sh if present, else ./run-campaign),
+# so do not start one first.
+set -euo pipefail
+CAMPAIGN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -z "${LOAM_REPO:-}" && -f "$CAMPAIGN_DIR/.loam/adapters/hermes/plugin/__init__.py" ]]; then
+  LOAM_REPO="$CAMPAIGN_DIR"
+fi
+if [[ ! -f "${LOAM_REPO:-}/scripts/drive_campaign.py" ]]; then
+  echo "drive-campaign: set LOAM_REPO to the loam checkout (no scripts/drive_campaign.py under '${LOAM_REPO:-}')" >&2
+  exit 1
+fi
+export LOAM_REPO
+exec python3 "$LOAM_REPO/scripts/drive_campaign.py" --campaign "$CAMPAIGN_DIR" "$@"

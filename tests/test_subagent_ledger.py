@@ -262,6 +262,78 @@ class SubagentLedgerTests(unittest.TestCase):
 
         self.assertEqual(record["observation_status"], "excluded")
         self.assertEqual(record["finding_ids"], [])
+
+    def test_a_childs_own_api_failure_is_not_an_observation(self) -> None:
+        """Hermes reports child_status 'completed' when a child's API calls failed.
+
+        The process exits cleanly and the summary is the provider's error, so
+        trusting child_status alone files an infrastructure failure as an
+        observation eligible to carry findings. Observed on a live campaign:
+        five validators returned this exact string and their round still
+        advanced to its reasoner as though the hypotheses had been tested.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "ledger.jsonl"
+            completed = self._run_hook(
+                STOP,
+                {
+                    "event": "subagent_stop",
+                    "repo_root": str(ROOT),
+                    "parent_session_id": "parent",
+                    "parent_turn_id": "turn",
+                    "child_session_id": "child",
+                    "child_subagent_id": "child-id",
+                    "child_status": "completed",
+                    "child_summary": "API call failed after 3 retries: Connection error.",
+                },
+                ledger,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            record = json.loads(ledger.read_text())
+
+        self.assertEqual(record["observation_status"], "failed")
+        self.assertEqual(record["failure_class"], "child_api_failure")
+
+    def test_a_report_about_a_provider_failure_is_still_an_observation(self) -> None:
+        """A validator writing about a failure it hit is reporting, not failing.
+
+        The classifier must only fire on a summary that IS the error, so it
+        matches at the start of a short summary. A real report that quotes the
+        message mid-narrative stays observed, or honest reporting of a flaky
+        provider would silently delete the report.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "ledger.jsonl"
+            summary = (
+                "## Outcome: inconclusive\n\n"
+                "Two of four planned runs completed. The third returned "
+                "'API call failed after 3 retries: Connection error.' and I "
+                "retried once more before stopping, so the gate is untested "
+                "rather than failed. Artifacts for the two completed runs are "
+                "under the plan directory and their manifests verified."
+            )
+            completed = self._run_hook(
+                STOP,
+                {
+                    "event": "subagent_stop",
+                    "repo_root": str(ROOT),
+                    "parent_session_id": "parent",
+                    "parent_turn_id": "turn",
+                    "child_session_id": "child",
+                    "child_subagent_id": "child-id",
+                    "child_status": "completed",
+                    "child_summary": summary,
+                },
+                ledger,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            record = json.loads(ledger.read_text())
+
+        self.assertEqual(record["observation_status"], "observed")
+        self.assertEqual(record["failure_class"], "")
+
     def test_completed_opt_in_contract_creates_pending_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ledger = Path(tmp) / "ledger.jsonl"

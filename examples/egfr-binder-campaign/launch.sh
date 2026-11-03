@@ -15,9 +15,9 @@
 #                         globus_compute_sdk. A stdlib-only python gets through
 #                         the inference check and then fails on the HPC probe.
 #   HPC_ENV_FILE          REQUIRED. run-campaign defaults this to
-#                         skills/hpc-deployment/set_env.sh, which is a DIFFERENT
-#                         endpoint (3724d6df...). Without this the preflight
-#                         would start an allocation on somebody else's endpoint.
+#                         skills/hpc-deployment/set_env.sh, a template whose
+#                         FILL_IN markers make the check below refuse to start.
+#                         Point this at your own per-user copy.
 #   ALCF_PROXY=0          the ranking judge runs on the Argo tunnel, not the
 #                         :51911 ALCF proxy, so there is nothing to start.
 #

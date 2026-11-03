@@ -63,7 +63,10 @@ paths (e.g. a bare `LOAM_CONFIG_PATH`).
 Copy it to your own name and change `HPC_ACCOUNT`, `HPC_QUEUE`, `HPC_BASE_DIR`,
 `HPC_INSPECT_ROOTS`, `HPC_CAMPAIGN_ID`, `HPC_GLOBUS_ENDPOINT_ID`, and `base_dir`
 inside `HPC_ENDPOINT_CONFIG_JSON`. Then point `HPC_ENV_FILE` at your copy —
-`run-campaign` defaults it to `set_env.sh`, which is somebody else's endpoint.
+`run-campaign` defaults it to `set_env.sh`, which is a template full of
+`FILL_IN` markers that `launch.sh` refuses to run — so a launch that forgets
+this variable fails loudly instead of starting an allocation on whoever's
+endpoint happened to be committed there.
 
 Two values are guaranteed wrong for you:
 
@@ -299,7 +302,7 @@ the campaign's queue and node count once the server is up.
 
 Watch `state/hypothesis-campaign.jsonl` for the orchestration ledger,
 `state/tournament-reports/` for each round's ranking, and
-`state/parent-memory.jsonl` for accepted findings.
+`state/hypothesis-memory.jsonl` for accepted findings.
 
 ## Known-good values, as run 2026-10-30
 
