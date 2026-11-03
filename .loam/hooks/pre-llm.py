@@ -52,7 +52,7 @@ def main() -> int:
         # its per-turn orchestration-state read) off every non-campaign Hermes
         # session's hot path; it self-gates to code-generator children within.
         if orchestrating:
-            contexts.append(runbatch_nudge_for(payload))
+            contexts.append(runbatch_nudge_for(payload)) # Should add run_batch nudge directly in the code-generation-agent code as well. This is juts extra nudge
             if coordinator:
                 prepare_payload(payload)
                 contexts.append(Tournament(payload).context())

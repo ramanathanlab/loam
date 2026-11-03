@@ -3,6 +3,11 @@ name: rfdiffusion3
 description: Run RFdiffusion3 (RFD3) all-atom protein design inference on the ALCF Aurora Intel XPU install at /flare/FRAME-IDP/msinclair/software/foundry. Covers environment activation (the frameworks/2025.3.1 module the venv was built against), ZE_AFFINITY_MASK tile pinning, checkpoint discovery via FOUNDRY_CHECKPOINT_DIRS, input JSON specs (unconditional, binder with hotspots, motif/enzyme scaffolding, symmetry, partial diffusion) and the `rfd3 design` CLI. Use whenever asked to generate protein backbones/designs with RFdiffusion3 on Aurora. For RNA/DNA *generation* use the repo's rfdiffusion3na skill; for structure prediction use its rf3 skill; for RFD4-Proteina use the rfd4-proteina skill.
 ---
 
+> **Superseded by `rfd4-proteina`** for Aurora binder/monomer design (RFD4 flow-matching;
+> verified working at 12x via run_batch). Kept for reference but **dropped from the active
+> campaign** — do not re-add without a specific reason RFD4 can't cover. If re-enabled, it
+> needs the same PMIx/rank-env scrub as rfd4 (it is the same Lightning/foundry family).
+
 # RFdiffusion3 (RFD3) on Aurora
 
 RFD3 is the all-atom diffusion model in the Foundry monorepo. You describe the
