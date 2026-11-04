@@ -73,10 +73,14 @@
 # Assigned here, and an inherited value is DISCARDED, so a parent shell cannot
 # redirect or merge a run: LOAM_STATE_DIR (always <campaign>/state), LOAM_RUN_ID
 # (fresh per launch), LOAM_LEDGER_PATH, LOAM_PARENT_MEMORY_PATH,
-# LOAM_WORKFLOW_ID, LOAM_PROFILE, LOAM_CONFIG_PATH, HERMES_ACCEPT_HOOKS,
+# LOAM_WORKFLOW_ID, LOAM_PROFILE, HERMES_ACCEPT_HOOKS,
 # HERMES_ENABLE_PROJECT_PLUGINS (=1; without it Hermes ignores the shim and no
 # hook fires at all),
 # HERMES_HOME (always <campaign>/.hermes/home).
+#
+# LOAM_CONFIG_PATH is the one exception: an inherited value is kept, but a
+# campaign-local <campaign>/.hermes/home/loam.yaml overrides it when present,
+# so the profile travels with the campaign rather than with the machine.
 #
 # Deliberately NOT a knob: the tournament cadence. LOAM_PRE_LLM_EVERY is read
 # only by the emergency no-config path, so with a real profile it does nothing;
@@ -101,8 +105,27 @@ cd "$CAMPAIGN_DIR"
 
 # A launch owns its state identity. Never inherit these from a parent shell.
 unset LOAM_STATE_DIR LOAM_RUN_ID LOAM_PRE_LLM_EVERY LOAM_LEDGER_PATH \
-  LOAM_PARENT_MEMORY_PATH LOAM_WORKFLOW_ID LOAM_PROFILE LOAM_CONFIG_PATH \
+  LOAM_PARENT_MEMORY_PATH LOAM_WORKFLOW_ID LOAM_PROFILE \
   HERMES_ACCEPT_HOOKS
+
+# A campaign may carry its own profile, the way it already carries its own state
+# directory and Hermes home. When it does, it wins -- so switching campaigns is
+# `cd`, not editing a global file, and two campaigns cannot read each other's
+# tournament settings. LOAM_CONFIG_PATH is therefore NOT in the unset list above;
+# an inherited value still loses to a campaign-local file, which is what makes
+# this safe to export from a wrapper. scripts/drive_campaign.py resolves the
+# same paths in the same order for its own in-process profile read, so the driver
+# and the hooks never disagree about which profile is live.
+#
+# Preferred layout: loam.yaml at the campaign ROOT (beside run-campaign), so
+# dropping it in is all the setup a campaign needs. The legacy
+# .hermes/home/loam.yaml location is still honored as a fallback.
+for CAMPAIGN_PROFILE in "$CAMPAIGN_DIR/loam.yaml" "$CAMPAIGN_DIR/.hermes/home/loam.yaml"; do
+  if [[ -f "$CAMPAIGN_PROFILE" ]]; then
+    export LOAM_CONFIG_PATH="$CAMPAIGN_PROFILE"
+    break
+  fi
+done
 
 if [[ ! -f "$LOAM_REPO/.loam/adapters/hermes/plugin/__init__.py" ]]; then
   echo "run-campaign: no Loam adapter under LOAM_REPO=$LOAM_REPO" >&2
@@ -156,11 +179,23 @@ mkdir -p "$HERMES_HOME"
 # regular file -- silently detaching this campaign from the shared config, or
 # clobbering it. Copying each launch keeps one editable source of truth while a
 # campaign-local rewrite stays campaign-local.
-if [[ ! -f "$SHARED_HERMES_HOME/config.yaml" ]]; then
-  echo "run-campaign: no Hermes config at $SHARED_HERMES_HOME/config.yaml" >&2
+#
+# A campaign-local config.yaml, if present, is the source instead of the shared
+# repo config, so per-campaign settings (e.g. a different delegation model) travel
+# with the campaign rather than with the machine. Preferred layout: config.yaml at
+# the campaign ROOT (beside loam.yaml and run-campaign), so dropping those two
+# files in is all the setup a campaign needs. The legacy .hermes/config.yaml
+# location is still honored, then the shared repo config as the final fallback.
+# Whichever source is chosen is COPIED into the home each launch (Hermes rewrites
+# home/config.yaml in place), so the root source stays a clean editable template.
+for CONFIG_SOURCE in "$CAMPAIGN_DIR/config.yaml" "$CAMPAIGN_DIR/.hermes/config.yaml" "$SHARED_HERMES_HOME/config.yaml"; do
+  [[ -f "$CONFIG_SOURCE" ]] && break
+done
+if [[ ! -f "$CONFIG_SOURCE" ]]; then
+  echo "run-campaign: no Hermes config at $CAMPAIGN_DIR/config.yaml, $CAMPAIGN_DIR/.hermes/config.yaml, or $SHARED_HERMES_HOME/config.yaml" >&2
   exit 1
 fi
-cp "$SHARED_HERMES_HOME/config.yaml" "$HERMES_HOME/config.yaml"
+cp "$CONFIG_SOURCE" "$HERMES_HOME/config.yaml"
 
 # Register the checkout's skills/ tree in the shared library before the home is
 # assembled. Hermes resolves `campaign.skills` names against the library, so a

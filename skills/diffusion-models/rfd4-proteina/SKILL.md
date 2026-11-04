@@ -30,10 +30,31 @@ BASE=<your writable run dir>
 export ZE_AFFINITY_MASK=7                      # pin ONE tile
 export CLUSTER=local                            # else: "No .env file found for cluster ..."
 export DATA_PATH=$BASE/data_path                # native ckpts + optional assets
-export HF_HOME=$BASE/hf                         # HF bundle cache (~1.7 GB)
-export http_proxy=http://proxy.alcf.anl.gov:3128 \
-       https_proxy=http://proxy.alcf.anl.gov:3128   # compute nodes need this to reach HF
+# HF bundle is PRE-STAGED on flare -- point HF_HOME at it and run OFFLINE: no
+# download, no proxy. (Weights are NOT bundled in the install; this cache holds
+# the nvidia/RFD4-Proteina bundle at revision a06e2509..., the inference default.)
+export HF_HOME=/lus/flare/projects/FRAME-IDP/agentic_campaign_09_26/binder_design/models/rfd4_proteina
+export HF_HUB_OFFLINE=1
+# Only to RE-FETCH instead of using the staged cache: unset HF_HUB_OFFLINE and
+# export http_proxy/https_proxy=http://proxy.alcf.anl.gov:3128 (then HF_HOME may
+# be any writable dir).
 export PYTHONPATH=$BASE/shim${PYTHONPATH:+:$PYTHONPATH}   # see §3
+# CRITICAL under an MPI/PMIx launcher (Ensemble Launcher / Parsl / Globus-Compute
+# worker -- i.e. Loam's run_batch / run_code path): scrub the rank env, or
+# Lightning auto-detects a multi-rank job and DEADLOCKS on a collective with no
+# peers. Symptom: builds the model, logs "Guidance is turned off", then hangs
+# forever with the XPU idle (no structure, any walltime/thread count). The EL
+# task inherits a live PALS/PMIx context (PMIX_RANK, PMIX_NAMESPACE,
+# PMIX_SERVER_URI, PALS_*); these make it think it is one rank of a many-rank job.
+# Confirmed: with this scrub, one binder design runs in ~150 s on a tile.
+# NOT needed for a plain single-rank `qsub -l select=1` job (no PMIx launch ctx).
+unset PMIX_RANK PMIX_NAMESPACE PMI_RANK PMI_SIZE RANK LOCAL_RANK LOCAL_WORLD_SIZE \
+      PALS_RANKID PALS_NODEID PARSL_WORKER_RANK
+export WORLD_SIZE=1 RANK=0 LOCAL_RANK=0
+# Keep BLAS/OMP single-threaded: the work is on the XPU, so CPU threads are only
+# glue. At the default (~104) 12 rows/node oversubscribe the 208 CPUs and the run
+# crawls; =1 lets 12 designs run concurrently at full speed (~145 s each).
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 cd "$REPO"
 $REPO/.venv/bin/rfd4-generate <hydra overrides>
 ```
@@ -53,9 +74,12 @@ generation.
 `configs/inference.yaml` defaults to the **Hugging Face bundle**
 `hf_ckpt_path=nvidia/RFD4-Proteina` pinned at revision
 `a06e2509c7033b010fc43614e9fd840303588502`, which overrides the native
-checkpoint paths. On a compute node with the proxy exported this downloads
-itself into `$HF_HOME` on first run (~1.7 GB, ~16 s measured) — point `HF_HOME`
-at a shared flare directory so you pay for it once.
+checkpoint paths. This bundle (~1.7 GB) is **pre-staged** at
+`/lus/flare/projects/FRAME-IDP/agentic_campaign_09_26/binder_design/models/rfd4_proteina`
+(the `HF_HOME` set above); with `HF_HUB_OFFLINE=1` it loads from there with **no
+download and no proxy** — the robust path for many concurrent runs. Only if you
+must re-fetch does it download into `$HF_HOME` on first run (~1.7 GB, ~16 s, needs
+the proxy); then point `HF_HOME` at a shared flare directory so you pay once.
 
 Native checkpoints are the alternative (`hf_ckpt_path=null`):
 `${DATA_PATH}/flow_checkpoints/rfd4-proteina-flow-release-2026-10-19.ckpt` plus
@@ -95,10 +119,11 @@ module provides torch 2.13 with *native* XPU support and **no
 
 Since the software tree must not be modified, all three are patched from
 `PYTHONPATH` via a `sitecustomize.py`. Use the tested copy at
-`scripts/sitecustomize.py` beside this skill:
+the worker-visible copy in the /flare loam clone (run_batch runs on the Aurora
+worker, which cannot see the local skill dir):
 
 ```bash
-mkdir -p $BASE/shim && cp <this skill>/scripts/sitecustomize.py $BASE/shim/
+mkdir -p $BASE/shim && cp ${HPC_LOAM_HOME:?set HPC_LOAM_HOME to the loam clone on /flare}/skills/diffusion-models/rfd4-proteina/scripts/sitecustomize.py $BASE/shim/
 export PYTHONPATH=$BASE/shim${PYTHONPATH:+:$PYTHONPATH}
 ```
 
@@ -203,7 +228,7 @@ Unconditional/motif/binder commands beyond the verified monomer case are
 | `inputs` | — | Benchmark dir or annotated CIF. |
 | `out_dir` | `./runs/<run_name>` | Use an absolute path outside the repo. |
 | `subset_to_examples` | null | Run only these example keys. |
-| `num_replicates` | 1 | Designs per example (8-80 for real work). |
+| `num_replicates` | 1 | Designs (backbones) per example from ONE process on ONE tile. 1 is too small for real work; a binder funnel needs a large starting library, so the **default is >1000 backbones per hypothesis per round**. Treat it as a lever to tune (§6.1), not a fixed rule. Reach the count by fanning out across tiles rather than one long serial job: keep per-job `num_replicates` modest (~8) and get the total from the number of parallel jobs (an Aurora node has 12 usable tiles, so ~12 jobs × 8 = ~96 backbones per wave per node). |
 | `batch_size` | 1 | Raise to ~8 only after the longest input passes at 1. |
 | `seed` | null | Reproducibility. |
 | `skip_existing` | true | Resume; use a fresh `out_dir` when changing settings. |
@@ -222,6 +247,45 @@ Unconditional/motif/binder commands beyond the verified monomer case are
 | `inference_backend` | `native` | `bioir` is a CUDA-oriented path — do not use on XPU. |
 | `verbose` | false | `true` prints the composed config and diagnostics. |
 | `hardware.ngpus_per_node_` / `hardware.nnodes_` | 1 / 1 | Trainer devices/nodes. Leave at 1 — multi-tile is untested. |
+
+## 6.1 Design counts and the parameters you control (batch size, length)
+
+How many backbones to generate — and at what length — are **yours to choose and
+to vary between rounds**; this skill fixes neither. Pick deliberately and adjust
+as the campaign tells you more.
+
+**Batch size.** `num_replicates=1` is far too small for real work: a binder-design
+funnel loses most candidates between backbone and a confident, selective co-fold
+(RFD4 → ProteinMPNN → co-fold vs target *and* each off-target → filters), so the
+starting library has to be large. The **default is >1000 backbones per hypothesis
+per round** — scale up further when the pool is large and idle or a direction is
+clearly paying off, down when the pool is contended or you are just probing.
+
+RFD4 here is **one process on one tile** (`hardware.ngpus_per_node_=1`, multi-tile
+untested — §7.10), and one long serial job is exactly what the 1 h debug-scaling
+reclaim kills mid-run. So reach your chosen count by **fanning out across tiles**
+(the `aurora-multinode-fold` pattern), not by one huge call:
+
+- Submit many independent `rfd4-generate` jobs via `run_batch(gpus=1 …)`, each
+  on its own tile, each with a modest `num_replicates` (~8), a **distinct `seed`**
+  and a **distinct `out_dir`**. An Aurora node has 12 usable tiles, so ~12 jobs ×
+  `r=8` = ~96 backbones per wave on one node; run successive waves (and/or more
+  nodes) to reach the >1000 target instead of one long serial job.
+- `skip_existing=true` + a per-job `out_dir` makes the set resume cleanly after a
+  reclaim: only unfinished jobs rerun.
+- **Match the fan-out to the tiles actually available** — call the HPC server's
+  `pool_status` (it reports `total_tiles`, `queue`, `walltime`) and size the number
+  of parallel jobs to it, so you don't over-queue a wave the pool can't clear
+  before the next reclaim or leave idle tiles empty.
+
+**Length.** Design length is set by the input CIF, not a CLI flag (§5), so it is
+easy to leave it pinned at whatever benchmark you started from — don't. Binder
+length is a real design variable: **vary it across rounds** (build annotated CIFs
+at a few lengths, e.g. ~20 / 40 / 60 / 80 / 100 / 120 aa) rather than folding every
+hypothesis at one length, and let the co-fold scores show what the target prefers.
+
+The same per-tile fan-out applies to the downstream co-fold screen, so budget
+tiles across generation *and* co-folding when both are in flight.
 
 ## 7. Aurora / XPU gotchas
 

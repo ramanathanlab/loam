@@ -400,16 +400,17 @@ def runbatch_nudge_for(payload: Mapping[str, Any]) -> str:
         return ''  # the run has made no calls yet
     functions = [hypothesis_workspace._hpc_function(call.get('tool', '')) for call in record.get('calls') or []]
     run_code = functions.count('run_code')
-    if run_code < 5 or 'run_batch' in functions:
+    if run_code < 3 or 'run_batch' in functions:
         return ''
     return (
         f"RUN_BATCH REMINDER: this run has {run_code} serial run_code calls and no run_batch. "
-        "A design tier's per-candidate fan-out (generate / fold / score many candidates) MUST go "
-        "through run_batch -- one JSONL row per candidate, one submit, then poll batch_status until "
-        "unfinished == 0 -- NOT a run_code loop. Each serial run_code resends your whole growing "
-        "context and is the main cause of the model token-rate-limit failures that abort runs; "
-        "run_batch executes the rows on HPC tiles without that per-call cost. Keep run_code only for "
-        "setup, a single probe fold, and post-batch aggregation."
+        "ALL real execution -- generating, folding, or scoring candidates, one or many -- MUST go "
+        "through run_batch: one JSONL row per job, one submit, then poll batch_status until "
+        "unfinished == 0, and read results from the recorded batch outputs. run_code is for a SHORT "
+        "diagnostic AFTER a batch job errors -- NOT for real work, smoke tests, or probe folds. "
+        "Each serial run_code resends your whole growing context and is the main cause of the model "
+        "token-rate-limit failures that abort runs; run_batch executes the rows on HPC tiles without "
+        "that per-call cost. Go straight to run_batch, even for a single candidate."
     )
 
 

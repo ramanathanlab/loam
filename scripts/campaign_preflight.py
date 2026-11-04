@@ -275,7 +275,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--hermes-home", type=Path, required=True)
-    parser.add_argument("--loam-config", type=Path, default=Path.home() / ".hermes" / "loam.yaml")
+    parser.add_argument(
+        "--loam-config",
+        type=Path,
+        # Honor LOAM_CONFIG_PATH so a campaign-local profile is used: the
+        # launcher and the driver probe invoke this without --loam-config,
+        # and the global ~/.hermes/loam.yaml may not exist.
+        default=Path(os.environ.get("LOAM_CONFIG_PATH") or (Path.home() / ".hermes" / "loam.yaml")).expanduser(),
+    )
     parser.add_argument("--hpc-env", type=Path)
     parser.add_argument("--hpc-url", default="http://127.0.0.1:8000/mcp")
     parser.add_argument("--wait-seconds", type=int, default=900)

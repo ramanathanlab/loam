@@ -152,15 +152,11 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
             async def run_batch(script_path: str | None = None, inputs_path: str | None = None,
                                 timeout_each: float = 900.0, gpus: float = 1,
                                 venv_path: str | None = None, batch_id: str | None = None,
-                                labels: dict | None = None, tool: str | None = None,
-                                tool_version: int | None = None) -> dict:
+                                labels: dict | None = None) -> dict:
                 """Run one Python script once per row of a JSONL file, in parallel across the cluster's GPUs.
 
-                Give either script_path or tool (a name from list_tools; newest version
-                unless tool_version). Each row runs as `python script.py input.json` in its
-                own folder, where input.json is that row (an "id" field is optional); a tool
-                registered with call="argv" runs as `python script.py --name value ...`.
-                For a tool, every row is checked against its params before anything runs.
+                Give script_path. Each row runs as `python script.py input.json` in its
+                own folder, where input.json is that row (an "id" field is optional).
                 Write results to files in that folder and exit 0 on success. The script and
                 inputs file are copied when the batch is created, so later edits do not
                 affect it. gpus is the number of GPUs/tiles EACH ROW gets, not the batch:
@@ -174,7 +170,7 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
                 return await dispatch(
                     "run_batch", script_path=script_path, inputs_path=inputs_path,
                     timeout_each=timeout_each, gpus=gpus, venv_path=venv_path,
-                    batch_id=batch_id, labels=labels, tool=tool, tool_version=tool_version,
+                    batch_id=batch_id, labels=labels,
                 )
 
             async def batch_status(batch_id: str) -> dict:
@@ -218,10 +214,60 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
                 return await dispatch("list_tools", query=query, name=name,
                                       all_versions=all_versions, limit=limit)
 
+            async def pool_status() -> dict:
+                """Live compute budget for sizing a run_batch fan-out: nodes, addressable GPU tiles, queue, walltime.
+
+                Read this BEFORE launching a large batch so you fan out to the tiles
+                you actually have rather than guessing. `total_tiles` is the number of
+                run_batch(gpus=1) rows that run side by side at once; each job must
+                finish inside `walltime`, and on debug / debug-scaling queues the block
+                is reclaimed about once an hour, so keep per-job work well under the
+                hour. This reads local allocation config only -- it reports CAPACITY,
+                not current free/busy; combine with list_batches / batch_status to see
+                what is already in flight. Instant, never queues behind worker calls.
+                """
+                per_node = {"aurora": 12, "polaris": 4}.get(SYSTEM, 12)
+                total_tiles = (nnodes * per_node) if cluster else POOL_SIZE
+                cfg = ENDPOINT_CONFIG
+
+                def pick(*keys):
+                    for k in keys:
+                        v = cfg.get(k)
+                        if v not in (None, ""):
+                            return v
+                    return None
+
+                return {
+                    "system": SYSTEM,
+                    "mode": "cluster" if cluster else "direct",
+                    "nodes": nnodes if cluster else None,
+                    "tiles_per_node": per_node,
+                    "total_tiles": total_tiles,
+                    "pool_size": POOL_SIZE,
+                    "queue": pick("queue"),
+                    "walltime": pick("walltime"),
+                    "nodes_per_block": pick("nodes_per_block", "select"),
+                    "account": pick("account", "project"),
+                    "campaign_id": CAMPAIGN_ID,
+                    "guidance": (
+                        f"Up to {total_tiles} run_batch(gpus=1) rows run concurrently. "
+                        "Size a generation/co-fold fan-out to this; each job must finish "
+                        "within walltime (debug/debug-scaling reclaim ~hourly). "
+                        "This is capacity, not live free tiles -- check list_batches for in-flight work."
+                    ),
+                }
+
             # run_batch needs EL; status/listing only read disk and register_tool's
             # smoke run is a local subprocess, so any agent serves those.
-            tools = [run_code, inspect_filesystem, batch_status, list_batches,
-                     register_tool, list_tools]
+            # --- Tool registry DISABLED 2026-11-02 (register_tool / list_tools) ---
+            # The registry's "reuse a tool that fits" nudge (register_tool docstring +
+            # list_tools discovery) steered code-generators to reuse prior, broken
+            # registered tools -- e.g. a chai fold that skipped the skill's chai_xpu.py
+            # launcher and silently produced 0 structures, yet was marked last_ok_batch.
+            # Un-exposing both leaves run_batch(script_path=...) as the only path: a fresh
+            # script built from the skill each time. The functions remain defined above.
+            # To re-enable, add  register_tool, list_tools  back into this list.
+            tools = [run_code, inspect_filesystem, batch_status, list_batches, pool_status]
             if cluster:
                 # Build the pool before serving: a tool call must never have to
                 # launch or verify an agent, or concurrent calls serialize. The
@@ -243,8 +289,8 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
     return FastMCP(name="hpc-deployment", instructions=(
         "run_code executes Python on a pinned accelerator. inspect_filesystem is bounded read-only ls/cat/tail; it is not a shell. "
         "For many runs of one script use run_batch, then poll batch_status; list_batches shows past batches. "
-        "Before writing a new script, call list_tools and reuse a tool that fits; save a reusable script "
-        "with register_tool and run it with run_batch(tool=...)."
+        "Call pool_status to see the compute budget (nodes, addressable tiles, queue, walltime) before sizing a large fan-out, "
+        "so you match the number of parallel run_batch rows to the tiles actually available."
     ), lifespan=lifespan, on_duplicate="replace")
 
 
