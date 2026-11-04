@@ -1,0 +1,146 @@
+{# ===========================================================================
+   user_config_template.yaml.j2  --  CSCS ALPS / DAINT (GH200), endpoint
+   `loam-cscs-alps-flex`
+
+   SLURM port of alcf_polaris/user_config_template.yaml.j2. Same flex-scaling
+   contract: queue/partition, node count, walltime and block counts are all
+   passed per-submission via
+
+       Executor(endpoint_id=..., user_endpoint_config={
+           "partition": "normal",
+           "nodes_per_block": 4,
+           "walltime": "04:00:00",
+           "max_blocks": 2,
+       })
+
+   -- nothing here is pinned to one job shape. Every default below is safe to
+   leave untouched for a quick `debug`-partition task.
+
+   Hardware (Alps GH200 "Grace-Hopper" node, verified via sinfo on daint):
+     * 4x NVIDIA GH200 (H100) per node -> 4 workers/node, CUDA_VISIBLE_DEVICES
+       (parsl `available_accelerators`), same pinning var as Polaris.
+     * 288 CPU cores/node (4x 72-core Grace) -> 72 cores/worker for 4 workers.
+       If you override `available_accelerators`/`max_workers_per_node`, override
+       `cores_per_worker` and `omp_num_threads` to match (288 / workers).
+     * aarch64. loam_venv is built aarch64 on the login node, which is the same
+       ISA as the compute nodes, so the same venv runs on both.
+     * Partitions (sinfo): debug (<=30m, 24 nodes), low / normal (<=24h, 922
+       nodes, normal is the default). All are whole-node, gpu:4, feature `gh`.
+     * Account: g245 (QOS normal). Confirm yours with `sacctmgr show assoc
+       user=$USER`.
+
+   Differences from the Polaris template, and why:
+     * provider.type SlurmProvider, launcher SrunLauncher. SLURM, not PBS.
+     * `partition` + `account` replace PBS `queue` + `account`; no PBS
+       `filesystems=`/`place=scatter` scheduler_options (not a SLURM concept).
+     * `address.ifname` is hsn0 (Slingshot) -- the login-node interface compute
+       nodes reach the interchange on (172.28.0.0/16). The Polaris analog was
+       bond0. A wrong ifname does NOT error: the endpoint reports online and
+       tasks hang forever, so this is the first thing to check if a submitted
+       task never returns.
+     * No HTTP(S)_PROXY block. Alps compute nodes are not behind ALCF's
+       off-site proxy; internal worker<->interchange ZMQ over hsn0 needs none.
+       If task code must reach the public internet and the node has no route,
+       add a CSCS-appropriate proxy here -- do not copy the alcf.anl.gov one.
+
+   walltime quoting: the service's `_sanitize_user_json` JSON-encodes every
+   caller-supplied STRING option before Jinja sees it, so a caller passing
+   walltime="04:00:00" arrives here as the 10-char string `"04:00:00"`, quotes
+   included. That is why the default below embeds its own quotes
+   (`default('"01:00:00"')`) rather than wrapping the expression in static
+   quotes, which would double up into `""04:00:00""` and break YAML the moment
+   a caller overrides it. Match the `default('"...."')` pattern for any new
+   string field that must stay quoted in YAML.
+   =========================================================================== #}
+
+display_name: {{ display_name|default("loam-cscs-alps-flex") }}
+
+engine:
+  type: GlobusComputeEngine
+
+  max_workers_per_node: {{ max_workers_per_node|default(4) }}
+
+  {# available_accelerators pins one GPU per worker via CUDA_VISIBLE_DEVICES
+     (set `available_accelerators: 4` in user_endpoint_config for a GPU-per-worker
+     layout -- validated by the smoke test). Loam's cluster-pool model instead
+     runs POOL_SIZE+1 non-accelerator worker slots and manages GPUs inside
+     run_code, like the Aurora template, so it does NOT set this -- omit it and
+     parsl leaves all 4 GPUs visible to every worker. Emitted only when passed. #}
+  {% if available_accelerators is defined %}available_accelerators: {{ available_accelerators }}
+  {% endif %}
+  {# Pair each worker with the CPU cores nearest its GPU. "block" walks cores
+     in order across the 4 Grace sockets; one worker per GH200 module. #}
+  cpu_affinity: {{ cpu_affinity|default("block") }}
+  prefetch_capacity: {{ prefetch_capacity|default(0) }}
+
+  {# A rejected sbatch (partition limits, transient scheduler error) logs and
+     retries instead of tearing the whole endpoint down -- one bad request
+     should not take the endpoint down for everyone sharing it. #}
+  block_error_handler: {{ block_error_handler|default(false)|lower }}
+
+  {# flex-scaling: add/drop SLURM blocks on task pressure and idle time rather
+     than holding a fixed count. `strategy` is a plain string key into parsl's
+     Strategy registry ("simple") on GlobusComputeEngine -- NOT a nested
+     {type, max_idletime} object (that dies with "unhashable type: 'dict'").
+     max_idletime lives in the separate job_status_kwargs arg below. #}
+  strategy: {{ strategy|default('"simple"') }}
+  job_status_kwargs:
+    max_idletime: {{ max_idletime|default(300) }}
+
+  {# Address COMPUTE-node workers use to reach the interchange on the LOGIN
+     node. hsn0 is the Slingshot interface in the 172.28/16 compute fabric. #}
+  address:
+    type: address_by_interface
+    ifname: {{ ifname|default("hsn0") }}
+
+  provider:
+    type: SlurmProvider
+    account: {{ account|default('"g245"') }}
+    {# Loam's control plane (hpc_control.child_env) injects the key `queue`, so
+       accept both: `partition` wins if given, else `queue`, else debug. This is
+       what lets HPC_QUEUE in set_env_cscs.sh / `./run-campaign HPC_QUEUE=normal`
+       select the SLURM partition without any change to the loam MCP stack. #}
+    partition: {{ partition|default(queue|default('"debug"'), true) }}
+    {# QOS is usually implied by the partition on Alps; set only if your site
+       requires an explicit one. Leave unset by passing qos="". #}
+    {% if qos is defined and qos %}qos: {{ qos }}
+    {% endif %}
+    walltime: {{ walltime|default('"00:30:00"') }}
+
+    nodes_per_block: {{ nodes_per_block|default(1) }}
+    cores_per_node: {{ cores_per_node|default(288) }}
+
+    {# Elastic defaults: request nothing until a task arrives (init/min 0),
+       scale up to max_blocks on demand, give the allocation back when idle.
+       Raise min_blocks only to hold a reservation across idle gaps. #}
+    init_blocks: {{ init_blocks|default(0) }}
+    min_blocks: {{ min_blocks|default(0) }}
+    max_blocks: {{ max_blocks|default(1) }}
+
+    {# Whole-node exclusive allocation -- an Alps node hands you all 4 GH200
+       GPUs and all 288 cores. Extra #SBATCH lines go in scheduler_options;
+       all partitions here are gpu:4 so no --gres line is required. #}
+    exclusive: {{ exclusive|default(true)|lower }}
+    scheduler_options: "{{ scheduler_options|default('') }}"
+
+    launcher:
+      type: SrunLauncher
+
+    {# worker_init runs on EVERY node before its workers start. srun launches
+       managers in a fresh shell: modules, venv, env vars and cwd do NOT carry
+       over. Loam passes the full string via user_endpoint_config
+       (HPC_ENDPOINT_CONFIG_JSON in set_env_cscs.sh), so this is a templated
+       variable like the Aurora template; the default below is a standalone-test
+       fallback. Keep any override ONE line -- it renders as a single quoted
+       YAML string. Ordering is load-bearing: TMPDIR=/tmp MUST be first (a long
+       TMPDIR overflows the worker pool's AF_UNIX socket path past ~108 chars
+       and every worker dies before registering). The venv carries a matching
+       globus-compute-endpoint; PYTHONPATH must reach hpc_agent.py so cluster
+       workers import it. #}
+    worker_init: {{ worker_init|default('"export TMPDIR=/tmp; source /ritom/scratch/cscs/avasan/loam_venv/bin/activate; export PYTHONPATH=/ritom/scratch/cscs/avasan/loam/skills/hpc-deployment/scripts:$PYTHONPATH; which python"') }}
+
+{# Flex-scaling gives resources back, not holds them -- shut the UEP process
+   down when idle. 30s/heartbeat default: soft=10 -> ~300s idle before
+   shutdown, hard=5760 -> ~48h ceiling. #}
+idle_heartbeats_soft: {{ idle_heartbeats_soft|default(10) }}
+idle_heartbeats_hard: {{ idle_heartbeats_hard|default(5760) }}

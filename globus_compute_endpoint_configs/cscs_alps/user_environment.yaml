@@ -1,0 +1,12 @@
+# Environment variables injected into user endpoint processes (UEPs), which
+# run on the LOGIN node alongside the manager. PATH must include loam_venv/bin
+# so the manager can find `globus-compute-endpoint` to spawn the UEP, and so
+# the UEP finds its Python. Without this, an endpoint launched by full path
+# (venv not activated) fails with:
+#   "No such file or directory: .../globus-compute-endpoint"
+# (the manager spawns the UEP by bare name and resolves it via PATH).
+#
+# NOTE: this sets PATH for the UEP on the login node. The COMPUTE-node workers
+# get their environment from the template's worker_init (which activates the
+# venv there), not from this file.
+PATH: /ritom/scratch/cscs/avasan/loam_venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/lib/mit/bin

@@ -408,17 +408,21 @@ def pre_llm_call(session_id: str = "", **kwargs: Any) -> dict[str, Any] | None:
         knowledge = tournament.knowledge or {}
         timeout_seconds = max(timeout_seconds,
                               tournament.timeout_seconds + int(knowledge.get("timeout_seconds") or 0))
+    # Merge with setdefault so a Hermes build that already passes session_id /
+    # parent_session_id (or any payload_values key) in **kwargs does not collide
+    # with an explicit keyword -- `_payload(..., parent_session_id=x, **kwargs)`
+    # raised "got multiple values for keyword argument 'parent_session_id'" on
+    # Hermes builds that supply it positionally in kwargs (seen on 0dfba37b).
+    values: dict[str, Any] = dict(kwargs)
+    values.setdefault("session_id", session_id)
+    values.setdefault("parent_session_id", session_id)
+    values["loam_turn"] = turn
+    values["loam_interval"] = interval
+    for key, value in payload_values(profile).items():
+        values.setdefault(key, value)
     return _invoke(
         "pre-llm.py",
-        _payload(
-            "pre_llm_call",
-            session_id=session_id,
-            parent_session_id=session_id,
-            loam_turn=turn,
-            loam_interval=interval,
-            **payload_values(profile),
-            **kwargs,
-        ),
+        _payload("pre_llm_call", **values),
         timeout_seconds=timeout_seconds,
     )
 

@@ -1,8 +1,8 @@
 model:
   default: argo:gpt-5.6-sol
   provider: custom
-  base_url: http://localhost:61612/v1
-  api_key: local-no-auth   # Argo tunnel on :61612 is no-auth
+  base_url: http://localhost:50143/v1
+  api_key: local-no-auth   # Argo proxy tunnel on :50143 (homes-02:50143 via cels-gw)
 _config_version: 33
 plugins:
   enabled:
@@ -21,20 +21,29 @@ mcp_servers:
     timeout: 900
     connect_timeout: 120
   hpcctl:                       # -> mcp__hpcctl__hpc_allocation_status / hpc_restart
-    command: /Users/msinclair/agent/loam/campaign1/.venv/bin/python
+    command: /ritom/scratch/cscs/avasan/loam_venv/bin/python
     args: [
-          /Users/msinclair/github/loam/skills/hpc-deployment/scripts/hpc_control.py]
+          /ritom/scratch/cscs/avasan/loam/skills/hpc-deployment/scripts/hpc_control.py]
     env:
-      HPC_ENV_FILE: 
-        /Users/msinclair/github/loam/skills/hpc-deployment/set_env_msinclair.sh
-      HPC_ALLOWED_QUEUES: debug,debug-scaling,capacity
-      HPC_MAX_NODES: "20"
-      # 12 h, not 1 h: these caps are what hpc_control.validate() checks, so a
-      # 1 h cap here REFUSES a capacity allocation through the hpcctl tool
-      # (`walltime 04:00:00 exceeds the cap of 01:00:00`) even though the queue
-      # allows 168 h. The per-queue limits in hpc_control already stop a debug
-      # block from asking for more than its hour.
-      HPC_MAX_WALLTIME: "12:00:00"
+      HPC_ENV_FILE:
+        /ritom/scratch/cscs/avasan/loam/skills/hpc-deployment/set_env_cscs.sh
+      # Alps SLURM partitions. hpc_control.QUEUE_LIMITS only knows the Aurora
+      # queues, so 'normal'/'low' fall back to the HPC_MAX_* caps below; 'debug'
+      # inherits Aurora's 2-node/1h cap there (harmless -- affects only the
+      # hpcctl restart tool, not the core mcp_server submission path).
+      HPC_ALLOWED_QUEUES: debug,low,normal
+      HPC_MAX_NODES: "8"
+      # Caps checked by hpc_control.validate() for the hpcctl restart tool.
+      # normal/low allow 24 h on Alps; keep the cap there.
+      HPC_MAX_WALLTIME: "24:00:00"
     timeout: 300                # a restart waits up to 180 s for the old server to exit
 approvals:
   mcp_reload_confirm: false
+# Pre-record the shared-metrics consent so a driven (PTY) campaign is not blocked
+# on the first-run "Help improve Hermes?" prompt. decided + offer_version=2 =>
+# offer_consent_if_undecided() returns without prompting. (No telemetry is sent.)
+telemetry:
+  shared_metrics:
+    enabled: false
+    send: false
+    offer_version: 2

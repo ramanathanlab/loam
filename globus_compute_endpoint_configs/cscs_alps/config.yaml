@@ -1,0 +1,9 @@
+display_name: loam-cscs-alps-flex
+email: avasan@anl.gov
+identity_mapping_config_path: /users/avasan/.globus_compute/loam-cscs-alps/identity_mapping_config.json
+# public MUST be false here: an unprivileged user's templatable endpoint
+# registers with multi_user=is_privileged()=False (cli.py:819), and the Globus
+# Compute service rejects `public: true` for a non-privileged registration
+# ("The 'public' field is only supported on multi-user endpoints"). false also
+# keeps the endpoint unlisted; access is still gated by identity mapping.
+public: false

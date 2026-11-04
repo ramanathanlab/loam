@@ -1,0 +1,18 @@
+[
+  {
+    "comment": "Personal endpoint: map the owner's Globus identity to the local POSIX account 'avasan'. Add or adjust match lines to whatever identity provider you actually authenticate under (run 'globus-compute-endpoint start' once to see it). See https://docs.globus.org/globus-connect-server/v5.4/identity-mapping-guide/",
+    "DATA_TYPE": "expression_identity_mapping#1.0.0",
+    "mappings": [
+      {
+        "source": "{username}",
+        "match": "avasan@anl.gov",
+        "output": "avasan"
+      },
+      {
+        "source": "{username}",
+        "match": "(.*)@cscs.ch",
+        "output": "avasan"
+      }
+    ]
+  }
+]
