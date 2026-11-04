@@ -210,6 +210,19 @@ if [[ -f "$LOAM_REPO/scripts/install_skills.py" ]]; then
     echo "run-campaign: some skills were not registered; run scripts/install_skills.py" >&2
 fi
 
+# Bake the LIVE allocation shape into the hpc-deployment skill so code-generators
+# size run_batch batches to the real pool (nodes x 12 tiles / top_k concurrent
+# code-gens), not the campaign goal's headline node count. Idempotent: rewrites
+# one sentinel line. Uses the venv python (needs yaml + hpc_control); never fails
+# the launch. The skill entry is a symlink into the repo, so resolve it first.
+if [[ -f "$LOAM_REPO/scripts/fill_alloc_skill.py" ]]; then
+  _hpc_skill="$SHARED_HERMES_HOME/skills/hpc-deployment/SKILL.md"
+  _hpc_skill="$(readlink -f "$_hpc_skill" 2>/dev/null || echo "$_hpc_skill")"
+  if [[ -f "$_hpc_skill" ]]; then
+    "${LOAM_PREFLIGHT_PYTHON:-python3}" "$LOAM_REPO/scripts/fill_alloc_skill.py" "$_hpc_skill"       >/dev/null 2>&1 && echo "run-campaign: filled live allocation into hpc-deployment skill"       || echo "run-campaign: could not determine live allocation; hpc-deployment skill left generic" >&2
+  fi
+fi
+
 # Shared, read-mostly: credentials, persona, tool library, binaries, plugins.
 for shared_entry in auth.json SOUL.md skills bin plugins hooks; do
   [[ -e "$SHARED_HERMES_HOME/$shared_entry" ]] &&

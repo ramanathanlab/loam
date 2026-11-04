@@ -246,6 +246,32 @@ The Academy agent's public capabilities:
 
 The action resolves paths and restricts them to the explicit allowed roots: `HPC_BASE_DIR`, `HPC_INSPECT_ROOTS` (colon-separated optional additional roots), and `/tmp`. It rejects symlink escapes, binary data, directories passed to `cat`/`tail`, device files, and every write/mutation operation. Do not add a generic `shell`, `exec`, `find`, `grep`, environment dump, scheduler query, or recursive listing action. For programmatic analysis beyond bounded inspection, write it as a `run_code` payload.
 
+## How much compute you have — size your batch to it (code-generators)
+
+<!-- LOAM_LIVE_ALLOC --> **Live pool for this run: filled in at launch** (nodes x 12 tiles; your fair share = pool / top_k, and all code-generators draw on the same tiles). A run_batch row = 1 tile (gpus=1): size each batch to your share per wave, poll batch_status to unfinished==0, then submit the next wave. More rows just queue and will not finish in the hour.
+
+A `run_batch` row gets `gpus=1` = one Aurora **tile**, and a node has **12 tiles**
+(6 GPUs x 2). The pool is therefore `nodes x 12` tiles. **Do not assume the node
+count** — the campaign goal's headline number (e.g. "1024 nodes") is an
+aspiration, not the live allocation. Get the real one from the hpcctl tool
+`hpc_allocation_status` (it returns the running block's `nodes`), or from the
+value handed to you. The live allocation varies widely from run to run, so
+guessing is wrong — read the real node count.
+
+**You do not get the whole pool — you share it.** Up to `top_k` hypothesis tracks
+run in parallel (default **3**), and their code-generators all draw on the same
+tiles, so size to your fair share rather than the whole pool:
+
+    tiles_for_you  ~=  (nodes * 12) / top_k
+
+Size each `run_batch` to roughly that many one-tile rows so the pool fills in a
+single wave and your siblings are not starved. Submitting far more rows is not an
+error — run_batch just queues the extra behind the running ones — but the surplus
+will not finish inside the one-hour wall, so a batch far larger than the live pool
+mostly waits. For a job that needs many more items than your share, submit your
+share, poll `batch_status` to `unfinished == 0`, then submit the next wave (or
+resume the same batch_id).
+
 ## Non-negotiable constraints
 
 - `HpcAgent` exposes only `run_code` and bounded, read-only `inspect_filesystem`; an internal health probe is permitted but is never a public MCP tool.
