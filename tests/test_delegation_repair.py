@@ -93,7 +93,7 @@ def _payload(root: Path) -> dict:
 
 
 def _plan_id(orchestration, payload: dict) -> str:
-    return orchestration._plan_id(orchestration._latest_report(payload)[0], payload)
+    return orchestration._plan_id(orchestration.Tournament(payload).latest_report()[0], payload)
 
 
 def _launch_validator(orchestration, payload: dict, plan_id: str, hypothesis_id: str) -> None:

@@ -56,6 +56,20 @@ profiles:
       top_k: 3                # hypotheses handed to validators per round
       timeout_seconds: 600
 
+      # How many brief-informed hypotheses enter the pool per round, i.e. the
+      # reasoner -> tournament half of the loop. 0 (the default) leaves the pool
+      # frozen at the first round's thinking: later rounds only re-rank it.
+      #
+      # Spent once per NEW brief, not once per turn, so a quiet round costs
+      # nothing -- which needs the campaign goal below to measure against. A
+      # profile with no campaign seeds once and then only re-ranks, whatever
+      # this is set to, because its goal is the turn's own request.
+      #
+      # Keep it small relative to matches_per_run: an entrant starts at
+      # 1200.0 Elo and is unranked until it has played, so a round that adds
+      # more hypotheses than it plays matches fills top_k with unplayed ties.
+      refresh_hypotheses: 0
+
     # What this campaign is for, and the rules specific to it. Loam ships no
     # campaign content, so these files are yours: `dir` is a directory you own
     # holding `campaigns/<goal>.md` and `rules/<name>.md`. Names are resolved

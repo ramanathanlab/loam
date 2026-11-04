@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOKS = ROOT / ".loam" / "hooks"
 START = HOOKS / "subagent-start.py"
 STOP = HOOKS / "subagent-stop.py"
-MEMORY_RECALL = HOOKS / "memory_recall.py"
+AUDIT_DUPLICATES = HOOKS / "audit_duplicates.py"
+PARSER = HOOKS / "parser.py"
 
 
 def _load_module(name: str, path: Path):
@@ -261,6 +262,78 @@ class SubagentLedgerTests(unittest.TestCase):
 
         self.assertEqual(record["observation_status"], "excluded")
         self.assertEqual(record["finding_ids"], [])
+
+    def test_a_childs_own_api_failure_is_not_an_observation(self) -> None:
+        """Hermes reports child_status 'completed' when a child's API calls failed.
+
+        The process exits cleanly and the summary is the provider's error, so
+        trusting child_status alone files an infrastructure failure as an
+        observation eligible to carry findings. Observed on a live campaign:
+        five validators returned this exact string and their round still
+        advanced to its reasoner as though the hypotheses had been tested.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "ledger.jsonl"
+            completed = self._run_hook(
+                STOP,
+                {
+                    "event": "subagent_stop",
+                    "repo_root": str(ROOT),
+                    "parent_session_id": "parent",
+                    "parent_turn_id": "turn",
+                    "child_session_id": "child",
+                    "child_subagent_id": "child-id",
+                    "child_status": "completed",
+                    "child_summary": "API call failed after 3 retries: Connection error.",
+                },
+                ledger,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            record = json.loads(ledger.read_text())
+
+        self.assertEqual(record["observation_status"], "failed")
+        self.assertEqual(record["failure_class"], "child_api_failure")
+
+    def test_a_report_about_a_provider_failure_is_still_an_observation(self) -> None:
+        """A validator writing about a failure it hit is reporting, not failing.
+
+        The classifier must only fire on a summary that IS the error, so it
+        matches at the start of a short summary. A real report that quotes the
+        message mid-narrative stays observed, or honest reporting of a flaky
+        provider would silently delete the report.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "ledger.jsonl"
+            summary = (
+                "## Outcome: inconclusive\n\n"
+                "Two of four planned runs completed. The third returned "
+                "'API call failed after 3 retries: Connection error.' and I "
+                "retried once more before stopping, so the gate is untested "
+                "rather than failed. Artifacts for the two completed runs are "
+                "under the plan directory and their manifests verified."
+            )
+            completed = self._run_hook(
+                STOP,
+                {
+                    "event": "subagent_stop",
+                    "repo_root": str(ROOT),
+                    "parent_session_id": "parent",
+                    "parent_turn_id": "turn",
+                    "child_session_id": "child",
+                    "child_subagent_id": "child-id",
+                    "child_status": "completed",
+                    "child_summary": summary,
+                },
+                ledger,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            record = json.loads(ledger.read_text())
+
+        self.assertEqual(record["observation_status"], "observed")
+        self.assertEqual(record["failure_class"], "")
+
     def test_completed_opt_in_contract_creates_pending_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ledger = Path(tmp) / "ledger.jsonl"
@@ -337,7 +410,8 @@ class SubagentLedgerTests(unittest.TestCase):
         self.assertEqual(candidate["candidate"]["hypotheses"][0]["statement"], "A claim.")
 
     def test_recall_injects_validated_memory_and_audits_exact_duplicate(self) -> None:
-        recall = _load_module("loam_memory_recall", MEMORY_RECALL)
+        recall = _load_module("loam_audit_duplicates", AUDIT_DUPLICATES)
+        parser = _load_module("loam_parser", PARSER).Parser()
         with tempfile.TemporaryDirectory() as tmp:
             memory_path = Path(tmp) / "parent-memory.jsonl"
             audit_path = Path(tmp) / "subagent-ledger.jsonl"
@@ -367,7 +441,7 @@ class SubagentLedgerTests(unittest.TestCase):
                     "tool_name": "delegate_task",
                     "arguments": {"goal": "Verify the UniProt P00918 gene name."},
                 }
-                context = recall.context_for(payload)
+                context = parser.memory_context(payload)
                 matches = recall.audit_duplicates(payload)
             finally:
                 if old_memory is None:
@@ -388,7 +462,7 @@ class SubagentLedgerTests(unittest.TestCase):
         self.assertEqual(audit_rows[0]["policy_action"], "allow_and_audit")
 
     def test_exact_duplicate_block_is_opt_in(self) -> None:
-        recall = _load_module("loam_memory_recall_block", MEMORY_RECALL)
+        recall = _load_module("loam_audit_duplicates_block", AUDIT_DUPLICATES)
         with tempfile.TemporaryDirectory() as tmp:
             memory_path = Path(tmp) / "parent-memory.jsonl"
             ledger_path = Path(tmp) / "subagent-ledger.jsonl"
@@ -457,7 +531,7 @@ class DuplicateFieldMatchTests(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        self.recall = _load_module("loam_recall_fields", MEMORY_RECALL)
+        self.recall = _load_module("loam_audit_fields", AUDIT_DUPLICATES)
 
     def _matches(self, field: str, text: str) -> bool:
         pattern = self.recall._field_pattern(field)

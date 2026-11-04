@@ -222,8 +222,18 @@ def ensure_hpc_started(repo: Path, env_file: Path, wait_seconds: int, url: str) 
         controller = hpc_control.Controller()
         status = controller.status()
         if status["state"] == "stopped":
-            started = controller.restart("debug", "01:00:00", 1)
-            action = {"action": "started-debug-allocation", "pid": started["pid"]}
+            # Requisition the allocation THIS campaign's env file asks for, rather
+            # than a throwaway debug block. Passing the values explicitly is what
+            # makes them stick: hpc_control.current_settings lets a stale
+            # allocation.json from an earlier run override the env file, so
+            # restart(None, None, None) would silently reuse the last shape.
+            config = json.loads(sourced["HPC_ENDPOINT_CONFIG_JSON"])
+            queue = config.get("queue", "debug")
+            walltime = config.get("walltime", "01:00:00")
+            nodes = int(sourced.get("HPC_NNODES") or config.get("nodes_per_block") or 1)
+            started = controller.restart(queue, walltime, nodes)
+            action = {"action": "started-allocation", "queue": queue,
+                      "walltime": walltime, "nodes": nodes, "pid": started["pid"]}
         else:
             action = {"action": "waiting", "state": status["state"]}
     finally:

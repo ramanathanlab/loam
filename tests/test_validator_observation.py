@@ -100,13 +100,14 @@ class ValidatorObservationTests(unittest.TestCase):
 
     def test_observation_names_follow_the_configured_prefix(self) -> None:
         orchestration = _load("loam_validator_observation_names")
+        names = orchestration.hpc_tool_names(EXECUTION)
         self.assertEqual(
-            orchestration._observation_tools(EXECUTION),
-            frozenset({"hpc_batch_status", "hpc_inspect_filesystem", "hpc_list_batches"}),
+            {names[key] for key in ("batch_status", "inspect_filesystem", "list_batches")},
+            {"hpc_batch_status", "hpc_inspect_filesystem", "hpc_list_batches"},
         )
         # No prefix derivable, so no observation tools are granted by name.
-        self.assertEqual(orchestration._observation_tools({"mode": "local"}), frozenset())
-        self.assertEqual(orchestration._observation_tools(None), frozenset())
+        self.assertEqual(orchestration.hpc_tool_names({"mode": "local"}), {})
+        self.assertEqual(orchestration.hpc_tool_names(None), {})
 
     def test_a_code_generator_is_unaffected(self) -> None:
         orchestration = _load("loam_validator_observation_child")

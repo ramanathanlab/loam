@@ -88,27 +88,22 @@ _PROTEIN_RE = re.compile(r"^[ACDEFGHIKLMNPQRSTVWYX]{20,}$")
 _NUCLEOTIDE_RE = re.compile(r"^[ACGTUN]{20,}$", re.IGNORECASE)
 _SMILES_RE = re.compile(r"^[A-Za-z0-9@+\-\[\]()=#/\\%.]{6,200}$")
 _DATALIKE_RE = re.compile(r"^[A-Za-z0-9/+=._\-]+$")
+# The `looks_like` kinds that name a datum; any other kind is an origin or noise.
+_DATA_KINDS = {"protein_sequence_like", "nucleotide_like", "smiles_like"}
 
 
 def _audit_path(payload: Mapping[str, Any]) -> Path | None:
-    state_dir = payload.get("loam_state_dir")
-    if not isinstance(state_dir, str) or not state_dir.strip():
-        state_dir = os.environ.get("LOAM_STATE_DIR", "").strip()
-    if not state_dir:
-        return None
-    return Path(state_dir).expanduser() / FILENAME
+    state_dir = str(payload.get("loam_state_dir") or "").strip() or os.environ.get("LOAM_STATE_DIR", "").strip()
+    return Path(state_dir).expanduser() / FILENAME if state_dir else None
 
 
 def _is_execution_tool(payload: Mapping[str, Any]) -> bool:
     name = str(payload.get("tool_name") or "")
     if not name:
         return False
-    if any(token in name for token in _EXECUTION_TOKENS):
-        return True
     execution = payload.get("loam_execution")
-    if isinstance(execution, Mapping) and str(execution.get("tool_name") or "") == name:
-        return True
-    return False
+    configured = str(execution.get("tool_name") or "") if isinstance(execution, Mapping) else ""
+    return any(token in name for token in _EXECUTION_TOKENS) or name == configured
 
 
 def _argument_text(arguments: Any) -> str:
@@ -132,9 +127,6 @@ def _argument_text(arguments: Any) -> str:
 
     walk(arguments)
     return "\n".join(parts)
-
-
-_DATA_KINDS = {"protein_sequence_like", "nucleotide_like", "smiles_like"}
 
 
 def _looks_like(literal: str) -> str:
@@ -166,8 +158,7 @@ def _inline_literals(text: str) -> list[dict[str, Any]]:
     """
     found: list[dict[str, Any]] = []
     for match in _LITERAL_RE.finditer(text):
-        literal = next((group for group in match.groups() if group is not None), "")
-        stripped = literal.strip()
+        stripped = next((group for group in match.groups() if group is not None), "").strip()
         kind = _looks_like(stripped)
         if kind in _DATA_KINDS:
             special = sum(stripped.count(c) for c in "=#[]()@")
@@ -199,15 +190,8 @@ def classify(payload: Mapping[str, Any]) -> dict[str, Any] | None:
     derived = bool(_DERIVED_RE.search(text))
     literals = _inline_literals(text)
 
-    origins: list[str] = []
-    if fetched:
-        origins.append("fetched")
-    if filesystem:
-        origins.append("filesystem_read")
-    if derived:
-        origins.append("derived_ref")
-    if literals:
-        origins.append("inline_literal")
+    signals = (("fetched", fetched), ("filesystem_read", filesystem), ("derived_ref", derived), ("inline_literal", literals))
+    origins = [name for name, present in signals if present]
 
     # The load-bearing signal: a data-like literal with no fetch/file/derivation
     # behind it (the hardcoded-target case). Everything else is informational.

@@ -1,6 +1,6 @@
 ---
 name: example-constraint
-scope: validator,reasoner
+scope: hypothesis-validator,reasoner
 ---
 
 - Hypotheses about <OUT-OF-SCOPE AREA> are out of bounds for this campaign, even

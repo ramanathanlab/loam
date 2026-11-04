@@ -127,7 +127,7 @@ class CoordinatorBoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             payload = {**_payload(Path(temporary)), "loam_hypothesis_orchestration": True}
             orchestration.context_for(dict(payload))
-            plan_id = orchestration._plan_id(orchestration._latest_report(payload)[0], payload)
+            plan_id = orchestration._plan_id(orchestration.Tournament(payload).latest_report()[0], payload)
             orchestration.record_start(
                 {
                     **payload,
@@ -172,9 +172,7 @@ class ReasonerDirectiveTests(unittest.TestCase):
         orchestration = _load("loam_dispatch_reasoner_directive")
         with tempfile.TemporaryDirectory() as temporary:
             payload = _payload(Path(temporary))
-            directive = orchestration._reasoner_directive(
-                "plan-1", [], orchestration.agent_registry(payload), payload=payload
-            )
+            directive = orchestration._reasoner_directive("plan-1", [], payload)
 
         self.assertIn(f"Call {orchestration.DISPATCH_TOOL}", directive)
         self.assertNotIn("Call delegate_task", directive)
@@ -184,8 +182,6 @@ class ReasonerDirectiveTests(unittest.TestCase):
         orchestration = _load("loam_dispatch_reasoner_first_line")
         with tempfile.TemporaryDirectory() as temporary:
             payload = _payload(Path(temporary))
-            directive = orchestration._reasoner_directive(
-                "plan-1", [], orchestration.agent_registry(payload), payload=payload
-            )
+            directive = orchestration._reasoner_directive("plan-1", [], payload)
 
         self.assertIn(orchestration.DISPATCH_TOOL, directive.splitlines()[0])

@@ -101,13 +101,19 @@ List zero-credit neutral, duplicate, failed, and unavailable actions separately.
 ### Next Step
 State `none` when the inquiry is complete. Otherwise state the one concrete external prerequisite or discriminating action required to proceed.
 
-## Provenance Contract (when evidence is source-located)
+## Provenance Contract (every outcome that bears on the hypothesis)
 
-When any evidence in your ledger came from a locatable external source — a
-database record, a publication, a dataset — append exactly one fenced JSON
-object after the report. Loam extracts it into the candidate ledger as
-`pending`; it is never accepted on your word, only through explicit review, so
-emitting it makes a claim auditable rather than asserting it is true.
+Append exactly one fenced JSON object after the report. Loam extracts it into
+the candidate ledger as `pending`; it is never accepted on your word, only
+through explicit review, so emitting it makes a claim auditable rather than
+asserting it is true.
+
+**This block is how your findings leave this thread.** The report is prose that
+only the parent reads; the contract is the only part of your output that reaches
+the campaign's steering. `project_hypothesis_steering.py` ranks hypotheses by
+counting `supports` against `contradicts`, so an outcome you record only in the
+Evidence Ledger above cannot raise or lower anything. A refutation left out of
+this block is a refutation the next tournament will not see.
 
 ```json
 {
@@ -125,5 +131,37 @@ emitting it makes a claim auditable rather than asserting it is true.
 `stance` is `supports`, `contradicts`, or `context`. `source_url` must resolve
 to the specific record, not a search page — this is the machine-checkable half
 of the fetch-don't-recall rule, so a claim you cannot give a URL for does not
-belong here. Omit the block entirely when your evidence is wholly a measurement
-your own children produced; measurements travel in the Evidence Ledger above.
+belong here.
+
+### What must appear, and with which stance
+
+**Every predeclared gate outcome is an evidence candidate.** You set a threshold
+before running; the result either met it or did not, and both directions are
+findings:
+
+- a gate the hypothesis **failed** is `contradicts` — not `context`;
+- a gate it **passed** is `supports`;
+- `context` is for a record you merely *used* — the reference sequence, the
+  structure you measured against. Provenance, not a finding.
+
+Write the number and the threshold into `claim`, so the claim is checkable
+against the artifact rather than being a verdict to take on trust:
+
+```json
+{"hypothesis_key": "h1",
+ "claim": "Cross-conformer local Calpha RMSD for the domain-II/III contact component was 11.71 A against a predeclared <=3.0 A gate, computed from the EGFR conformers below; the component failed conformational robustness.",
+ "source_url": "https://www.rcsb.org/structure/1IVO",
+ "stance": "contradicts"}
+```
+
+A measurement your own children produced belongs here too. Point `source_url`
+at the authoritative record the measurement was computed *from*, name the
+artifact path that holds the number in `claim`, and let the stance follow the
+gate. The common failure is a contract listing only the databases you consulted
+— every stance `context`, nothing `supports` or `contradicts` — which reads as
+a bibliography and leaves the campaign unable to tell a refuted strategy from an
+untested one.
+
+Do not grade your own confidence into the stance. A failed gate is
+`contradicts` even when you believe the gate was badly chosen; say that in
+**Outcome** instead, where the parent can weigh it.

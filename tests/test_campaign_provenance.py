@@ -59,7 +59,7 @@ def _payload(state_dir: Path, campaign: dict | None = None) -> dict:
 
 class CampaignProvenanceTests(unittest.TestCase):
     def test_policy_is_recorded_with_a_digest(self) -> None:
-        orchestration = _load("loam_prov_orchestration", "hypothesis_orchestration.py")
+        orchestration = _load("loam_prov_campaign", "campaign.py")
         with tempfile.TemporaryDirectory() as temporary:
             campaign = _campaign(Path(temporary))
             provenance = orchestration.campaign_provenance({"repo_root": str(ROOT), "loam_campaign": campaign})
@@ -78,7 +78,7 @@ class CampaignProvenanceTests(unittest.TestCase):
     def test_the_invariant_rules_are_recorded_without_a_campaign_block(self) -> None:
         """They govern the run whether or not a profile named them."""
 
-        orchestration = _load("loam_prov_absent", "hypothesis_orchestration.py")
+        orchestration = _load("loam_prov_absent", "campaign.py")
         provenance = orchestration.campaign_provenance({"repo_root": str(ROOT)})
 
         self.assertEqual(provenance["goal"], "")
@@ -86,14 +86,14 @@ class CampaignProvenanceTests(unittest.TestCase):
         self.assertEqual(len(provenance["policy_sha256"]), 64)
 
     def test_no_policy_at_all_records_nothing(self) -> None:
-        orchestration = _load("loam_prov_nothing", "hypothesis_orchestration.py")
+        orchestration = _load("loam_prov_nothing", "campaign.py")
         with tempfile.TemporaryDirectory() as temporary:
             self.assertEqual(orchestration.campaign_provenance({"repo_root": temporary}), {})
 
     def test_an_unreadable_policy_file_is_recorded_not_raised(self) -> None:
         """The injection path must fail loudly; the manifest is written on every event."""
 
-        orchestration = _load("loam_prov_missing", "hypothesis_orchestration.py")
+        orchestration = _load("loam_prov_missing", "campaign.py")
         provenance = orchestration.campaign_provenance(
             {"repo_root": str(ROOT), "loam_campaign": {"goal": "no-such-goal"}}
         )

@@ -193,14 +193,15 @@ class Controller:
         previous = _server_pids()
         self._stop()
         self.state_path.write_text(json.dumps(settings))
-        log = open(self.log_path, "ab")
-        log.write(f"\n=== hpc_restart {time.strftime('%Y-%m-%d %H:%M:%S')} {json.dumps(settings)}\n".encode())
-        log.flush()
-        # Own session: the server and its allocation outlive this controller
-        # and the harness that spawned it.
-        proc = subprocess.Popen([sys.executable, str(SERVER)], env=child_env(env, settings),
-                                cwd=str(SCRIPTS), stdout=log, stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL, start_new_session=True)
+        # The child inherits its own copy of the log descriptor, so ours can close.
+        with open(self.log_path, "ab") as log:
+            log.write(f"\n=== hpc_restart {time.strftime('%Y-%m-%d %H:%M:%S')} {json.dumps(settings)}\n".encode())
+            log.flush()
+            # Own session: the server and its allocation outlive this controller
+            # and the harness that spawned it.
+            proc = subprocess.Popen([sys.executable, str(SERVER)], env=child_env(env, settings),
+                                    cwd=str(SCRIPTS), stdout=log, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, start_new_session=True)
         return {"restarted": True, "stopped_pids": previous, "pid": proc.pid, "settings": settings,
                 "next": "The server listens only once its PBS job runs: poll hpc_allocation_status "
                         "until state is 'listening' (queue waits can be long), then /reload-mcp or "

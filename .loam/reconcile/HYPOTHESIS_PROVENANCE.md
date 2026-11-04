@@ -50,6 +50,15 @@ a hypothesis, evidence, or credit record at hook time.
 
 ## Explicit reconciliation
 
+Review rows have two possible authors and the reconciler cannot tell them
+apart: an operator writing them by hand (below), or an `evidence-reviewer`
+child dispatched per candidate when a profile sets
+`hypothesis_orchestration.evidence_review: true`. The agent path is described in
+[`README.md`](README.md#who-authors-the-review); it produces exactly the rows
+documented here, with `strength` / `reliability` / `relevance` set by Loam from
+the reviewer's declared verification mode rather than by the reviewer, and then
+runs the commands below itself (`.loam/hooks/hypothesis_acceptance.py`).
+
 Prepare an operator-authored review JSONL file. Each review names a pending
 `candidate_id`, identifies accepted hypothesis keys, and must repeat candidate
 evidence exactly before accepting it:

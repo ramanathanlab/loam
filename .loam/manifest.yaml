@@ -77,8 +77,8 @@ middleware:
       The hook computes each round's delegation from persisted state, so the
       authoritative arguments already exist before the model writes anything.
       Asking an LLM to transcribe them was the original design and it failed in
-      ways the scars in hypothesis_orchestration.py record (the 2026-10-21
-      char-9000 incident, `_SCRUBBERS`, `_hypothesis_block`). This seam replaces
+      ways the git history of hypothesis_orchestration.py records (the 2026-10-21
+      char-9000 incident, `_hypothesis_block`). This seam replaces
       the transcription with the canonical arguments instead of trusting it.
     ordering: |
       Runs AFTER pre_tool_call, in the same sequential path. A pre_tool_call

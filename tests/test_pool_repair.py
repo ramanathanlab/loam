@@ -32,7 +32,7 @@ class ClusterRepairOrderingTests(unittest.TestCase):
             def __init__(self, name: str) -> None:
                 self.agent_id = name
 
-        pool = pm.ClusterPool("camp", want=2)
+        pool = pm.ClusterPool("camp", want=2, client_grace=1)  # drop on first miss
         cluster_marker = object()
         pool._cluster = cluster_marker
         good = pm.AgentInfo(FakeHandle("good"), "")
@@ -94,6 +94,56 @@ class ClusterRepairOrderingTests(unittest.TestCase):
         self.assertEqual(len(pool._agents), 1)
         self.assertTrue(pool._ready.is_set())
         self.assertEqual(pool._restart_failures, 0)
+
+    def test_client_is_replaced_only_after_consecutive_strikes(self) -> None:
+        # A probe can fail with the client healthy (a message lost to a stale
+        # exchange reader, a 5xx burst), so one miss must not trigger a relaunch.
+        pm = self.pm
+
+        class FakeHandle:
+            def __init__(self, name: str) -> None:
+                self.agent_id = name
+
+        pool = pm.ClusterPool("camp", want=1, client_grace=3)
+        cluster_marker = object()
+        pool._cluster = cluster_marker
+        flaky = pm.AgentInfo(FakeHandle("flaky"), "")
+        pool._agents = [flaky]
+        answers = iter([False, False, True, False, False, False])
+        events: list[tuple] = []
+
+        async def fake_probe(agent, check_campaign=True):
+            if agent is cluster_marker:
+                return agent
+            return agent if next(answers) else None
+
+        async def fake_shutdown_all(agents):
+            events.append(("shutdown", tuple(a.handle.agent_id for a in agents)))
+
+        async def fake_launch_clients(n):
+            events.append(("launch", n))
+            return [pm.AgentInfo(FakeHandle("new"), "")]
+
+        pool._probe = fake_probe
+        pool._shutdown_all = fake_shutdown_all
+        pool._launch_clients = fake_launch_clients
+
+        async def sweeps(n):
+            for _ in range(n):
+                await pool._repair()
+
+        # miss, miss, success: the success resets the count, nothing relaunches.
+        asyncio.run(sweeps(3))
+        self.assertEqual(events, [])
+        self.assertEqual(pool._agents, [flaky])
+        # Three consecutive misses: kept through two, replaced on the third.
+        asyncio.run(sweeps(2))
+        self.assertEqual(events, [])
+        self.assertEqual(pool._agents, [flaky])
+        asyncio.run(sweeps(1))
+        self.assertEqual(events, [("shutdown", ("flaky",)), ("launch", 1)])
+        self.assertEqual([a.handle.agent_id for a in pool._agents], ["new"])
+        self.assertEqual(pool._client_misses, {})
 
 
 if __name__ == "__main__":
