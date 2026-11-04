@@ -59,12 +59,32 @@ def _inference_roles(hermes_home: Path, loam_config: Path) -> dict[str, tuple[st
     # Subagents only differ when delegation pins them to another endpoint/model.
     delegation = hermes.get("delegation") or {}
     deleg_model = str(delegation.get("model") or "")
+    deleg_base = str(delegation.get("base_url") or base_url).rstrip("/")
+    deleg_key = str(delegation.get("api_key") or api_key)
     if deleg_model:
-        roles["subagents"] = (
-            str(delegation.get("base_url") or base_url).rstrip("/"),
-            str(delegation.get("api_key") or api_key),
-            deleg_model,
-        )
+        roles["subagents"] = (deleg_base, deleg_key, deleg_model)
+
+    # Per-role subagent overrides (delegation.role_models, consumed by the
+    # patched Hermes delegate_tool._apply_role_override). Each entry is either a
+    # model string (reuse the delegation endpoint) or a mapping that may also
+    # carry base_url/api_key for a per-role ENDPOINT split -- e.g. the
+    # code-generator benchmarked on an ALCF cluster model while the validator
+    # and reasoner stay on the default. Smoke each so an unreachable per-role
+    # endpoint fails the launch HERE rather than mid-round. Values fall back to
+    # the delegation defaults, mirroring _apply_role_override's resolution.
+    role_models = delegation.get("role_models")
+    if isinstance(role_models, dict):
+        for child_role, entry in role_models.items():
+            if isinstance(entry, str):
+                r_base, r_key, r_model = deleg_base, deleg_key, entry.strip()
+            elif isinstance(entry, dict):
+                r_base = str(entry.get("base_url") or deleg_base).rstrip("/")
+                r_key = str(entry.get("api_key") or deleg_key)
+                r_model = str(entry.get("model") or deleg_model)
+            else:
+                continue
+            if r_model:
+                roles[f"subagents:{child_role}"] = (r_base, r_key, r_model)
 
     loam = _load_yaml(loam_config)
     profile_name = str(os.environ.get("LOAM_PROFILE") or loam.get("active_profile") or "")
@@ -85,6 +105,85 @@ def _inference_roles(hermes_home: Path, loam_config: Path) -> dict[str, tuple[st
                 str(override.get("model") or shared_model),
             )
     return roles
+
+
+def _requires_role_endpoint_patch(hermes_home: Path) -> bool:
+    """True iff config.yaml uses a delegation.role_models ENDPOINT override -- a
+    mapping entry carrying base_url/provider/api_key/api_mode. A plain
+    model-string entry works on unpatched Hermes, so it does not require it."""
+    hermes = _load_yaml(hermes_home / "config.yaml")
+    role_models = (hermes.get("delegation") or {}).get("role_models")
+    if not isinstance(role_models, dict):
+        return False
+    endpoint_keys = {"provider", "base_url", "api_key", "api_mode"}
+    for entry in role_models.values():
+        if isinstance(entry, dict) and any(
+            k in endpoint_keys and str(entry.get(k) or "").strip() for k in entry
+        ):
+            return True
+    return False
+
+
+def _hermes_role_endpoint_support() -> tuple[bool | None, str]:
+    """Whether the installed Hermes carries the per-role-endpoint patch
+    (delegate_tool._apply_role_override). Returns (supported, detail); supported
+    is None when it cannot be determined -- a launch is never blocked on an
+    inconclusive probe, only on a positive 'unpatched' finding."""
+    import shutil
+
+    launcher = shutil.which("hermes")
+    if not launcher:
+        return None, "hermes not found on PATH"
+    try:
+        text = Path(launcher).read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return None, f"cannot read hermes launcher: {exc}"
+    venv_py = ""
+    for tok in text.replace('"', " ").replace("'", " ").split():
+        if tok.endswith("/bin/hermes") and "/venv/" in tok:
+            venv_py = tok[: -len("/bin/hermes")] + "/bin/python"
+            break
+    if not venv_py or not Path(venv_py).exists():
+        return None, "could not resolve hermes venv python from launcher"
+    probe = (
+        "import tools.delegate_tool as d, sys; "
+        "sys.exit(0 if hasattr(d, '_apply_role_override') else 3)"
+    )
+    try:
+        rc = subprocess.run([venv_py, "-c", probe], capture_output=True, timeout=60).returncode
+    except Exception as exc:  # noqa: BLE001
+        return None, f"probe failed to run: {exc}"
+    if rc == 0:
+        return True, f"patched ({venv_py})"
+    if rc == 3:
+        return False, f"unpatched ({venv_py})"
+    return None, f"probe exited {rc}"
+
+
+def check_role_endpoint_capability(hermes_home: Path, repo: Path) -> dict[str, Any]:
+    """Advise/enforce the Hermes per-role-endpoint patch.
+
+    A delegation.role_models mapping entry with a per-role base_url is what
+    isolates e.g. the code-generator onto its own cluster endpoint while the
+    validator/reasoner stay on the default. Unpatched Hermes IGNORES such a
+    mapping and silently leaves that role on the default model+endpoint -- a
+    silent wrong-attribution failure for a code-gen-model benchmark. So when the
+    config needs the patch and Hermes positively lacks it, fail the launch with
+    the fix. Carried patch: patches/hermes-role-models-endpoints.patch.
+    """
+    requires = _requires_role_endpoint_patch(hermes_home)
+    supported, detail = _hermes_role_endpoint_support()
+    info = {"config_requires_patch": requires, "hermes_supported": supported, "detail": detail}
+    if requires and supported is False:
+        patch = repo / "patches" / "hermes-role-models-endpoints.patch"
+        raise RuntimeError(
+            "config.yaml uses a delegation.role_models ENDPOINT override, but the "
+            f"installed Hermes lacks the per-role-endpoint patch ({detail}). Unpatched "
+            "Hermes silently ignores the mapping and leaves that role on the DEFAULT "
+            "endpoint, corrupting any per-role model comparison. Apply the carried patch "
+            f"(see patches/README.md):\n    {patch}"
+        )
+    return info
 
 
 def check_inference(hermes_home: Path, loam_config: Path, timeout: float) -> dict[str, Any]:
@@ -306,6 +405,7 @@ def main() -> int:
         if not args.no_auto_start:
             report["proxy_start"] = ensure_proxy_started(
                 args.repo, args.proxy_port, args.proxy_wait_seconds)
+        report["role_endpoints"] = check_role_endpoint_capability(args.hermes_home, args.repo)
         report["inference"] = check_inference(args.hermes_home, args.loam_config, args.timeout)
         if not args.no_auto_start:
             report["hpc_start"] = ensure_hpc_started(
