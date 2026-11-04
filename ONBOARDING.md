@@ -453,7 +453,7 @@ round's claims have been reviewed and reconciled.
 | `scripts/campaign_preflight.py` | `ALCF_PROXY_PYTHON` default (`~/.loam-venv-312`), proxy port and log path |
 | `.loam/README.md` global shim | `LOAM_ROOT` default (points at another user's checkout) |
 | `~/.hermes/loam.yaml` | `jnana_root`, all `state_dir` paths, the `:51900` / `:51911` endpoints and model ids |
-| `skills/hpc-deployment/set_env_akv.sh` | `HPC_GLOBUS_ENDPOINT_ID`, `HPC_BASE_DIR`, `HPC_CAMPAIGN_ID`, `HPC_INSPECT_ROOTS`, and the venv/paths inside `worker_init` of `HPC_ENDPOINT_CONFIG_JSON` |
+| `skills/hpc-deployment/set_env_akv.sh` | `HPC_GLOBUS_ENDPOINT_ID`, `HPC_BASE_DIR`, `HPC_CAMPAIGN_ID`, `HPC_INSPECT_ROOTS`, `HPC_LOAM_HOME` (the loam checkout on `/flare` the workers run from), and the venv/paths inside `worker_init` of `HPC_ENDPOINT_CONFIG_JSON` |
 | `.hermes/.loam-home/config.yaml` | Argo/Minerva provider base URLs, API keys, and model ids; **and the `hpcctl` block's `command`, `args` and `HPC_ENV_FILE`, which name one user's venv, checkout and env file** |
 
 Two of these overlap with findings in the code review and are worth calling out
@@ -468,6 +468,13 @@ to a newcomer specifically:
   it (`walltime 04:00:00 exceeds the cap of 01:00:00`). It is set to 12 h here;
   the per-queue limits inside `hpc_control` still stop a debug block from asking
   for more than its hour.
+- **`HPC_LOAM_HOME` carries the `/flare` loam clone to the skills.** Tools run on
+  the Aurora worker, which cannot see your local checkout, so skills that invoke a
+  worker-side script (ProteinMPNN, Chai, RFD4) reference it as
+  `$HPC_LOAM_HOME/skills/...` rather than hardcoding a `/flare/.../loam` path.
+  `set_env_akv.sh` sets `HPC_LOAM_HOME` once **and** re-exports it inside
+  `worker_init` (the only environment a worker actually sees), so moving the clone
+  is a one-line edit there — the skill docs do not change.
 - **The preflight is the real readiness contract, not the config comments.** If
   it passes, all three subsystems are genuinely talking. If it fails, read
   `state/preflight.json` — it names the model role or the Aurora probe that

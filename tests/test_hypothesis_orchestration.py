@@ -296,7 +296,8 @@ class HypothesisOrchestrationTests(unittest.TestCase):
                 return module.runbatch_nudge_for({"session_id": "S1", "loam_state_dir": str(sd)})
 
         self.assertIn("RUN_BATCH REMINDER", nudge("code-generator", [SK, SK, RC, RC, RC, RC, RC]))
-        self.assertEqual(nudge("code-generator", [RC, RC, RC, RC]), "")
+        # Threshold is run_code < 3 (fires at >= 3 serial calls with no run_batch).
+        self.assertEqual(nudge("code-generator", [RC, RC]), "")
         self.assertEqual(nudge("code-generator", [RC, RC, RC, RB, RC, RC, RC]), "")
         self.assertEqual(nudge("hypothesis-validator", [RC, RC, RC, RC, RC, RC]), "")
 

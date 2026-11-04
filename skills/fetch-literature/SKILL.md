@@ -78,27 +78,53 @@ ids = requests.get(f"{EUTILS}/esearch.fcgi", params={
     "db": "pubmed", "term": QUERY, "retmax": MAX, "retmode": "json",
     "tool": TOOL, "email": EMAIL}, timeout=60).json()["esearchresult"]["idlist"]
 if ids:
+    import xml.etree.ElementTree as ET
     summ = requests.get(f"{EUTILS}/esummary.fcgi", params={
         "db": "pubmed", "id": ",".join(ids), "retmode": "json",
         "tool": TOOL, "email": EMAIL}, timeout=60).json()["result"]
+    # Pull the ACTUAL abstracts with efetch -- title-only records are near-useless
+    # downstream. Verified: real AbstractText, up to ~3k chars each.
+    xml = requests.get(f"{EUTILS}/efetch.fcgi", params={
+        "db": "pubmed", "id": ",".join(ids), "rettype": "abstract",
+        "retmode": "xml", "tool": TOOL, "email": EMAIL}, timeout=90).text
+    abstr = {}
+    for art in ET.fromstring(xml).iter("PubmedArticle"):
+        pid = art.findtext(".//PMID")
+        parts = [" ".join(a.itertext()).strip() for a in art.iter("AbstractText")]
+        if pid: abstr[pid] = " ".join(x for x in parts if x).strip()
     for pmid in ids:
-        d = summ.get(pmid, {})
+        d = summ.get(pmid, {}); abstract = abstr.get(pmid, "")
         records.append({"pmid": pmid, "title": d.get("title", ""),
-                        "year": (d.get("pubdate", "") or "")[:4],
-                        "source": "pubmed", "text": d.get("title", "")})
-        time.sleep(0.34)             # ~3 req/sec
-# For real abstracts, follow up with efetch (rettype=abstract, retmode=xml)
-# and parse the AbstractText into each record's "text".
+                        "year": (d.get("pubdate", "") or "")[:4], "source": "pubmed",
+                        "text": abstract or d.get("title", "")})
 
-# (b) Europe PMC: open-access full text where available.
+# (b) Europe PMC: metadata + abstracts, PLUS open-access FULL TEXT.
 epmc = requests.get(
     "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
-    params={"query": QUERY, "format": "json", "pageSize": MAX},
+    params={"query": QUERY, "format": "json", "pageSize": MAX, "resultType": "core"},
     timeout=60).json().get("resultList", {}).get("result", [])
+
+def pmc_fulltext(pmcid):
+    """OA full text (JATS <body>) for a PMCID via NCBI efetch(db=pmc); '' if not OA.
+    Use NCBI, not EPMC's /PMC/<id>/fullTextXML (that endpoint 404'd in testing)."""
+    import xml.etree.ElementTree as ET
+    r = requests.get(f"{EUTILS}/efetch.fcgi", params={
+        "db": "pmc", "id": pmcid.replace("PMC", ""), "retmode": "xml",
+        "tool": TOOL, "email": EMAIL}, timeout=90)
+    if r.status_code != 200 or not r.text.lstrip().startswith("<"):
+        return ""
+    body = ET.fromstring(r.text).find(".//body")
+    return " ".join(" ".join(body.itertext()).split()) if body is not None else ""
+
 for r in epmc:
-    records.append({"pmid": r.get("pmid", ""), "title": r.get("title", ""),
-                    "year": str(r.get("pubYear", "")), "source": "europepmc",
-                    "text": r.get("abstractText") or r.get("title", "")})
+    pmcid = r.get("pmcid", ""); is_oa = r.get("isOpenAccess") == "Y"
+    ft = pmc_fulltext(pmcid) if (pmcid and is_oa) else ""   # ~4k-11k words when OA
+    records.append({"pmid": r.get("pmid", ""), "pmcid": pmcid,
+                    "title": r.get("title", ""), "year": str(r.get("pubYear", "")),
+                    "source": "europepmc", "is_oa": is_oa,
+                    "text": r.get("abstractText") or r.get("title", ""),
+                    "fulltext": ft})
+    time.sleep(0.34)
 
 with open(OUT, "w") as fh:
     for rec in records:

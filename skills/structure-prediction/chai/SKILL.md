@@ -25,7 +25,7 @@ Alternative for imports only: put an empty `intel_extension_for_pytorch/__init__
 ## Environment
 ```bash
 CHAI_PY=/flare/FRAME-IDP/msinclair/software/chai-lab/.venv/bin/python   # system frameworks python + venv; no module load needed
-LAUNCH=<skill>/scripts/chai_xpu.py    # travels with this skill
+LAUNCH=${HPC_LOAM_HOME:?set HPC_LOAM_HOME to the loam clone on /flare}/skills/structure-prediction/chai/scripts/chai_xpu.py  # worker-visible copy in the /flare loam clone: run_batch runs on the Aurora worker, which CANNOT see this local skill dir. HPC_LOAM_HOME is exported by the deployment env (set_env) into the worker, so emit it verbatim in the batch script and let it resolve worker-side — never hardcode the /flare path, and never use "<skill>/scripts/..." or a path under the chai-lab install.
 export ZE_AFFINITY_MASK=3     # ONE tile; it appears as xpu:0 (the code always uses xpu:0)
 export CHAI_DOWNLOADS_DIR=/flare/FRAME-IDP/msinclair/software/chai-lab/downloads
 # for --use-msa-server only:

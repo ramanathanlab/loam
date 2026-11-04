@@ -31,6 +31,7 @@ Never guess, hard-code, or inherit these from an earlier campaign:
 | `HPC_POOL_SIZE` | Agents to launch. Direct mode: equal to requested addressable GPU/tile count. Cluster mode: number of client agents submitting into the EL cluster. |
 | `HPC_ENDPOINT_CONFIG_JSON` | JSON object accepted by the endpoint user-config schema; defines PBSPro resources. |
 | `HPC_BASE_DIR` | Campaign directory visible to all workers. |
+| `HPC_LOAM_HOME` | The loam checkout on the shared FS (e.g. `/flare/.../loam`) that the workers run from. Skills reference their worker-visible scripts/launchers as `$HPC_LOAM_HOME/skills/...` instead of hardcoding the path. Must also be exported inside `worker_init` (see below), since a worker only sees the environment that block sets. |
 | `HPC_CAMPAIGN_ID` | Immutable ID used to isolate agent discovery/adoption. |
 | `ACADEMY_EXCHANGE_URL` | Academy exchange the manager and agents rendezvous through. |
 | `HPC_SYSTEM` | `aurora` or `polaris`. Selects the EL `SystemConfig` and the GPU-pinning variable (`ZE_AFFINITY_MASK` / `CUDA_VISIBLE_DEVICES`). Cluster mode only. |
@@ -71,6 +72,19 @@ adopts another campaign's agents.
 UUID, queue, walltime, and `HPC_CAMPAIGN_ID` together in it so the whole
 configuration is reviewable in one place.
 
+**New-campaign recipe.** `set_env.sh` ships as a user- and campaign-neutral
+TEMPLATE whose header is the recipe: copy it to `set_env_<campaign>.sh`, fill
+every `FILL_IN` (`grep '^export .*FILL_IN' set_env_<campaign>.sh` lists them —
+endpoint UUID, `HPC_BASE_DIR`, `HPC_CAMPAIGN_ID`, `HPC_LOAM_HOME`, `HPC_VENV`),
+review the allocation knobs (`HPC_SYSTEM`, `HPC_NNODES`, `HPC_POOL_SIZE`, and the
+queue/walltime in `HPC_ENDPOINT_CONFIG_JSON`), then point `HPC_ENV_FILE` at your
+copy. The template refuses to run until the blanks are filled, so a launch that
+forgets `HPC_ENV_FILE` cannot silently use someone else's endpoint. The per-user
+files (`set_env_akv.sh`, `set_env_hari.sh`, `set_env_msinclair.sh`) are worked
+examples of a filled-in copy. `HPC_LOAM_HOME` and `HPC_VENV` are the only paths
+you repeat; set `HPC_LOAM_HOME` once and the skills + worker `PYTHONPATH` both
+resolve from it.
+
 Two couplings belong in the file itself, not in the operator's head:
 
 - **Worker count.** The endpoint needs one worker slot per client agent *plus*
@@ -79,7 +93,9 @@ Two couplings belong in the file itself, not in the operator's head:
   `"workers": '"$((HPC_POOL_SIZE + 1))"'`.
 - **Worker environment.** `worker_init` must activate the environment and put
   `HPC_BASE_DIR` on `PYTHONPATH`, or the agent modules will not import on the
-  worker.
+  worker. It must also `export HPC_LOAM_HOME=<loam clone>` here, because a worker
+  sees only the environment `worker_init` sets — skills that reference
+  `$HPC_LOAM_HOME/skills/...` depend on it being exported in this block.
 
 Example only—pass keys only when the supplied endpoint's user-config schema permits them:
 
@@ -207,7 +223,16 @@ The Academy agent's public capabilities:
 - `run_code(payload, workdir, timeout)` — execute a Python payload on the agent's pinned accelerator.
 - `inspect_filesystem(operation, path, offset, limit)` — read-only visibility into the worker filesystem without SSH.
 - `run_batch` / `batch_status` / `list_batches` (cluster mode) — run one script once per row of a JSONL file through EL; returns a `batch_id` at once, resumable by `batch_id`.
-- `register_tool` / `list_tools` — a per-campaign library of frozen, versioned, smoke-tested scripts under `HPC_BASE_DIR/tools/`, runnable with `run_batch(tool=...)`. Tools are never deleted or deprecated.
+- `pool_status()` — the compute budget: `system`, `nodes`, `tiles_per_node`, `total_tiles` (how many `run_batch(gpus=1)` rows run at once), `queue`, and `walltime`. Call it before sizing a large fan-out so the number of parallel jobs matches the tiles actually allocated; it reports capacity, not live free tiles, so pair it with `list_batches` for what is in flight.
+- **There is NO tool registry.** `register_tool` / `list_tools` and the
+  `run_batch(tool=...)` form are not available on this server. You run work by
+  writing the script yourself and submitting it with
+  `run_batch(script_path=..., inputs_path=..., gpus=1)` (one JSONL row per job).
+  The campaign SKILLS are how you get each invocation right — read the relevant
+  skill (`skill_view`), copy its launcher/venv/weights-path exactly, and point
+  `run_batch` at your script. **The absence of a "registered" or pre-approved
+  design/fold/score tool is NEVER a reason to report blocked:** writing the
+  script and submitting it through `run_batch` *is* the task.
 
 **`run_batch` `gpus` is tiles per row, not per batch — use `gpus=1` for any script that touches one device (`xpu:0` / `cuda:0`).** EL then places rows side by side on every free tile: on Aurora (FLAT hierarchy) each row gets its own `ZE_AFFINITY_MASK` tile with 64 GB, and 12 rows fill a node at once. Verified 2026-10-20: 12 rows at `gpus=1` ran concurrently on masks 0–11 in 15 s. `gpus=12` instead reserves the whole node for every row, so rows run one at a time and a one-device script leaves 11 tiles idle (observed: 12 Chai folds took ~8.5 min instead of ~45 s). Raise `gpus` only when a single row itself spans several devices. EL tracks CPUs (`ppn=1`, one of 102 per Aurora node) and tiles, not host memory or thread counts; if many concurrent rows are CPU-heavy, cap `OMP_NUM_THREADS` in the script.
 

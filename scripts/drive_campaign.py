@@ -205,6 +205,17 @@ class Driver:
         self.args = args
         self.campaign = Path(args.campaign).resolve()
         self.repo = Path(os.environ.get("LOAM_REPO") or args.repo or self.campaign).resolve()
+        # The profile travels with the campaign when it has one. This process
+        # reads the profile itself (see `_payload`), so it must resolve the same
+        # file run-campaign exports to the launch, in the same order -- otherwise
+        # the driver reads the phase out of one profile while the hooks act on
+        # another. Preferred layout: loam.yaml at the campaign root; the legacy
+        # .hermes/home/loam.yaml location is the fallback.
+        for local_profile in (self.campaign / "loam.yaml",
+                              self.campaign / ".hermes" / "home" / "loam.yaml"):
+            if local_profile.is_file():
+                os.environ["LOAM_CONFIG_PATH"] = str(local_profile)
+                break
         self.state = self.campaign / "state"
         self.log_dir = self.state / "driver"
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -440,7 +451,15 @@ class Driver:
             # Nothing writes a manifest until the first hook fires, which needs
             # the first turn -- so send the opening prompt once the session has
             # settled, then keep waiting for the manifest it produces.
-            if not self.sends and self.session.quiet_seconds() >= self.args.idle_seconds:
+            # Re-send the opening prompt while idle and no manifest yet: the first
+            # keystrokes can be lost if Hermes was still coming up (e.g. still
+            # connecting to a not-yet-ready HPC MCP), which otherwise strands the
+            # driver at an empty prompt for the whole startup window. Pace re-sends
+            # by idle_seconds (a live turn produces output, so quiet_seconds stays
+            # low and this will not fire into one); cap the attempts.
+            since_send = time.monotonic() - getattr(self, "last_send", 0.0)
+            if (self.session.quiet_seconds() >= self.args.idle_seconds
+                    and since_send >= self.args.idle_seconds and self.sends < 5):
                 self.send(self.args.first_prompt, "startup")
             time.sleep(5)
         return bool(self.run_id)
