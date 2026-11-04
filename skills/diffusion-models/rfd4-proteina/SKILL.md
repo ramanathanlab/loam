@@ -228,7 +228,7 @@ Unconditional/motif/binder commands beyond the verified monomer case are
 | `inputs` | — | Benchmark dir or annotated CIF. |
 | `out_dir` | `./runs/<run_name>` | Use an absolute path outside the repo. |
 | `subset_to_examples` | null | Run only these example keys. |
-| `num_replicates` | 1 | Designs (backbones) per example from ONE process on ONE tile. 1 is too small for real work; a binder funnel needs a large starting library, so the **default is >1000 backbones per hypothesis per round**. Treat it as a lever to tune (§6.1), not a fixed rule. Reach the count by fanning out across tiles rather than one long serial job: keep per-job `num_replicates` modest (~8) and get the total from the number of parallel jobs (an Aurora node has 12 usable tiles, so ~12 jobs × 8 = ~96 backbones per wave per node). |
+| `num_replicates` | 1 | Designs (backbones) per example from ONE process on ONE tile. 1 is too small for real work; a design funnel needs a large starting library, so the **default is >1000 backbones per hypothesis per round**. Treat it as a lever to tune (§6.1), not a fixed rule. Reach the count by fanning out across tiles rather than one long serial job: keep per-job `num_replicates` modest (~8) and get the total from the number of parallel jobs (an Aurora node has 12 usable tiles, so ~12 jobs × 8 = ~96 backbones per wave per node). |
 | `batch_size` | 1 | Raise to ~8 only after the longest input passes at 1. |
 | `seed` | null | Reproducibility. |
 | `skip_existing` | true | Resume; use a fresh `out_dir` when changing settings. |
@@ -254,12 +254,13 @@ How many backbones to generate — and at what length — are **yours to choose 
 to vary between rounds**; this skill fixes neither. Pick deliberately and adjust
 as the campaign tells you more.
 
-**Batch size.** `num_replicates=1` is far too small for real work: a binder-design
-funnel loses most candidates between backbone and a confident, selective co-fold
-(RFD4 → ProteinMPNN → co-fold vs target *and* each off-target → filters), so the
-starting library has to be large. The **default is >1000 backbones per hypothesis
-per round** — scale up further when the pool is large and idle or a direction is
-clearly paying off, down when the pool is contended or you are just probing.
+**Batch size.** `num_replicates=1` is far too small for real work: a design
+funnel loses most candidates between backbone and the confident, filtered
+survivors (typically RFD4 → sequence design → structure/metric validation →
+filters), so the starting library has to be large. The **default is >1000
+backbones per hypothesis per round** — scale up further when the pool is large
+and idle or a direction is clearly paying off, down when the pool is contended or
+you are just probing.
 
 RFD4 here is **one process on one tile** (`hardware.ngpus_per_node_=1`, multi-tile
 untested — §7.10), and one long serial job is exactly what the 1 h debug-scaling
@@ -279,13 +280,13 @@ reclaim kills mid-run. So reach your chosen count by **fanning out across tiles*
   before the next reclaim or leave idle tiles empty.
 
 **Length.** Design length is set by the input CIF, not a CLI flag (§5), so it is
-easy to leave it pinned at whatever benchmark you started from — don't. Binder
-length is a real design variable: **vary it across rounds** (build annotated CIFs
-at a few lengths, e.g. ~20 / 40 / 60 / 80 / 100 / 120 aa) rather than folding every
-hypothesis at one length, and let the co-fold scores show what the target prefers.
+easy to leave it pinned at whatever benchmark you started from — don't. Design
+length is a real variable: **vary it across rounds** (build annotated CIFs
+at a few lengths, e.g. ~20 / 40 / 60 / 80 / 100 / 120 aa) rather than generating every
+hypothesis at one length, and let the downstream scores show what the target prefers.
 
-The same per-tile fan-out applies to the downstream co-fold screen, so budget
-tiles across generation *and* co-folding when both are in flight.
+The same per-tile fan-out applies to the downstream validation/scoring screen, so
+budget tiles across generation *and* validation when both are in flight.
 
 ## 7. Aurora / XPU gotchas
 

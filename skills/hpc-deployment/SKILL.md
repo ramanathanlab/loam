@@ -31,6 +31,7 @@ Never guess, hard-code, or inherit these from an earlier campaign:
 | `HPC_POOL_SIZE` | Agents to launch. Direct mode: equal to requested addressable GPU/tile count. Cluster mode: number of client agents submitting into the EL cluster. |
 | `HPC_ENDPOINT_CONFIG_JSON` | JSON object accepted by the endpoint user-config schema; defines PBSPro resources. |
 | `HPC_BASE_DIR` | Campaign directory visible to all workers. |
+| `HPC_LOAM_HOME` | The loam checkout on the shared FS (e.g. `/flare/.../loam`) that the workers run from. Skills reference their worker-visible scripts/launchers as `$HPC_LOAM_HOME/skills/...` instead of hardcoding the path. Must also be exported inside `worker_init` (see below), since a worker only sees the environment that block sets. |
 | `HPC_CAMPAIGN_ID` | Immutable ID used to isolate agent discovery/adoption. |
 | `ACADEMY_EXCHANGE_URL` | Academy exchange the manager and agents rendezvous through. |
 | `HPC_SYSTEM` | `aurora` or `polaris`. Selects the EL `SystemConfig` and the GPU-pinning variable (`ZE_AFFINITY_MASK` / `CUDA_VISIBLE_DEVICES`). Cluster mode only. |
@@ -79,7 +80,9 @@ Two couplings belong in the file itself, not in the operator's head:
   `"workers": '"$((HPC_POOL_SIZE + 1))"'`.
 - **Worker environment.** `worker_init` must activate the environment and put
   `HPC_BASE_DIR` on `PYTHONPATH`, or the agent modules will not import on the
-  worker.
+  worker. It must also `export HPC_LOAM_HOME=<loam clone>` here, because a worker
+  sees only the environment `worker_init` sets — skills that reference
+  `$HPC_LOAM_HOME/skills/...` depend on it being exported in this block.
 
 Example only—pass keys only when the supplied endpoint's user-config schema permits them:
 

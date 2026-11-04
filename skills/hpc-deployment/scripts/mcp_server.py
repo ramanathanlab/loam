@@ -251,7 +251,7 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
                     "campaign_id": CAMPAIGN_ID,
                     "guidance": (
                         f"Up to {total_tiles} run_batch(gpus=1) rows run concurrently. "
-                        "Size a generation/co-fold fan-out to this; each job must finish "
+                        "Size a fan-out to this; each job must finish "
                         "within walltime (debug/debug-scaling reclaim ~hourly). "
                         "This is capacity, not live free tiles -- check list_batches for in-flight work."
                     ),

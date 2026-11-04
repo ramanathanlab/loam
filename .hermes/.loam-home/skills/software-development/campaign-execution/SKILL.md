@@ -44,7 +44,7 @@ Keep canonical reconstruction narrowly scoped to opted-in campaign workflows. Re
 - Require concrete execution evidence from the mandated local/remote runtime.
 - Persist append-only lifecycle and campaign records.
 - Treat missing lifecycle, missing output, invalid score, duplicate reasoner, or missing steering as a non-crediting failure.
-- Keep prerequisite/context evidence separate from hypothesis-bearing evidence. A verified target sequence or monomer fold does not support a binder, selectivity, stability, or affinity claim unless the discriminating comparison actually ran.
+- Keep prerequisite/context evidence separate from hypothesis-bearing evidence. A verified prerequisite (e.g. an input sequence, a reference structure, or a context fold) does not support a downstream hypothesis-bearing claim unless the discriminating comparison the claim depends on actually ran.
 - Treat validator reports as unvalidated orchestration input until independent evidence review reconciles each claim against its authoritative source or hashed artifact. In particular, do not accept a child-reported batch ID, score, or artifact path without read-back verification.
 - Match every claim to its own source. Do not cite a target's UniProt URL as provenance for a campaign execution failure or computed result; use the batch manifest, scheduler record, or output artifact that produced that claim.
 - Distinguish blocked/inconclusive from refuted: absent candidates, failed tools, or an unexecuted gate produce no directional evidence and should retain an evidence score of 0.00 unless a completed experiment contradicts the hypothesis.
