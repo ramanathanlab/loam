@@ -50,8 +50,10 @@ Cluster-mode health checking (see "Self-healing" below) reads `HPC_POOL_PROBE_IN
 exchange listen stream stays open before a clean reconnect. When the ALCF proxy
 severs a stream, the server's reader for it lingers up to this long and can take
 the next message for a connection that no longer exists, so a shorter window
-loses fewer messages. Agents also ride out a 429/5xx from the exchange on both
-the listen stream and the heartbeat, instead of dying on one burst.
+loses fewer messages. (The listen/heartbeat 429/5xx hardening that used to ride
+out such bursts is **currently disabled** — commented out in `hpc_agent.py`
+pending a cleaner fix — so a sustained exchange outage again surfaces as agent
+loss.)
 
 ### Setting them: `set_env.sh`
 

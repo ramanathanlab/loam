@@ -29,14 +29,14 @@ import sys
 import tempfile
 import time
 import uuid
-from contextlib import aclosing
+#from contextlib import aclosing  # used only by the commented-out exchange hardening below
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
 import aiohttp
 from academy.agent import Agent, action
-from academy.exchange.cloud.client import HttpExchangeTransport
+#from academy.exchange.cloud.client import HttpExchangeTransport  # used only by the commented-out exchange hardening below
 
 logger = logging.getLogger(__name__)
 
@@ -114,96 +114,95 @@ def _listen_backoff(failures: int, cap: float = _LISTEN_BACKOFF_CAP) -> float:
     """Exponential backoff for consecutive reconnects (1,2,4,8...), capped."""
     return min(2.0 ** min(max(failures - 1, 0), 3), cap)
 
-
-def _harden_exchange_listener() -> None:
-    """Reconnect the exchange stream instead of dying on a transient drop.
-
-    HttpExchangeTransport.listen already reconnects after each clean stream
-    expiry (the server closes it every request_timeout_s), but it reads the
-    response body *inside* the request context manager, so a truncated stream
-    raises ClientPayloadError past the reconnect loop. That kills the listener
-    task, which shuts down the agent runtime, which runs agent_on_shutdown.
-    For HpcClusterAgent that calls el.stop(), so a momentary network blip
-    tears down a live EL cluster and its allocation.
-
-    Cluster lifetime is deliberately tied to agent lifetime, so the fix is to
-    make agent death mean something: ride out blips, but still propagate once
-    the exchange is persistently unreachable and the agent really is lost.
-    """
-    original = HttpExchangeTransport.listen
-    if getattr(original, '_hpc_hardened', False):
-        return
-
-    async def listen(self, timeout: float | None = None):
-        first_failure: float | None = None  # monotonic time of first drop since last message
-        failures = 0
-        while True:
-            try:
-                # aclosing: the inner generator owns an open HTTP response, so
-                # it must be finalized if our consumer abandons us mid-stream.
-                async with aclosing(original(self, timeout=timeout)) as stream:
-                    async for message in stream:
-                        # A delivered message proves the exchange is alive, so
-                        # clear the failure budget: routine proxy drops between
-                        # messages never accumulate toward a false "agent lost".
-                        first_failure = None
-                        failures = 0
-                        yield message
-                return
-            except aiohttp.ClientError as exc:
-                if not _is_transient_exchange_error(exc):
-                    raise
-                now = time.monotonic()
-                if first_failure is None:
-                    first_failure = now
-                failures += 1
-                if _listen_should_give_up(first_failure, now):
-                    logger.error(
-                        'exchange stream unrecoverable: no message for %.0fs across %d reconnects: %s: %s',
-                        now - first_failure, failures, type(exc).__name__, exc,
-                    )
-                    raise
-                backoff = _listen_backoff(failures)
-                logger.warning(
-                    'exchange stream dropped (%s: %s); reconnecting in %.0fs [silent %.0fs/%.0fs]',
-                    type(exc).__name__, exc, backoff, now - first_failure, _LISTEN_GIVEUP_S,
-                )
-                await asyncio.sleep(backoff)
-
-    listen._hpc_hardened = True
-    HttpExchangeTransport.listen = listen
-
-
-def _harden_exchange_heartbeat() -> None:
-    """Skip a heartbeat the exchange could not take, instead of ending the loop.
-
-    Academy's heartbeat loop only survives cancellation and a terminated
-    mailbox; any other error ends the task, and outside Academy debug mode
-    nothing restarts it. One 5xx burst therefore stopped an agent's heartbeat
-    for good, and ~90s later the exchange reported a working agent INACTIVE.
-    Swallowing a transient failure lets the loop's own sleep act as the retry.
-    Liveness is still decided elsewhere: the listener's silence budget and the
-    pool's probes.
-    """
-    original = HttpExchangeTransport.update_heartbeat
-    if getattr(original, '_hpc_hardened', False):
-        return
-
-    async def update_heartbeat(self) -> None:
-        try:
-            await original(self)
-        except aiohttp.ClientError as exc:
-            if not _is_transient_exchange_error(exc):
-                raise
-            logger.warning('exchange heartbeat failed (%s: %s); retrying next interval',
-                           type(exc).__name__, exc)
-
-    update_heartbeat._hpc_hardened = True
-    HttpExchangeTransport.update_heartbeat = update_heartbeat
-
-
-_harden_exchange_listener()
-_harden_exchange_heartbeat()
+#def _harden_exchange_listener() -> None:
+#    """Reconnect the exchange stream instead of dying on a transient drop.
+#
+#    HttpExchangeTransport.listen already reconnects after each clean stream
+#    expiry (the server closes it every request_timeout_s), but it reads the
+#    response body *inside* the request context manager, so a truncated stream
+#    raises ClientPayloadError past the reconnect loop. That kills the listener
+#    task, which shuts down the agent runtime, which runs agent_on_shutdown.
+#    For HpcClusterAgent that calls el.stop(), so a momentary network blip
+#    tears down a live EL cluster and its allocation.
+#
+#    Cluster lifetime is deliberately tied to agent lifetime, so the fix is to
+#    make agent death mean something: ride out blips, but still propagate once
+#    the exchange is persistently unreachable and the agent really is lost.
+#    """
+#    original = HttpExchangeTransport.listen
+#    if getattr(original, '_hpc_hardened', False):
+#        return
+#
+#    async def listen(self, timeout: float | None = None):
+#        first_failure: float | None = None  # monotonic time of first drop since last message
+#        failures = 0
+#        while True:
+#            try:
+#                # aclosing: the inner generator owns an open HTTP response, so
+#                # it must be finalized if our consumer abandons us mid-stream.
+#                async with aclosing(original(self, timeout=timeout)) as stream:
+#                    async for message in stream:
+#                        # A delivered message proves the exchange is alive, so
+#                        # clear the failure budget: routine proxy drops between
+#                        # messages never accumulate toward a false "agent lost".
+#                        first_failure = None
+#                        failures = 0
+#                        yield message
+#                return
+#            except aiohttp.ClientError as exc:
+#                if not _is_transient_exchange_error(exc):
+#                    raise
+#                now = time.monotonic()
+#                if first_failure is None:
+#                    first_failure = now
+#                failures += 1
+#                if _listen_should_give_up(first_failure, now):
+#                    logger.error(
+#                        'exchange stream unrecoverable: no message for %.0fs across %d reconnects: %s: %s',
+#                        now - first_failure, failures, type(exc).__name__, exc,
+#                    )
+#                    raise
+#                backoff = _listen_backoff(failures)
+#                logger.warning(
+#                    'exchange stream dropped (%s: %s); reconnecting in %.0fs [silent %.0fs/%.0fs]',
+#                    type(exc).__name__, exc, backoff, now - first_failure, _LISTEN_GIVEUP_S,
+#                )
+#                await asyncio.sleep(backoff)
+#
+#    listen._hpc_hardened = True
+#    HttpExchangeTransport.listen = listen
+#
+#
+#def _harden_exchange_heartbeat() -> None:
+#    """Skip a heartbeat the exchange could not take, instead of ending the loop.
+#
+#    Academy's heartbeat loop only survives cancellation and a terminated
+#    mailbox; any other error ends the task, and outside Academy debug mode
+#    nothing restarts it. One 5xx burst therefore stopped an agent's heartbeat
+#    for good, and ~90s later the exchange reported a working agent INACTIVE.
+#    Swallowing a transient failure lets the loop's own sleep act as the retry.
+#    Liveness is still decided elsewhere: the listener's silence budget and the
+#    pool's probes.
+#    """
+#    original = HttpExchangeTransport.update_heartbeat
+#    if getattr(original, '_hpc_hardened', False):
+#        return
+#
+#    async def update_heartbeat(self) -> None:
+#        try:
+#            await original(self)
+#        except aiohttp.ClientError as exc:
+#            if not _is_transient_exchange_error(exc):
+#                raise
+#            logger.warning('exchange heartbeat failed (%s: %s); retrying next interval',
+#                           type(exc).__name__, exc)
+#
+#    update_heartbeat._hpc_hardened = True
+#    HttpExchangeTransport.update_heartbeat = update_heartbeat
+#
+#
+#_harden_exchange_listener()
+#_harden_exchange_heartbeat()
 
 
 class HpcAgent(Agent):
