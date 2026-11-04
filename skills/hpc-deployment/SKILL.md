@@ -72,6 +72,19 @@ adopts another campaign's agents.
 UUID, queue, walltime, and `HPC_CAMPAIGN_ID` together in it so the whole
 configuration is reviewable in one place.
 
+**New-campaign recipe.** `set_env.sh` ships as a user- and campaign-neutral
+TEMPLATE whose header is the recipe: copy it to `set_env_<campaign>.sh`, fill
+every `FILL_IN` (`grep '^export .*FILL_IN' set_env_<campaign>.sh` lists them —
+endpoint UUID, `HPC_BASE_DIR`, `HPC_CAMPAIGN_ID`, `HPC_LOAM_HOME`, `HPC_VENV`),
+review the allocation knobs (`HPC_SYSTEM`, `HPC_NNODES`, `HPC_POOL_SIZE`, and the
+queue/walltime in `HPC_ENDPOINT_CONFIG_JSON`), then point `HPC_ENV_FILE` at your
+copy. The template refuses to run until the blanks are filled, so a launch that
+forgets `HPC_ENV_FILE` cannot silently use someone else's endpoint. The per-user
+files (`set_env_akv.sh`, `set_env_hari.sh`, `set_env_msinclair.sh`) are worked
+examples of a filled-in copy. `HPC_LOAM_HOME` and `HPC_VENV` are the only paths
+you repeat; set `HPC_LOAM_HOME` once and the skills + worker `PYTHONPATH` both
+resolve from it.
+
 Two couplings belong in the file itself, not in the operator's head:
 
 - **Worker count.** The endpoint needs one worker slot per client agent *plus*

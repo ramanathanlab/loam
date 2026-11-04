@@ -400,6 +400,11 @@ def runbatch_nudge_for(payload: Mapping[str, Any]) -> str:
         return ''  # the run has made no calls yet
     functions = [hypothesis_workspace._hpc_function(call.get('tool', '')) for call in record.get('calls') or []]
     run_code = functions.count('run_code')
+    # Fire once a run has leaned on serial run_code without ever batching. The
+    # threshold is 3 (lowered from 5): at 5 a context-heavy run had usually
+    # already hit the token-rate-limit wall this nudge exists to prevent, so we
+    # warn earlier. Any run_batch call at all means the generator knows the tool
+    # and is deliberately using run_code for a diagnostic, so stay silent.
     if run_code < 3 or 'run_batch' in functions:
         return ''
     return (
