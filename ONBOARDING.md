@@ -119,7 +119,9 @@ allocation. `kill -9` orphans the EL cluster until walltime.
 
 **Copy `examples/hermes-config.yaml.example` into the Hermes home as
 `config.yaml`** (the shared home is `.hermes/.loam-home/config.yaml`) and fill in
-every `<PLACEHOLDER>`. Do not hand-write this file from the keys below — the
+every `<PLACEHOLDER>`. This sets up the shared/default config; a campaign can
+also carry its own `config.yaml` that `run-campaign` prefers — see Step 5. Do not
+hand-write this file from the keys below — the
 example is the complete one, and the pieces most easily missed are the ones that
 are not Loam-specific at all:
 
@@ -129,6 +131,14 @@ are not Loam-specific at all:
 - `delegation.base_url` / `api_key` / `model` — `delegate_task` ignores per-agent
   `model:` frontmatter, so this is the **only** place every child
   (hypothesis-validator and code-generator alike) gets its model.
+- `delegation.role_models` *(optional)* — run a single child role on its own
+  model/endpoint while the rest stay on `delegation.model`. A per-role entry is
+  either a model string (reuses the delegation endpoint) or a mapping carrying
+  its own `base_url`/`api_key`. The mapping (endpoint) form needs the carried
+  Hermes patch `patches/hermes-role-models-endpoints.patch` (apply per
+  `patches/README.md`): unpatched Hermes silently ignores it and leaves the role
+  on the default endpoint, so `scripts/campaign_preflight.py` fails the launch
+  when the config needs the patch and the installed Hermes lacks it.
 
 The Loam-specific keys the example already contains, and what each one does:
 
@@ -170,7 +180,9 @@ See `.loam/README.md` for the full hook contract and the global-install option.
 
 Copy `examples/loam.yaml.example` to `~/.hermes/loam.yaml` and edit every
 `<PLACEHOLDER>`. One active profile defines the tournament and the execution
-contract. Key blocks:
+contract. This `~/.hermes/loam.yaml` is the global default; a campaign can carry
+its own `loam.yaml` that overrides it, so the profile travels with the campaign —
+see Step 5. Key blocks:
 
 - `hypothesis_tournament` — `jnana_root`, the generation endpoint (`:51900`) and
   ranking endpoint (`:51911`), `initial_hypotheses`, `matches_per_run`, `top_k`,
@@ -333,6 +345,28 @@ anything — the ones it deliberately discards, so that no parent shell can
 redirect or merge a run. Two in particular are not knobs: the tournament cadence
 comes from the profile's `pre_llm_every`, not `LOAM_PRE_LLM_EVERY`, and the
 active profile from `active_profile` in `loam.yaml`, not `LOAM_PROFILE`.
+
+### Config and profile travel with the campaign
+
+`run-campaign` resolves both the Loam profile and the Hermes config
+**campaign-first**: a `loam.yaml` / `config.yaml` at the campaign root wins, then
+the campaign's `.hermes/` copy, then the global `~/.hermes/loam.yaml` / shared
+repo `config.yaml` as the fallback. So per-campaign settings — a different
+delegation model, a different tournament size — travel with the campaign, and
+switching campaigns is a `cd`, not an edit to a global file. The launcher exports
+`LOAM_CONFIG_PATH` to the chosen `loam.yaml`, and `scripts/drive_campaign.py`
+resolves the same paths in the same order, so the driver and the hooks never
+disagree about which profile is live. Steps 3 and 4 set up the global copies;
+dropping a `loam.yaml` / `config.yaml` beside `run-campaign` is all it takes to
+override them for one campaign.
+
+At launch `run-campaign` also runs `scripts/fill_alloc_skill.py`, which bakes the
+live allocation (`nodes x 12` tiles, divided by `top_k`) into the hpc-deployment
+skill's `<!-- LOAM_LIVE_ALLOC -->` sentinel, so code-generators size their
+`run_batch` fan-out to the pool that is actually allocated rather than the
+campaign goal's headline node count. Agents can read the same budget live from
+the `pool_status` MCP tool. It never fails the launch — if the node count can't
+be resolved, the skill is left generic.
 
 ### Validate the plumbing without a cluster first
 
