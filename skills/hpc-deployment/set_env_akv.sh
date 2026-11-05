@@ -6,7 +6,9 @@
 # workers run the same hpc_agent.py as this tree -- `git pull` there to update).
 
 # loam-aurora-flex on Aurora (~/.globus_compute/loam-aurora-flex, aurora-uan-0009).
-export HPC_GLOBUS_ENDPOINT_ID="e9a292e7-a158-4418-8897-aef6a113657e"
+# Recreated 2026-11-04 (delete --force + re-register to clear a wedged exchange);
+# UUID changes on recreate -- read from ~/.globus_compute/loam-aurora-flex/endpoint.json.
+export HPC_GLOBUS_ENDPOINT_ID="580ada8f-b812-4f66-9e7a-8f3ccae54af3"
 # Client agents in the pool = how many children can submit AT THE SAME TIME.
 # Raised 1 -> 4 on 2026-10-21. At 1, the orchestration's three concurrent
 # validators (each allowed up to three code-generator children) all queued on a
@@ -37,7 +39,12 @@ export HPC_LOAM_HOME="/flare/FRAME-IDP/avasan/loam"
 # inspection roots" (observed 2026-10-21, after the round1_h1 Chai-1 fold). Both
 # spellings of each tree are listed because /flare and /lus/flare/projects are
 # the same filesystem and the agent uses them interchangeably.
-export HPC_INSPECT_ROOTS="/flare/FRAME-IDP/avasan/hpc-run:/lus/flare/projects/FRAME-IDP/avasan/hpc-run:/flare/FRAME-IDP/agentic_campaign_09_26/binder_design:/lus/flare/projects/FRAME-IDP/agentic_campaign_09_26/binder_design"
+# $HPC_LOAM_HOME/skills is included so run_batch can validate/copy skill runner
+# scripts submitted straight from the deployed loam tree (e.g. the rfd4-proteina
+# route's rfd4_run_row.py). Without it a script_path under $HPC_LOAM_HOME is
+# rejected as "outside allowed inspection roots" and the agent must first copy the
+# runner into HPC_BASE_DIR (observed 2026-11-05, rfd4 code-gen unit test).
+export HPC_INSPECT_ROOTS="/flare/FRAME-IDP/avasan/hpc-run:/lus/flare/projects/FRAME-IDP/avasan/hpc-run:/flare/FRAME-IDP/agentic_campaign_09_26/binder_design:/lus/flare/projects/FRAME-IDP/agentic_campaign_09_26/binder_design:/flare/FRAME-IDP/avasan/loam/skills:/lus/flare/projects/FRAME-IDP/avasan/loam/skills"
 # Nodes in the allocation. Both the PBS request (`nodes` below, rendered into
 # nodes_per_block) and the EL cluster's leaf count must agree.
 export HPC_NNODES="${HPC_NNODES:-2}"

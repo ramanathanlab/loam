@@ -38,6 +38,16 @@ export HPC_CAMPAIGN_ID="FILL_IN_campaign_id"
 # hardcodes a path. It is also exported into worker_init below (a worker sees
 # only the environment that block sets).
 export HPC_LOAM_HOME="FILL_IN_absolute_path_to_the_loam_clone_on_the_shared_fs"
+# Read-only paths inspect_filesystem / run_batch may look at (colon-separated),
+# beyond HPC_BASE_DIR (always allowed). Include "$HPC_LOAM_HOME/skills" so
+# run_batch can validate/copy a skill runner script submitted straight from the
+# deployed loam tree (e.g. the rfd4-proteina route's rfd4_run_row.py); without it
+# a script_path under $HPC_LOAM_HOME is rejected as "outside allowed inspection
+# roots" and the agent must first copy the runner into HPC_BASE_DIR. Add the
+# project output tree(s) your tools write to. If /flare and /lus/flare/projects
+# (or similar) name the same filesystem on your site, list BOTH spellings since
+# agents use them interchangeably.
+export HPC_INSPECT_ROOTS="${HPC_LOAM_HOME}/skills:FILL_IN_absolute_path_to_tool_output_tree"
 export HPC_SYSTEM="aurora"
 # Nodes in the allocation. Both the PBS request (`nodes_per_block` below)
 # and the EL cluster's leaf count must agree.
