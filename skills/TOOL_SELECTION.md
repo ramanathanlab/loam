@@ -1,3 +1,11 @@
+# Jupiter selection
+
+On Jupiter select `*-jupiter` skill names for scientific tools and
+`hpc-deployment` for execution. Read [JUPITER.md](../JUPITER.md) and
+[status.json](../ports/jupiter/status.json) before selecting tools. Use four
+GH200 GPUs per node and preserve CUDA_VISIBLE_DEVICES. The Aurora table below
+is historical; it does not describe the Jupiter installations.
+
 # Tool Selection Guide (Aurora)
 
 Read this to pick a tool, then open that tool's `SKILL.md` for environment setup and commands.

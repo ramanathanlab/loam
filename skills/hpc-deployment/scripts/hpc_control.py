@@ -98,7 +98,7 @@ def current_settings(env: dict[str, str], saved: dict | None) -> dict:
 
     config = json.loads(env["HPC_ENDPOINT_CONFIG_JSON"])
     settings = {
-        "queue": config.get("queue", "debug"),
+        "queue": config.get("partition", config.get("queue", "debug")),
         "walltime": config.get("walltime", "01:00:00"),
         "nodes": int(env.get("HPC_NNODES") or config.get("nodes_per_block") or 1),
     }
@@ -113,6 +113,8 @@ def child_env(env: dict[str, str], settings: dict) -> dict[str, str]:
     config = json.loads(env["HPC_ENDPOINT_CONFIG_JSON"])
     config.update(queue=settings["queue"], walltime=settings["walltime"],
                   nodes_per_block=settings["nodes"])
+    if "partition" in config:
+        config["partition"] = settings["queue"]
     env["HPC_ENDPOINT_CONFIG_JSON"] = json.dumps(config)
     env["HPC_NNODES"] = str(settings["nodes"])
     env["HPC_MCP_TRANSPORT"] = "http"

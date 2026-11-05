@@ -354,6 +354,7 @@ async def check_hpc(url: str, timeout: float) -> dict[str, Any]:
         "import json, os, socket\n"
         "print(json.dumps({'hostname': socket.gethostname(), "
         "'pbs_jobid': os.environ.get('PBS_JOBID'), "
+        "'slurm_jobid': os.environ.get('SLURM_JOB_ID'), "
         "'device_pin': os.environ.get('ZE_AFFINITY_MASK') or os.environ.get('CUDA_VISIBLE_DEVICES')}))"
     )
     async with Client(url, timeout=timeout) as client:
@@ -364,7 +365,9 @@ async def check_hpc(url: str, timeout: float) -> dict[str, Any]:
     if not isinstance(data, dict) or str(data.get("returncode")) != "0":
         raise RuntimeError(f"HPC run_code returned invalid result: {data}")
     placement = json.loads(str(data.get("stdout") or ""))
-    missing = [key for key in ("hostname", "pbs_jobid", "device_pin") if not placement.get(key)]
+    missing = [key for key in ("hostname", "device_pin") if not placement.get(key)]
+    if not (placement.get("pbs_jobid") or placement.get("slurm_jobid")):
+        missing.append("scheduler_jobid")
     if missing:
         raise RuntimeError(f"HPC result lacks placement fields {missing}: {placement}")
     return {"returncode": data["returncode"], "stderr": data.get("stderr", ""), **placement}
