@@ -1,0 +1,49 @@
+# Example Hermes config. Copy to the Hermes home used by your launch
+# (shared home: .hermes/.loam-home/config.yaml) and edit every <PLACEHOLDER>.
+# Credentials live in auth.json, which is user-provided and gitignored — do NOT
+# put real API keys in this file or commit a filled-in auth.json. See ONBOARDING.md.
+
+model:
+  # Main reasoner (the campaign parent). Point at your OpenAI-compatible base.
+  default: <REASONER_MODEL>                 # e.g. argo:gpt-5.6-sol
+  provider: custom:<PROVIDER_NAME>
+  base_url: http://localhost:51900/v1       # Argo tunnel
+  api_key: local-no-auth                    # no-auth local proxy; real keys go in auth.json
+
+plugins:
+  enabled:
+    - loam-hooks                            # activates the Loam lifecycle hooks
+
+custom_providers:
+  - name: <PROVIDER_NAME>                    # e.g. "Argo (localhost:51900)"
+    base_url: http://localhost:51900/v1
+    api_key: local-no-auth
+    model: <A_MODEL_ID>
+  - name: ALCF Minerva via proxy (localhost:51911)
+    base_url: http://localhost:51911/v1
+    api_key: local-no-auth
+    model: <RANKING_MODEL>                   # e.g. gpt-oss-120b
+
+delegation:
+  max_spawn_depth: 2                         # coordinator -> validator -> code-generator
+  orchestrator_enabled: true
+  max_concurrent_children: 5
+  # delegate_task ignores per-agent model: frontmatter, so this pins EVERY child
+  # (hypothesis-validator and code-generator alike).
+  base_url: http://localhost:51900/v1
+  api_key: local-no-auth
+  model: <SUBAGENT_MODEL>                     # e.g. argo:gpt-5.6-sol
+
+mcp_servers:
+  # The HPC code-execution server from scripts/mcp_server.py (Step 2).
+  hpc:
+    url: http://127.0.0.1:8000/mcp
+    # A wedged call blocks the agent loop for the whole timeout; keep this tight
+    # and prefer run_code's own `timeout` argument for genuinely long work.
+    timeout: 300
+    connect_timeout: 60
+  # Optional: allocation control plane (start/stop/status of the HPC server).
+  hpcctl:
+    command: /ABS/PATH/TO/.loam-venv/bin/python
+    args:
+      - /ABS/PATH/TO/loam/skills/hpc-deployment/scripts/hpc_control.py
