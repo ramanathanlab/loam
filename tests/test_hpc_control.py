@@ -55,6 +55,19 @@ class EnvTests(unittest.TestCase):
         self.assertEqual(hpc_control.current_settings(self.env, saved),
                          {"queue": "capacity", "walltime": "00:30:00", "nodes": 2})
 
+    def test_slurm_partition_tracks_restart_queue(self) -> None:
+        self.env["HPC_ENDPOINT_CONFIG_JSON"] = json.dumps({
+            "partition": "booster", "queue": "booster", "walltime": "00:15:00"
+        })
+        self.assertEqual(hpc_control.current_settings(self.env, None)["queue"], "booster")
+        changed = hpc_control.child_env(self.env, {
+            "queue": "largebooster", "walltime": "00:20:00", "nodes": 2
+        })
+        config = json.loads(changed["HPC_ENDPOINT_CONFIG_JSON"])
+        self.assertEqual(config["partition"], "largebooster")
+        self.assertEqual(config["queue"], "largebooster")
+        self.assertEqual(config["nodes_per_block"], 2)
+
     def test_child_env_patches_config_and_keeps_worker_init(self) -> None:
         env = hpc_control.child_env(self.env, {"queue": "capacity", "walltime": "06:00:00", "nodes": 2})
         config = json.loads(env["HPC_ENDPOINT_CONFIG_JSON"])

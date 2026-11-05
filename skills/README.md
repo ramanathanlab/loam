@@ -1,3 +1,12 @@
+# Jupiter port
+
+For Julich Jupiter, select the `*-jupiter` variants and `hpc-deployment`.
+Source `$HPC_LOAM_HOME/scripts/jupiter_env.sh` for software and model-cache paths.
+Read [JUPITER.md](../JUPITER.md) and the generated
+[installation status](../ports/jupiter/status.json) before using a tool.
+Jupiter has four GH200 GPUs per node; preserve CUDA_VISIBLE_DEVICES.
+Original Aurora skills below remain API references, with their original provenance.
+
 # Aurora Tool Skills
 
 Claude Code skills for the Aurora tool stack, written and tested on an Aurora

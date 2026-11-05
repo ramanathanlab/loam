@@ -1,0 +1,32 @@
+# Jupiter Booster: ARM64, 288 Grace cores and four GH200 GPUs per node.
+# String user options arrive JSON-quoted from Globus Compute.
+display_name: loam-julich-jupiter
+engine:
+  type: GlobusComputeEngine
+  max_workers_per_node: {{ max_workers_per_node|default(5) }}
+  cpu_affinity: none
+  prefetch_capacity: 0
+  strategy: simple
+  job_status_kwargs:
+    max_idletime: {{ max_idletime|default(300) }}
+  address:
+    type: address_by_interface
+    ifname: {{ ifname|default('"ib0"') }}
+  provider:
+    type: SlurmProvider
+    account: {{ account|default('"deepwing"') }}
+    partition: {{ partition|default(queue|default('"booster"')) }}
+    {% if qos is defined %}qos: {{ qos }}{% endif %}
+    walltime: {{ walltime|default('"00:15:00"') }}
+    nodes_per_block: {{ nodes_per_block|default(1) }}
+    cores_per_node: 288
+    init_blocks: {{ init_blocks|default(0) }}
+    min_blocks: {{ min_blocks|default(0) }}
+    max_blocks: {{ max_blocks|default(1) }}
+    exclusive: true
+    scheduler_options: {{ scheduler_options|default('"#SBATCH --gres=gpu:4"') }}
+    launcher:
+      type: SrunLauncher
+    worker_init: {{ worker_init }}
+idle_heartbeats_soft: 10
+idle_heartbeats_hard: 5760

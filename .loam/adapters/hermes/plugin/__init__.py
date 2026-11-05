@@ -7,6 +7,7 @@ This module is intentionally thin: all portable policy belongs in
 from __future__ import annotations
 
 import json
+import os
 import logging
 import subprocess
 import sys
@@ -86,7 +87,7 @@ def _invoke(
 
     try:
         completed = subprocess.run(
-            [sys.executable, str(script)],
+            [os.environ.get("LOAM_HOOK_PYTHON") or sys.executable, str(script)],
             input=json.dumps(payload),
             text=True,
             capture_output=True,

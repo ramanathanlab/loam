@@ -9,6 +9,8 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "campaign_preflight.py"
 SPEC = importlib.util.spec_from_file_location("campaign_preflight", MODULE_PATH)
@@ -116,6 +118,30 @@ class InferenceTests(unittest.TestCase):
         self.assertEqual(_Handler.models.count("reasoner-model"), 2)  # reasoner + the shared key
         self.assertNotIn("same as", report["generation"]["response"])
         self.assertIn("same as", report["ranking"]["response"])  # same endpoint, key and model
+
+
+class HpcPlacementTests(unittest.IsolatedAsyncioTestCase):
+    async def probe(self, placement):
+        result = SimpleNamespace(is_error=False, data={
+            "returncode": 0, "stdout": json.dumps(placement), "stderr": ""
+        })
+        client = AsyncMock()
+        client.call_tool.return_value = result
+        with patch("fastmcp.Client") as factory:
+            factory.return_value.__aenter__.return_value = client
+            return await campaign_preflight.check_hpc("http://localhost:8000/mcp", 10)
+
+    async def test_slurm_and_pbs_placements_pass(self):
+        for field in ("pbs_jobid", "slurm_jobid"):
+            with self.subTest(scheduler=field):
+                result = await self.probe({"hostname": "worker", "device_pin": "0", field: "123"})
+                self.assertEqual(result[field], "123")
+
+    async def test_missing_scheduler_or_pin_fails_closed(self):
+        for placement in ({"hostname": "worker", "device_pin": "0"},
+                          {"hostname": "worker", "slurm_jobid": "123"}):
+            with self.assertRaisesRegex(RuntimeError, "placement fields"):
+                await self.probe(placement)
 
 
 class PortTests(unittest.TestCase):

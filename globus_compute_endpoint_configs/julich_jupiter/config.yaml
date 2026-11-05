@@ -1,0 +1,4 @@
+# Private, template-capable endpoint running as the current POSIX user.
+# Registration and authentication occur on the first user-initiated start.
+display_name: loam-julich-jupiter
+public: false

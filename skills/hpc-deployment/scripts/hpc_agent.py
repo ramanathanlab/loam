@@ -44,7 +44,9 @@ try:
     from ensemble_launcher import EnsembleLauncher
     from ensemble_launcher.config import (
         LauncherConfig,
+        MPIConfig,
         PolicyConfig,
+        SystemConfig,
         aurora_config,
         polaris_config,
     )
@@ -302,21 +304,47 @@ class HpcAgent(Agent):
 class HpcClusterAgent(Agent):
     """Owns the lifecycle of one EL cluster; stopping this agent stops the cluster."""
     def __init__(self, base_dir: str, ckpt_dir: str, nnodes: int,
-                 system: Literal["aurora", "polaris"],
+                 system: Literal["aurora", "polaris", "alps", "cscs", "jupiter"],
                  task_executor_name: list[str] | None = None):
         super().__init__()
         self.ckpt_dir = str(Path(base_dir, ckpt_dir))
+        child_executor_name = "async_mpi"
+        mpi_config = None
         if system == "aurora":
             self.system_config = aurora_config
             gpu_selector = "ZE_AFFINITY_MASK"
         elif system == "polaris":
             self.system_config = polaris_config
             gpu_selector = "CUDA_VISIBLE_DEVICES"
+        elif system in ("alps", "cscs", "jupiter"):
+            # CSCS Alps GH200 (Daint/Clariden/Santis): 4x Grace-Hopper per node
+            # = 288 Grace cores (4x72) + 4 H100s, CUDA_VISIBLE_DEVICES pinning
+            # like Polaris. System + srun MPI config are Hari's (EL lead) canonical
+            # Alps profile. Alps ships no mpiexec/mpirun -- it is an srun system --
+            # so a single-node EL cluster launches its one leaf child via
+            # multiprocessing (async_processpool) and needs no launcher at all
+            # (matches EL's own test_async_master_cluster); a multi-node
+            # allocation reaches the other nodes with srun-flavored MPI. The srun
+            # flavor needs cpu_bind_method="none" (EL's "list:" syntax is invalid
+            # for srun) and EL-picked nodes passed via --nodelist/--nodefile.
+            self.system_config = SystemConfig(
+                name=system, ncpus=288, ngpus=4,
+                cpus=list(range(288)), gpus=list(range(4)),
+            )
+            gpu_selector = "CUDA_VISIBLE_DEVICES"
+            child_executor_name = "async_processpool" if nnodes <= 1 else "async_mpi"
+            mpi_config = MPIConfig(
+                flavor="srun",
+                hosts_flag="--nodelist",      # EL picks the nodes, so pass them to srun
+                hostfile_flag="--nodefile",
+                cpu_bind_method="none",        # EL's "list:" syntax isn't valid for srun
+                extra_launcher_flags=["--overlap", "--gpus-per-node=4", "--gpu-bind=none"],
+            )
         else:
-            raise ValueError(f"unsupported system {system!r}; expected 'aurora' or 'polaris'")
+            raise ValueError(f"unsupported system {system!r}; expected 'aurora', 'polaris', 'alps', 'cscs' or 'jupiter'")
 
-        self.launcher_config = LauncherConfig(
-            child_executor_name="async_mpi",
+        launcher_kwargs = dict(
+            child_executor_name=child_executor_name,
             task_executor_name=task_executor_name or ["async_processpool"],
             cluster=True,
             checkpoint_dir=self.ckpt_dir,
@@ -328,6 +356,9 @@ class HpcClusterAgent(Agent):
             policy_config=PolicyConfig(nlevels=2, leaf_nodes=nnodes),
             log_dir=str(Path(base_dir, "logs")),
         )
+        if mpi_config is not None:
+            launcher_kwargs["mpi_config"] = mpi_config
+        self.launcher_config = LauncherConfig(**launcher_kwargs)
         self._el = None
 
     async def agent_on_startup(self):

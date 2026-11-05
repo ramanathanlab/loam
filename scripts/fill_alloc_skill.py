@@ -42,9 +42,11 @@ def main():
     if not n:
         return 1
     k = top_k()
-    tiles = n * 12
+    per_node = {"aurora": 12, "polaris": 4, "alps": 4, "cscs": 4, "jupiter": 4}.get(
+        os.environ.get("HPC_SYSTEM", "aurora"), 12)
+    tiles = n * per_node
     share = max(tiles // max(k, 1), 1)
-    line = (f"**Live pool for this run: {n} nodes x 12 = {tiles} tiles.** Your fair "
+    line = (f"**Live pool for this run: {n} nodes x {per_node} = {tiles} tiles.** Your fair "
             f"share is ~{share} tiles (the pool divided {k} ways by top_k; all "
             f"code-generators draw on the same tiles). A run_batch row = 1 tile "
             f"(gpus=1): size each batch to ~{share} rows per wave, poll batch_status "

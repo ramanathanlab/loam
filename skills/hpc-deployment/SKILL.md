@@ -10,6 +10,29 @@ license: Apache-2.0
 
 # Globus Compute → PBSPro → pinned Academy-agent MCP deployment
 
+## Jupiter deployment
+
+On Julich Jupiter use `skills/hpc-deployment/set_env_jupiter.sh` and
+`globus_compute_endpoint_configs/julich_jupiter/`. The provider is **SlurmProvider**;
+PBS examples below describe the original Aurora deployment. Set `HPC_SYSTEM=jupiter`
+for 288 Grace cores and four GH200 GPUs per node. GPU pinning uses
+`CUDA_VISIBLE_DEVICES`; single-node EL uses a process-pool child, and multi-node
+EL uses srun. Preserve the pin assigned to each task and use `cuda:0` inside it.
+
+The dedicated runtime is `$LOAM_SOFTWARE_ROOT/globus-compute/.venv`. The configured,
+stopped endpoint is under `$LOAM_SOFTWARE_ROOT/globus-compute/endpoints/loam-julich-jupiter`.
+Source `scripts/globus_compute_jupiter_env.sh` before starting the endpoint yourself.
+After registration, the Jupiter env file discovers its verified manager UUID as
+`HPC_GLOBUS_ENDPOINT_ID`. Its default allocation is one `deepwing` / `booster` node
+for 15 minutes, with operator caps of one node and 30 minutes. The live Slurm
+partition/QOS policies still apply. The template uses `ib0`, observed on this login
+node; worker-to-interchange reachability must pass the real endpoint smoke test.
+Register/authenticate the endpoint before starting the server. Read `JUPITER.md`.
+
+Pool capacity is `nodes * 4` GPUs on Jupiter. Query `pool_status` before sizing
+batches; all campaign code-generators share the pool. The Aurora tile counts and
+PBS commands below do not apply to Jupiter.
+
 ## Sole responsibility
 
 This skill does exactly this, and nothing else:

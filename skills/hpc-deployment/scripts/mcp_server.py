@@ -45,10 +45,12 @@ if POOL_SIZE < 1:
     raise RuntimeError("HPC_POOL_SIZE must be positive")
 INSPECT_ROOTS = [item for item in os.environ.get("HPC_INSPECT_ROOTS", "").split(":") if item]
 # Selects the EL SystemConfig and the GPU-pinning variable the cluster agent
-# hands to tasks: ZE_AFFINITY_MASK on Aurora, CUDA_VISIBLE_DEVICES on Polaris.
+# hands to tasks: ZE_AFFINITY_MASK on Aurora, CUDA_VISIBLE_DEVICES on Polaris
+# and CSCS (Alps GH200). 'cscs' also makes a single-node cluster launch its
+# leaf child via multiprocessing instead of mpiexec (Alps has no mpiexec).
 SYSTEM = os.environ.get("HPC_SYSTEM", "polaris")
-if SYSTEM not in ("aurora", "polaris"):
-    raise RuntimeError("HPC_SYSTEM must be 'aurora' or 'polaris'")
+if SYSTEM not in ("aurora", "polaris", "alps", "cscs", "jupiter"):
+    raise RuntimeError("HPC_SYSTEM must be 'aurora', 'polaris' or 'alps' ('cscs' alias) or 'jupiter'")
 # Longest a listen stream stays open before a clean reconnect. The exchange
 # server blocks in a destructive pop for this long on each listen; when the
 # ALCF proxy severs our side, that stale reader lingers and can take (and
@@ -240,7 +242,7 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
                 not current free/busy; combine with list_batches / batch_status to see
                 what is already in flight. Instant, never queues behind worker calls.
                 """
-                per_node = {"aurora": 12, "polaris": 4}.get(SYSTEM, 12)
+                per_node = {"aurora": 12, "polaris": 4, "alps": 4, "cscs": 4, "jupiter": 4}.get(SYSTEM, 12)
                 total_tiles = (nnodes * per_node) if cluster else POOL_SIZE
                 cfg = ENDPOINT_CONFIG
 
