@@ -206,10 +206,46 @@ keeping for provenance.
 
 For anything custom — a specific length, hotspots, fixed ligands, unindexed
 motifs, H-bond or RASA conditioning — the input format is an **annotated CIF**
-with per-atom conditioning columns, built with the repo's
-`skills/rfd4-proteina-annotated-cif`. There is no contig mini-language as in
-RFD3; conditioning lives in the CIF. Design length is set by the input, so
-"design a 70-residue monomer" means building an annotated CIF, not a CLI flag.
+with per-atom conditioning columns. There is no contig mini-language as in RFD3;
+conditioning lives in the CIF, and design length is set by the input, not a CLI flag.
+
+**For a de-novo protein BINDER against a folded target (the common case), do NOT
+hand-author the CIF — run the converter**, which wraps RFD4's own
+`write_condition_spec_cif`:
+
+```bash
+/flare/FRAME-IDP/msinclair/software/RFD4-Proteina/.venv/bin/python \
+  $HPC_LOAM_HOME/skills/diffusion-models/rfd4-proteina/scripts/make_rfd4_input.py \
+  --target <folded_target.cif> --target-chain A --target-range <a-b> \
+  --hotspots <r1,r2,...> --binder-len <N> --out <input_annotated.cif>
+```
+
+It preserves the target's real coordinates and emits every required column
+(including `pdbx_PDB_model_num` and the `SA_*` provenance). **Hand-writing the
+CIF is the standard failure mode**: a missing `pdbx_PDB_model_num` column or
+placeholder/zero coordinates makes `rfd4-generate` die in its dataloader with
+`biotite.DeserializationError: Failed to deserialize category 'atom_site'` and
+produce ZERO backbones. Never emit the annotated CIF by hand for a binder run.
+
+Then **generate backbones with the wrapper — do NOT call `rfd4-generate`
+directly.** The wrapper scrubs the inherited PALS/PMIx rank env AND applies the
+`sitecustomize` shim; both are REQUIRED under Loam's run_batch/run_code worker,
+or rfd4-generate's `MPI_Init_thread` aborts with `PMIx_Fence returned -33`
+(rc=15/143) and produces zero backbones:
+
+```bash
+$HPC_LOAM_HOME/skills/diffusion-models/rfd4-proteina/scripts/run_rfd4_generate.sh \
+  --inputs <input_annotated.cif> --out-dir <dir> --base <writable_dir> \
+  --num-designs 8 [--tile 0-11] [--seed <n>]
+```
+
+Run it once per tile (fan out across the node's 12 tiles with different
+`--tile`/`--seed` to reach a large backbone library). Binder length and hotspots
+come from the input CIF, not flags here.
+
+Only for conditioning the converter does not expose (fixed ligands, unindexed
+motifs, H-bond/RASA, combining structures) author the CIF with the repo's
+`skills/rfd4-proteina-annotated-cif`.
 
 Conditioning conventions worth preserving (from the repo's AGENTS.md): for PPI,
 default to target backbone-only internal coordinates (`C_CRDGRP`), full target
