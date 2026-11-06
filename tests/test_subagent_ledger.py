@@ -378,6 +378,76 @@ class SubagentLedgerTests(unittest.TestCase):
         # Extraction is not acceptance: no finding until explicit reconciliation.
         self.assertNotIn("finding_id", candidate)
 
+    def test_contract_truncated_from_the_summary_is_read_from_the_spill_file(self) -> None:
+        # End to end over the real hook: Hermes trims an over-budget summary to
+        # a head+tail window, which can cut a fenced contract in half, and
+        # passes the untrimmed text's path as child_summary_full_path.
+        contract = (
+            "```json\n"
+            '{"contract_version": "hypothesis_provenance_v1",'
+            ' "hypotheses": [{"hypothesis_key": "h1", "statement": "A claim.",'
+            ' "parent_hypothesis_keys": []}],'
+            ' "evidence_candidates": [{"hypothesis_key": "h1", "claim": "The source states it.",'
+            ' "source_url": "https://example.org/record/1", "stance": "supports"}]}'
+            "\n```"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "ledger.jsonl"
+            spill = Path(tmp) / "subagent-summary-0.txt"
+            full = f"Report follows.\n\n{contract}\n\nIssues: none.\n"
+            spill.write_text(full, encoding="utf-8")
+            truncated = full[:30] + "\n[... middle omitted — see footer ...]\n" + full[-16:]
+            self.assertNotIn("evidence_candidates", truncated)
+            completed = self._run_hook(
+                STOP,
+                {
+                    "event": "subagent_stop",
+                    "repo_root": str(ROOT),
+                    "parent_session_id": "parent",
+                    "parent_turn_id": "turn",
+                    "child_session_id": "child",
+                    "child_subagent_id": "child-id",
+                    "child_status": "completed",
+                    "child_summary": truncated,
+                    "child_summary_truncated": True,
+                    "child_summary_full_path": str(spill),
+                },
+                ledger,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            candidate_file = ledger.with_name("candidate-results.jsonl")
+            self.assertTrue(candidate_file.is_file(), "contract lost with the truncated middle")
+            candidate = json.loads(candidate_file.read_text())
+
+        self.assertEqual(candidate["candidate_status"], "pending")
+        self.assertEqual(candidate["candidate"]["hypotheses"][0]["hypothesis_key"], "h1")
+        self.assertEqual(
+            candidate["candidate"]["evidence_candidates"][0]["source_url"],
+            "https://example.org/record/1",
+        )
+
+    def test_truncated_contract_without_a_spill_path_records_no_candidate(self) -> None:
+        # The pre-fix behaviour, kept explicit: with nothing to fall back on the
+        # contract really is gone, and the hook must still exit cleanly.
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "ledger.jsonl"
+            completed = self._run_hook(
+                STOP,
+                {
+                    "event": "subagent_stop",
+                    "repo_root": str(ROOT),
+                    "parent_session_id": "parent",
+                    "parent_turn_id": "turn",
+                    "child_session_id": "child",
+                    "child_subagent_id": "child-id",
+                    "child_status": "completed",
+                    "child_summary": '```json\n{"contract_version": "hypothesis_prov',
+                },
+                ledger,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertFalse(ledger.with_name("candidate-results.jsonl").exists())
+
     def test_completed_plain_fence_contract_creates_pending_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ledger = Path(tmp) / "ledger.jsonl"

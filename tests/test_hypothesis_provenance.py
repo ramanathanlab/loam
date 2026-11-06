@@ -162,5 +162,161 @@ class HypothesisProvenanceTests(unittest.TestCase):
         self.assertEqual(snapshot["scoring_policy"]["weights"]["evidence"], 0.50)
 
 
+class ParentHypothesisKeyTests(unittest.TestCase):
+    """`parent_hypothesis_keys` names keys in THIS contract, nothing else."""
+
+    def setUp(self) -> None:
+        self.contract = load("hypothesis_contract", HOOKS / "hypothesis_provenance.py")
+
+    def _raw(self, parents: list[str], extra: list[dict] | None = None) -> dict:
+        hypotheses = [{"hypothesis_key": "h1", "statement": "A claim.", "parent_hypothesis_keys": parents}]
+        hypotheses.extend(extra or [])
+        return {
+            "contract_version": "hypothesis_provenance_v1",
+            "hypotheses": hypotheses,
+            "evidence_candidates": [
+                {"hypothesis_key": "h1", "claim": "A source says so.",
+                 "source_url": "https://example.org/record", "stance": "supports"}
+            ],
+        }
+
+    def test_parent_naming_a_key_in_the_same_contract_is_accepted(self) -> None:
+        raw = self._raw(
+            ["h0"],
+            [{"hypothesis_key": "h0", "statement": "The broader claim.", "parent_hypothesis_keys": []}],
+        )
+        candidate, status = self.contract.normalize_candidate(raw)
+        self.assertEqual(status, "pending")
+        assert candidate is not None
+        by_key = {item["hypothesis_key"]: item for item in candidate["hypotheses"]}
+        self.assertEqual(by_key["h1"]["parent_hypothesis_keys"], ["h0"])
+
+    def test_parent_declared_after_its_child_still_resolves(self) -> None:
+        # Membership is checked once every key is known, so declaration order
+        # inside the contract does not decide validity.
+        raw = self._raw(
+            ["h2"],
+            [{"hypothesis_key": "h2", "statement": "Declared later.", "parent_hypothesis_keys": []}],
+        )
+        self.assertEqual(self.contract.normalize_candidate(raw)[1], "pending")
+
+    def test_parent_naming_no_key_in_the_contract_is_rejected(self) -> None:
+        candidate, status = self.contract.normalize_candidate(self._raw(["h9"]))
+        self.assertIsNone(candidate)
+        self.assertEqual(status, "unknown_parent_hypothesis_key")
+
+    def test_assigned_hypothesis_uuid_is_rejected_whatever_its_first_digit(self) -> None:
+        # The bug this pins: `_KEY` fullmatches a UUID whenever its leading hex
+        # digit is a-f, so the SAME validator mistake was accepted for
+        # `b89b1a61-...` and rejected for `4d1c2b46-...` in one round, and the
+        # acceptance stored a parent resolving to nothing. Both must now fail,
+        # and report the same thing -- the diagnosis cannot depend on which
+        # character the id happens to start with.
+        for uuid in (
+            "b89b1a61-fad3-4220-86be-34d525d70165",  # leading 'b': passed the old shape check
+            "4d1c2b46-50d8-4ec2-927a-928fdd737f54",  # leading '4': failed it
+        ):
+            with self.subTest(uuid=uuid):
+                candidate, status = self.contract.normalize_candidate(self._raw([uuid]))
+                self.assertIsNone(candidate)
+                self.assertEqual(status, "unknown_parent_hypothesis_key")
+
+    def test_a_malformed_parent_key_reports_the_same_unresolved_key(self) -> None:
+        # Membership subsumes the pattern: a key that cannot match `_KEY` can
+        # never be in `seen_keys`, so it is reported as what it is.
+        self.assertEqual(
+            self.contract.normalize_candidate(self._raw(["Not A Key"]))[1],
+            "unknown_parent_hypothesis_key",
+        )
+
+    def test_a_non_string_parent_is_a_type_error(self) -> None:
+        for parents in ([None], [3], "h0", {"h0": True}):
+            with self.subTest(parents=parents):
+                self.assertEqual(
+                    self.contract.normalize_candidate(self._raw(parents))[1],
+                    "invalid_parent_hypothesis_keys",
+                )
+
+
+class TruncatedSummarySpillTests(unittest.TestCase):
+    """A contract cut in half by the parent's context budget is still read."""
+
+    CONTRACT = (
+        '```json\n{"contract_version": "hypothesis_provenance_v1", '
+        '"hypotheses": [{"hypothesis_key": "h1", "statement": "A claim.", '
+        '"parent_hypothesis_keys": []}], "evidence_candidates": []}\n```'
+    )
+
+    def setUp(self) -> None:
+        self.contract = load("hypothesis_contract", HOOKS / "hypothesis_provenance.py")
+
+    def _truncated(self) -> str:
+        # What the parent actually sees: head + tail, with the middle of the
+        # fenced block gone, exactly as _trim_summary_with_footer leaves it.
+        full = f"Final review below.\n\n{self.CONTRACT}\n\nIssues: none.\n"
+        return full[:40] + "\n[... middle omitted — see footer ...]\n" + full[-20:]
+
+    def test_truncated_summary_alone_yields_nothing(self) -> None:
+        self.assertEqual(
+            self.contract.extract_contract_object(self._truncated())[1], "absent"
+        )
+
+    def test_spill_file_recovers_the_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            spill = Path(tmp) / "subagent-summary-0.txt"
+            spill.write_text(f"Final review below.\n\n{self.CONTRACT}\n", encoding="utf-8")
+            value, presence = self.contract.extract_contract_object(
+                self._truncated(), str(spill)
+            )
+        self.assertEqual(presence, "present")
+        assert value is not None
+        self.assertEqual(value["hypotheses"][0]["hypothesis_key"], "h1")
+
+    def test_an_untruncated_summary_never_reads_the_file(self) -> None:
+        # The common case must do no I/O, so an unreadable path is harmless.
+        value, presence = self.contract.extract_contract_object(
+            f"Report.\n{self.CONTRACT}", "/nonexistent/spill.txt"
+        )
+        self.assertEqual(presence, "present")
+        assert value is not None
+
+    def test_a_missing_or_empty_spill_path_degrades_to_absent(self) -> None:
+        for path in ("", None, "/nonexistent/spill.txt"):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.contract.extract_contract_object(self._truncated(), path)[1],
+                    "absent",
+                )
+
+    def test_an_oversized_spill_file_is_not_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            spill = Path(tmp) / "huge.txt"
+            spill.write_text("x" * (self.contract._MAX_SPILL_BYTES + 1), encoding="utf-8")
+            self.assertEqual(
+                self.contract.extract_contract_object(self._truncated(), str(spill))[1],
+                "absent",
+            )
+
+    def test_the_reviewer_contract_shares_the_same_recovery(self) -> None:
+        # One extractor serves both contract types; the reviewer is the role
+        # that actually loses its contract to truncation, so pin it here too.
+        review = load("hypothesis_review_test", HOOKS / "hypothesis_review.py")
+        body = (
+            '```json\n{"contract_version": "hypothesis_review_v1", '
+            '"candidate_id": "candidate-1", "accept_hypothesis_keys": [], '
+            '"reviews": [{"index": 0, "verdict": "unverifiable", '
+            '"verification": "none", "source_ref": "", "checked": "MCP unreachable."}]}\n```'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            spill = Path(tmp) / "review.txt"
+            spill.write_text(body, encoding="utf-8")
+            value, presence = review.extract_contract_object(
+                "Confirmed unreachable.\n[... middle omitted — see footer ...]\n", str(spill)
+            )
+        self.assertEqual(presence, "present")
+        assert value is not None
+        self.assertEqual(value["reviews"][0]["verdict"], "unverifiable")
+
+
 if __name__ == "__main__":
     unittest.main()

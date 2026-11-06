@@ -1147,7 +1147,12 @@ def _record_review(payload: Mapping[str, Any], rows: list[dict[str, Any]], start
         # Structurally impossible today, and refused anyway: the whole point of
         # this step is that the acceptor is not the producer.
         return {'review_status': 'self_review_refused'}
-    contract, presence = hypothesis_review.extract_contract_object(summary)
+    # The spill path as well as the summary: a reviewer's contract is the last
+    # one written in a round and so the first the parent's shrinking context
+    # budget truncates. See hypothesis_provenance.extract_fenced_contract.
+    contract, presence = hypothesis_review.extract_contract_object(
+        summary, str(payload.get('child_summary_full_path') or '')
+    )
     if presence == 'absent' or contract is None:
         return {'review_status': 'contract_absent'}
     hypothesis_id = start.get('hypothesis_id', '')
