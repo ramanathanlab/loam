@@ -14,13 +14,14 @@ Obtain the task instruction, language/runtime, and one `execution` contract from
   `input_schema`. Execute remotely, never locally; the parent owns any
   re-dispatch.
 
-  **All science-tool execution goes through `run_batch`, never `run_code` — see
-  the execution-tool rule below.** `run_code` never runs science. It only
-  marshals and inspects the batch: writing its script/JSONL input files,
-  harvesting its results, and emitting the required output manifest, plus a
-  short post-error diagnostic (inspecting why a batch job failed) that the
-  validator's instruction allows. It never generates, folds, or scores a
-  candidate itself.
+  **Stage with `write_files`, run the science through `run_batch`, and use
+  `run_code` only to diagnose a failed row — see the execution-tool rule
+  below.** `run_code` never runs science: it neither generates, folds, nor
+  scores a candidate, and all science-tool execution goes through `run_batch`.
+  Writing the batch's script and JSONL input files is `write_files`' job, and
+  harvesting its results and emitting the required output manifest are the only
+  other things `run_code` is for, besides the short post-error diagnostic the
+  validator's instruction allows.
 
   `run_batch` is asynchronous by design (submit once, then poll
   `batch_status`); that is expected, not a loop to avoid.
@@ -65,13 +66,15 @@ Do not substitute one mode for the other or guess missing execution fields.
 
   Your three steps, in order:
 
-  1. **`run_code` to write the files.** `run_batch(script_path=..., inputs_path=...)`
-     takes paths that must already exist on the cluster filesystem, and no tool
-     here writes a file directly — so one `run_code` call that writes your
-     script and your inputs JSONL into the hypothesis workdir is the expected,
-     required first step. Write both in a single call. It must only write: no
-     folding, no sampling, no scoring, no smoke test, no probe fold, no
-     "validate the command line first" run.
+  1. **`write_files` to stage.** `run_batch(script_path=..., inputs_path=...)`
+     takes paths that must already exist on the cluster filesystem, so creating
+     them is the required first step. Use `write_files`, which takes
+     `{absolute_path: contents}` and writes several files in one call: put your
+     script and your inputs JSONL in the same call. It executes nothing, so it
+     cannot be the place the science happens. Use `run_code` for staging only if
+     `write_files` fails, and then only to write — no folding, no sampling, no
+     scoring, no smoke test, no probe fold, no "validate the command line
+     first" run.
   2. **`run_batch` once**, then poll `batch_status`.
   3. **`run_code` again only to diagnose a row that failed** — print a
      traceback, stat a path.
@@ -84,9 +87,10 @@ Do not substitute one mode for the other or guess missing execution fields.
   candidate's work into `run_code` because it is "only one job" is still wrong:
   a one-row batch is correct and costs you nothing.
 
-  If a row needs a file that does not exist yet, add writing it to step 1 rather
-  than reaching for another `run_code`. Loam counts your `run_code` calls and
-  will refuse them past a small allowance, telling you to batch instead.
+  If a row needs a file that does not exist yet, add it to the `write_files`
+  call in step 1 rather than reaching for another `run_code`. `write_files` is
+  unlimited; Loam counts your `run_code` calls and will refuse them past a small
+  allowance, telling you to batch instead.
 - **There is no tool registry and no "registered"/pre-approved tool to look up.**
   You author every script yourself (guided by the campaign skill's launcher, venv,
   and weights path) and submit it with `run_batch(script_path=..., inputs_path=...)`.

@@ -163,8 +163,15 @@ class CodeGeneratorInstructionTests(unittest.TestCase):
         self.body = (ROOT / ".loam" / "agents" / "code-generator.md").read_text(encoding="utf-8")
 
     def test_staging_is_named_as_the_expected_first_step(self) -> None:
-        self.assertIn("writes a file directly", self.body)
+        self.assertIn("`write_files` to stage", self.body)
         self.assertIn("required first step", self.body)
+
+    def test_staging_does_not_require_an_interpreter(self) -> None:
+        # write_files closes the gap that made the batch-only rule impossible:
+        # creating script_path/inputs_path no longer means running code.
+        self.assertIn("It executes nothing", self.body)
+        self.assertLess(self.body.index("`write_files` to stage"),
+                        self.body.index("**`run_batch` once**"))
 
     def test_the_science_is_still_confined_to_run_batch(self) -> None:
         self.assertIn("The science never runs inside `run_code`", self.body)

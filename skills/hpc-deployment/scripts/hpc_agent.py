@@ -32,7 +32,7 @@ import uuid
 #from contextlib import aclosing  # used only by the commented-out exchange hardening below
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, Mapping
 
 import aiohttp
 from academy.agent import Agent, action
@@ -56,6 +56,13 @@ except ModuleNotFoundError:
 
 _MAX_ENTRIES = 200
 _MAX_LINES = 200
+# write_files bounds. A staged script and an inputs JSONL are a few kB; these
+# caps are generous for that and small enough that this tool can never become a
+# data-movement channel. Anything larger belongs inside the batch, written by
+# the row that needs it.
+_MAX_WRITE_FILES = 20
+_MAX_WRITE_BYTES = 1_000_000
+_MAX_WRITE_TOTAL_BYTES = 4_000_000
 _MAX_BYTES = 64 * 1024
 
 # A dropped exchange stream must not read as "the agent is gone", and neither
@@ -239,6 +246,13 @@ class HpcAgent(Agent):
         """Bounded read-only worker filesystem inspection: ls, cat, or tail."""
         return await asyncio.to_thread(
             _inspect, operation, path, offset, limit, self.base_dir, self.inspect_roots
+        )
+
+    @action
+    async def write_files(self, files: dict) -> dict:
+        """Write text files into the campaign tree, creating parent directories."""
+        return await asyncio.to_thread(
+            _write_files, files, self.base_dir, self.inspect_roots
         )
 
     @action
@@ -493,6 +507,80 @@ def _safe_path(raw: str, base_dir: str, inspect_roots: list[str]) -> Path:
     if not (path.is_file() or path.is_dir()):
         raise ValueError("only regular files and directories are inspectable")
     return path
+
+
+def _safe_write_path(raw: str, base_dir: str, inspect_roots: list[str]) -> Path:
+    """Resolve a path that may not exist yet, confined to the campaign's roots.
+
+    Separate from `_safe_path` because that one resolves `strict=True`, which a
+    file being created by definition cannot satisfy. Non-strict `resolve` still
+    expands any symlink in the EXISTING part of the path, so the containment
+    check below cannot be evaded by writing through a symlinked parent.
+    """
+
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = Path(base_dir) / path
+    path = path.resolve()
+    roots = _roots(base_dir, inspect_roots)
+    if not any(root in path.parents for root in roots):
+        allowed = ", ".join(str(root) for root in roots)
+        raise ValueError(
+            f"path {str(path)!r} is outside the writable campaign roots; "
+            f"write only within: {allowed}"
+        )
+    if path.is_symlink():
+        raise ValueError("refusing to write through a symlink")
+    if path.is_dir():
+        raise ValueError(f"path {str(path)!r} is a directory")
+    return path
+
+
+def _write_files(files: Any, base_dir: str, inspect_roots: list[str]) -> dict:
+    """Write {path: text} into the campaign tree, creating parent directories.
+
+    This exists so staging a batch costs no `run_code`. `run_batch` takes a
+    script_path and an inputs_path that must already exist on the cluster, and
+    with no way to create a file the only route was to run code that wrote
+    one -- which made "never run the science in run_code" impossible to obey
+    and, measurably, widely ignored. Writing is not executing: nothing here
+    runs the file, so a code-generator can stage without being handed an
+    interpreter.
+
+    All-or-nothing on validation: every path is checked before anything is
+    written, so a typo in the second file cannot leave the first one on disk
+    for `run_batch` to pick up as if staging had succeeded.
+    """
+
+    if not isinstance(files, Mapping) or not files:
+        raise ValueError("files must be a non-empty mapping of {path: text}")
+    if len(files) > _MAX_WRITE_FILES:
+        raise ValueError(f"at most {_MAX_WRITE_FILES} files per call")
+
+    planned: list[tuple[Path, str]] = []
+    total = 0
+    for raw_path, content in files.items():
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("every key must be a non-empty path string")
+        if not isinstance(content, str):
+            raise ValueError(f"content for {raw_path!r} must be a string")
+        encoded = len(content.encode("utf-8"))
+        if encoded > _MAX_WRITE_BYTES:
+            raise ValueError(
+                f"{raw_path!r} is {encoded} bytes, over the {_MAX_WRITE_BYTES}-byte per-file limit; "
+                "write data this large from inside the batch rather than through this tool"
+            )
+        total += encoded
+        planned.append((_safe_write_path(raw_path, base_dir, inspect_roots), content))
+    if total > _MAX_WRITE_TOTAL_BYTES:
+        raise ValueError(f"{total} bytes in one call, over the {_MAX_WRITE_TOTAL_BYTES}-byte limit")
+
+    written = []
+    for path, content in planned:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        written.append({"path": str(path), "bytes": len(content.encode("utf-8"))})
+    return {"written": written, "count": len(written)}
 
 
 def _clamp(limit: int) -> int:

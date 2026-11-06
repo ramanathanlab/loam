@@ -886,7 +886,7 @@ def hpc_tool_names(execution: Mapping[str, Any] | None) -> dict[str, str]:
     prefix = execution.get('tool_prefix', '')
     if not prefix and function_name and tool_name.endswith(function_name):
         prefix = tool_name[:-len(function_name)]
-    functions = ('run_code', 'run_batch', 'batch_status', 'list_batches', 'register_tool', 'list_tools', 'inspect_filesystem')
+    functions = ('run_code', 'write_files', 'run_batch', 'batch_status', 'list_batches', 'register_tool', 'list_tools', 'inspect_filesystem')
     names = {name: prefix + name for name in functions} if prefix else {}
     if tool_name:
         names[function_name or 'run_code'] = tool_name
