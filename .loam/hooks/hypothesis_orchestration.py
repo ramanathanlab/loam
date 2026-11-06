@@ -18,6 +18,7 @@ from typing import Any, Mapping
 import hypothesis_review
 import hypothesis_workspace
 import ledger
+import tool_audit
 from campaign import CampaignContext, agent_registry, campaign_context, campaign_field, campaign_text, skills_text
 from hypothesis_tournament import Tournament
 from parser import REVIEWS_FILE, Parser
@@ -1343,6 +1344,64 @@ def workspace_stop(payload: Mapping[str, Any]) -> None:
 
 # --- pre-tool policy ----------------------------------------------------------
 
+# A code-generator's `run_code` allowance, before and after it has submitted a
+# batch. These are not round numbers: across 2026-10-31, 11-01 and 11-06, 62
+# code-generator children made 524 `run_code` calls and 15 `run_batch` calls,
+# and only FIVE children ever batched at all -- so the allocation ran at about
+# 1% of its tiles while the agents worked one job at a time. The role
+# definition has told them to batch since the beginning and they do not.
+#
+# A flat cap cannot be the answer, because `run_code` is structurally required:
+# `run_batch` takes a script_path and an inputs_path that must already exist on
+# the cluster, and no tool here writes a file, so the only way to create them is
+# to run code that does. The old instruction ("`run_code` ONLY as a diagnostic
+# AFTER a batch has errored") was therefore impossible to obey, which is the
+# likeliest reason it was disregarded wholesale.
+#
+# So the budget is phased to match the real shape of the work. Writing a script
+# and an inputs file takes one or two calls; the five children that did batch
+# used 1, 2, 3, 7 and 10 calls before their first batch, and 1 to 6 after it for
+# diagnosis. STAGING=4 leaves room for the median batcher and redirects 48 of
+# the 55 children that never batched; AFTER_BATCH=6 covers diagnosis without
+# reopening the serial path. A refusal here is corrective, not terminal: the
+# child keeps `run_batch` and is told to use it.
+_RUN_CODE_STAGING = 4
+_RUN_CODE_AFTER_BATCH = 6
+
+
+def _run_code_budget(payload: Mapping[str, Any], names: Mapping[str, str]) -> dict[str, str] | None:
+    """Hold a code-generator to staging and diagnosis, not serial execution."""
+
+    session_id = str(payload.get('session_id') or '')
+    if not session_id:
+        # Nothing to attribute the budget to. Counting every code-generator's
+        # calls together would let one child spend another's allowance, which is
+        # worse than not holding the budget at all.
+        return None
+    counts = tool_audit.session_tool_counts(payload, session_id)
+    used = counts.get(names.get('run_code', ''), 0)
+    batches = counts.get(names.get('run_batch', ''), 0)
+    limit = _RUN_CODE_STAGING + (_RUN_CODE_AFTER_BATCH if batches else 0)
+    if used < limit:
+        return None
+    if not batches:
+        return _block(
+            f'code-generator has used its {limit} staging `run_code` calls for this '
+            'job and has submitted no batch. `run_code` is for writing your script '
+            'and inputs file and for diagnosing a failed row -- the science runs in '
+            '`run_batch`, one row per job, in parallel across the whole allocation. '
+            'Submit the batch now (a one-row batch is fine), then poll `batch_status`. '
+            'If a file is missing, write it in the same call that writes your script.'
+        )
+    return _block(
+        f'code-generator has used its {limit} `run_code` calls for this job '
+        f'({batches} batch(es) submitted). Further serial calls will not be allowed: '
+        'read results through `batch_status` and the batch output files, resubmit '
+        '`run_batch` (pass only `batch_id` to resume and skip finished rows), or '
+        'report what you have.'
+    )
+
+
 def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     """Block tool use that breaks a campaign tier's boundary.
 
@@ -1406,9 +1465,12 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
         skill_tools = ('skills_list', 'skill_view')
         if tool_name in skill_tools or execution.get('mode') != 'remote_mcp':
             return None
-        allowed = sorted(set(hpc_tool_names(execution).values()))
+        names = hpc_tool_names(execution)
+        allowed = sorted(set(names.values()))
         if tool_name not in allowed:
             return _block(f'code-generator may use only the HPC MCP tools {allowed} and the read-only skill tools {sorted(skill_tools)}')
+        if tool_name == names.get('run_code'):
+            return _run_code_budget(payload, names)
         return None
 
     if role != 'hypothesis-validator':

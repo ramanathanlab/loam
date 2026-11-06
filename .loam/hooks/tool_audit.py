@@ -41,6 +41,45 @@ def _audit_path(payload: Mapping[str, Any]) -> Path | None:
     return Path(state_dir).expanduser() / FILENAME if state_dir else None
 
 
+def session_tool_counts(payload: Mapping[str, Any], session_id: str) -> dict[str, int]:
+    """How many times this session has already called each tool.
+
+    The recorder below stays observer-only; this is a separate reader, and
+    `tool_policy` uses it to hold a per-child tool budget. It can therefore
+    affect a verdict, so it does NOT swallow its own failures -- pre-tool.py
+    runs the policy inside a try that blocks fail-closed for a tagged
+    orchestration call, and a budget that silently read zero would be no budget
+    at all.
+
+    Counts only what is already on disk, which is every call but the one being
+    judged: `record` runs after the policy, for exactly this reason.
+    """
+
+    if not session_id:
+        return {}
+    path = _audit_path(payload)
+    if path is None or not path.is_file():
+        return {}
+    counts: dict[str, int] = {}
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            # Substring prefilter before parsing: this file reaches tens of MB
+            # over a campaign and is read once per tool call, while only a few
+            # of its lines belong to any one child.
+            if session_id not in line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue  # a torn line left by a writer mid-append
+            if not isinstance(row, Mapping) or row.get("session_id") != session_id:
+                continue
+            name = str(row.get("tool_name") or "")
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
 def _clip(value: Any) -> Any:
     """Keep structure, bound size, and mark anything truncated."""
 
