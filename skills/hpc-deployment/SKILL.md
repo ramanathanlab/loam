@@ -250,7 +250,7 @@ The action resolves paths and restricts them to the explicit allowed roots: `HPC
 
 ## How much compute you have — size your batch to it (code-generators)
 
-<!-- LOAM_LIVE_ALLOC --> **Live pool for this run: filled in at launch** (nodes x 12 tiles; your fair share = pool / top_k, and all code-generators draw on the same tiles). A run_batch row = 1 tile (gpus=1): size each batch to your share per wave, poll batch_status to unfinished==0, then submit the next wave. More rows just queue and will not finish in the hour.
+<!-- LOAM_LIVE_ALLOC --> **Live pool for this run: 2 nodes x 12 = 24 tiles.** Your fair share is ~2 tiles (the pool divided 10 ways by top_k; all code-generators draw on the same tiles). A run_batch row = 1 tile (gpus=1): size each batch to ~2 rows per wave, poll batch_status to unfinished==0, then submit the next wave. More rows just queue and will not finish in the hour.
 
 A `run_batch` row gets `gpus=1` = one Aurora **tile**, and a node has **12 tiles**
 (6 GPUs x 2). The pool is therefore `nodes x 12` tiles. **Do not assume the node

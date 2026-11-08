@@ -1011,8 +1011,8 @@ def _child_context(instruction: str, execution: Mapping[str, Any], workdir: str,
     run_code = names.get(execution.get('function_name') or 'run_code', '')
     place = f"under {workdir}" if workdir else "under the HPC base directory (HPC_BASE_DIR)"
     lines = [
-        f"- `{run_code}`: run one Python program (`payload`) on a GPU worker; use it for one-off runs "
-        "and to write script or JSONL files to disk.",
+        f"- `{run_code}`: run one Python program (`payload`) on a GPU worker; also used to write the "
+        "batch's script and JSONL input files, harvest its results, and emit the required output manifest.",
     ]
     if 'run_batch' in names:
         lines += [
@@ -1028,7 +1028,10 @@ def _child_context(instruction: str, execution: Mapping[str, Any], workdir: str,
             "report the batch_id and counts as unfinished.",
             f"- `{names['inspect_filesystem']}`: read result files (ls/cat/tail).",
             f"- `{names['list_batches']}`: earlier batches for this plan or hypothesis.",
-            "Use run_batch rather than run_code for more than a handful of runs.",
+            "ALL science -- generating, folding, or scoring candidates, one or many -- goes through "
+            "run_batch, NEVER run_code. run_code only marshals the batch (writes its script/JSONL input "
+            "files, harvests its results, emits the required output manifest) and runs short post-error "
+            "diagnostics; it never runs a science tool itself.",
         ]
     # Said out loud: a child told to use no other tool will not try skill_view otherwise.
     others = (
