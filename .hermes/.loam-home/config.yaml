@@ -1,33 +1,39 @@
 model:
-  # ALCF Inference Service, Minerva cluster (NVIDIA B200), OpenAI-compatible.
-  # Replaces the Argo ssh tunnel on :61612, which stopped answering anything but
-  # "ACCESS REVOKED / Monthly limit exceeded" on 2026-11-01.
+  # ALCF Inference Service, TARA cluster, OpenAI-compatible. Replaces the Argo
+  # ssh tunnel on :61612, which stopped answering anything but "ACCESS REVOKED /
+  # Monthly limit exceeded" on 2026-11-01.
   #
   # Model, cluster and path are from
   # https://docs.alcf.anl.gov/services/inference-endpoints/api/ -- this is the
-  # Minerva route.
+  # Tara route. The CLUSTER IS PART OF THE URL, so moving clusters means
+  # changing base_url, not only the model name.
   #
-  # `inkling-bf16` was RETIRED: as of 2026-11-08 a POST to this base_url's
-  # /chat/completions with that model returns HTTP 410 Gone, and it is absent
-  # from /minerva/models. campaign_preflight surfaces it as
-  # "HTTPError: HTTP Error 410: Gone" with ready=false, which blocks the launch.
+  # `inkling-bf16` was retired from MINERVA on 2026-11-08 (HTTP 410 Gone, and
+  # absent from /minerva/models), which is why this pointed at Minerva's
+  # `beam-1.0-bf16` for a day. It is alive and serving on TARA -- verified
+  # 2026-11-09 against /tara/models and a real /chat/completions round trip --
+  # so the campaign is back on inkling by way of the other cluster.
   #
-  # `beam-1.0-bf16` (Reflection Beam 1.0) replaces it and keeps every property
-  # this setup depends on: a reasoning model with its own effort control
-  # (minimal..max, default `max`) that returns reasoning SEPARATELY from
-  # content, and a 1,048,576-token context. The separate output is why
-  # campaign_preflight._smoke_model falls back from `content` to `reasoning`,
-  # and why loam.yaml keeps omit_temperature: true.
+  # It keeps every property this setup depends on: a reasoning model with its
+  # own effort control that returns reasoning SEPARATELY from content. The
+  # separate output is why campaign_preflight._smoke_model falls back from
+  # `content` to `reasoning`, and why loam.yaml keeps omit_temperature: true.
+  #
+  # One operational consequence of that separation, measured on Tara: inkling
+  # spends its budget on reasoning FIRST, so a request with a small max_tokens
+  # returns `reasoning` filled and `content: null`. That is not an error, it is
+  # truncation -- and it is what loam.yaml's json_max_tokens: 16384 prevents.
   #
   # NOTE: run-campaign:159 COPIES this file over the campaign's
   # .hermes/home/config.yaml on every launch, so editing the campaign copy is
   # silently undone. This file is the one to change.
   #
-  # Minerva now serves exactly three models; the others are
-  # mistral-large-4-nvfp4 and muse-spark-bf16.
-  default: beam-1.0-bf16
+  # Tara serves seven models; the others are mistral-large-4, muse-spark-bf16,
+  # nemotron-3-ultra, nemotron-35-super-vl, openai/gpt-oss-120b and
+  # openai/gpt-oss-20b. Only /chat/completions exists -- /completions is a 404.
+  default: inkling-bf16
   provider: custom
-  base_url: https://inference-api.alcf.anl.gov/resource_server/minerva/api/v1
+  base_url: https://inference-api.alcf.anl.gov/resource_server/tara/api/v1
   # NOT a literal. Hermes expands ${VAR} in any config string at load time
   # (hermes_cli/config.py:_expand_env_vars) and re-expands when the referenced
   # env changes, so the token stays out of this tracked file. launch.sh exports
@@ -66,12 +72,21 @@ mcp_servers:
       # missing file -- which is the right failure, because run-campaign's own
       # default points at a DIFFERENT Globus endpoint (3724d6df...).
       HPC_ENV_FILE: ${HPC_ENV_FILE}
-      HPC_ALLOWED_QUEUES: debug,debug-scaling,capacity
-      # 256, not 20: this cap is what hpc_control.validate() checks, so a lower
-      # value here REFUSES a 256-node debug-scaling restart through the hpcctl
-      # tool even though the queue allows it -- the same trap as the walltime
-      # cap below. The per-queue limits in hpc_control still hold the real line.
-      HPC_MAX_NODES: "256"
+      # R9046423 is the FRAME-IDP custom reservation for 2026-11-09
+      # 16:00-22:30 UTC (1028 nodes). A reservation queue must be listed here
+      # as well as in set_env_msinclair.sh: this is the list hpcctl's own
+      # validate() reads, so without it a mid-run hpc_restart refuses the
+      # reservation with "queue 'R9046423' not allowed" while the launch
+      # preflight, which reads the env file, is perfectly happy. A reservation
+      # queue is absent from hpc_control's QUEUE_LIMITS table, so the only
+      # ceiling on it is HPC_MAX_NODES / HPC_MAX_WALLTIME below.
+      HPC_ALLOWED_QUEUES: debug,debug-scaling,capacity,R9046423
+      # 1024, not 256: this cap is what hpc_control.validate() checks, so a
+      # lower value here REFUSES a 1024-node reservation restart through the
+      # hpcctl tool even though the reservation holds 1028 -- the same trap as
+      # the walltime cap below. The per-queue limits in hpc_control still hold
+      # the real line for the named Aurora queues.
+      HPC_MAX_NODES: "1024"
       # 12 h, not 1 h: these caps are what hpc_control.validate() checks, so a
       # 1 h cap here REFUSES a capacity allocation through the hpcctl tool
       # (`walltime 04:00:00 exceeds the cap of 01:00:00`) even though the queue

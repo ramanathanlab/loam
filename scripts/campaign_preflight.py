@@ -301,13 +301,20 @@ def ensure_proxy_started(repo: Path, port: int, wait_seconds: int) -> dict[str, 
     )
     if not python.is_file():
         raise RuntimeError(f"ALCF proxy interpreter is unavailable: {python}")
-    log = Path(os.environ.get("ALCF_PROXY_LOG") or Path.home() / ".loam-hpc" / "alcf_proxy_minerva.log")
+    # The cluster was hardcoded to "minerva" here while the rest of the launch
+    # had already moved to Tara, so turning ALCF_PROXY back on would have
+    # started a proxy in front of a cluster that no longer serves the
+    # configured model. launch.sh exports ALCF_CLUSTER; the default stays
+    # minerva so nothing that relied on it changes behavior.
+    cluster = os.environ.get("ALCF_CLUSTER") or "minerva"
+    log = Path(os.environ.get("ALCF_PROXY_LOG")
+               or Path.home() / ".loam-hpc" / f"alcf_proxy_{cluster}.log")
     log.parent.mkdir(parents=True, exist_ok=True)
 
     with log.open("ab") as stream:
         subprocess.Popen(  # noqa: S603 -- fixed argv, no shell
             [str(python), str(repo / "scripts" / "alcf_inference_proxy.py")],
-            env={**os.environ, "ALCF_CLUSTER": "minerva", "ALCF_PROXY_PORT": str(port)},
+            env={**os.environ, "ALCF_CLUSTER": cluster, "ALCF_PROXY_PORT": str(port)},
             stdout=stream,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
