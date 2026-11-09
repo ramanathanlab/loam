@@ -295,7 +295,7 @@ def _fake_jnana(yields: bool = True):
     """Stand-ins for the Jnana modules the hook imports, sharing one persisted state."""
 
     state = SimpleNamespace(
-        hypotheses=[], metadata={}, goals=[], generated=[], yields=yields, wait_timeouts=[]
+        hypotheses=[], metadata={}, goals=[], generated=[], batch_sizes=[], yields=yields, wait_timeouts=[]
     )
 
     class CoScientist:
@@ -317,10 +317,11 @@ def _fake_jnana(yields: bool = True):
             state.metadata["research_goal"] = goal
             state.goals.append(goal)
 
-        def generate_hypotheses(self, count):
+        def generate_hypotheses(self, count, batch_size=1):
             # Jnana generates against the in-memory goal, which a load never restores.
             assert self.research_goal, "generated without setting the goal this turn"
             state.generated.append(count)
+            state.batch_sizes.append(batch_size)
             if state.yields:
                 state.hypotheses.extend(range(len(state.hypotheses), len(state.hypotheses) + count))
 

@@ -73,6 +73,9 @@ class Tournament:
                 match_count=self.config.get('matches_per_run', 1),
                 top_k=self.config.get('top_k', 3),
                 max_seconds=max_seconds,
+                scheme=self.config.get('scheme', 'random'),
+                rounds=self.config.get('rounds', 1),
+                workers=self.config.get('workers', 1),
             )
         )
         result['generation'] = generation
@@ -233,7 +236,8 @@ class Tournament:
         # Always set: Jnana does not restore its in-memory goal from a loaded
         # state, and generation reads that copy, not the persisted one.
         coscientist.set_research_goal(stored)
-        coscientist.generate_hypotheses(count=count)
+        coscientist.generate_hypotheses(
+            count=count, batch_size=self.config.get('batch_size', 1))
         # Bounded: the ensemble refills its own queue, so an unbounded wait here
         # never returns and the round dies inside the pre-llm hook. Partial
         # seeding is fine -- whatever landed is persisted below and the next
@@ -280,7 +284,8 @@ class Tournament:
             # keeps it stopped otherwise. See the note in _generate().
             if ensure_started is not None:
                 ensure_started()
-            coscientist.generate_hypotheses(count=refresh)
+            coscientist.generate_hypotheses(
+                count=refresh, batch_size=self.config.get('batch_size', 1))
             # Bounded for the same reason as _seed: this wait used to hold the
             # whole round open indefinitely while the ensemble kept working.
             drained = coscientist.wait_for_completion(timeout=self._wait_budget())

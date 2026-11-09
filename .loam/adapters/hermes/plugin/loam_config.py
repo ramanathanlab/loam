@@ -43,6 +43,18 @@ class HypothesisTournamentConfig:
     api_key_env: str | None
     omit_temperature: bool
     json_max_tokens: int
+    # Tournament pairing. "random" (default) keeps the historical single batch of
+    # `matches_per_run` random matches. "swiss" plays `rounds` Swiss rounds,
+    # re-pairing on current Elo between them. `workers` runs a round's matches in
+    # parallel (Swiss only -- its pairings are disjoint, so concurrent matches
+    # never race on a shared Elo); it is the round-synchronous multi-dueling path.
+    scheme: str
+    rounds: int
+    workers: int
+    # Hypotheses requested per generation LLM call. 1 (default) is one-at-a-time;
+    # >1 asks the model for a distinct batch per call, amortising the (reasoning)
+    # call overhead. Passed to CoScientist.generate_hypotheses(batch_size=...).
+    batch_size: int
     # Optional knowledge-graph pre-pass before the first generation
     # (.loam/hooks/knowledge_brief.py); None when switched off.
     knowledge: Mapping[str, Any] | None = None
@@ -252,6 +264,20 @@ def _positive_int(value: Any, default: int) -> int:
         return max(1, int(value))
     except (TypeError, ValueError):
         return default
+
+
+def _tournament_scheme(value: Any) -> str:
+    """The tournament pairing scheme, defaulting to the historical "random".
+
+    Validated here so a typo in the profile fails at config load with a clear
+    message, rather than deep inside jnana's run_incremental_tournament.
+    """
+
+    scheme = _clean_text(value).lower() or "random"
+    if scheme not in ("random", "swiss"):
+        raise ValueError(
+            f"hypothesis_tournament.scheme must be 'random' or 'swiss', got {value!r}")
+    return scheme
 
 
 def _count_int(value: Any) -> int:
@@ -490,6 +516,10 @@ def _tournament_config(value: Any, state_dir: Path | None = None) -> HypothesisT
         api_key_env=required["api_key_env"] or None,
         omit_temperature=raw.get("omit_temperature") is True,
         json_max_tokens=_positive_int(raw.get("json_max_tokens"), 1024),
+        scheme=_tournament_scheme(raw.get("scheme")),
+        rounds=_positive_int(raw.get("rounds"), 1),
+        workers=_positive_int(raw.get("workers"), 1),
+        batch_size=_positive_int(raw.get("batch_size"), 1),
         knowledge=_knowledge_config(raw.get("knowledge")),
         roles=_role_configs(raw),
     )
@@ -722,6 +752,10 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "api_key_env": tournament.api_key_env or "",
             "omit_temperature": tournament.omit_temperature,
             "json_max_tokens": tournament.json_max_tokens,
+            "scheme": tournament.scheme,
+            "rounds": tournament.rounds,
+            "workers": tournament.workers,
+            "batch_size": tournament.batch_size,
         }
         if tournament.knowledge is not None:
             values["loam_hypothesis_tournament"]["knowledge"] = dict(tournament.knowledge)
