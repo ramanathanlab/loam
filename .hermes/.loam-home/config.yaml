@@ -1,8 +1,40 @@
 model:
-  default: argo:gpt-5.6-sol
+  # ALCF Inference Service, Minerva cluster (NVIDIA B200), OpenAI-compatible.
+  # Replaces the Argo ssh tunnel on :61612, which stopped answering anything but
+  # "ACCESS REVOKED / Monthly limit exceeded" on 2026-11-01.
+  #
+  # Model, cluster and path are from
+  # https://docs.alcf.anl.gov/services/inference-endpoints/api/ -- this is the
+  # Minerva route.
+  #
+  # `inkling-bf16` was RETIRED: as of 2026-11-08 a POST to this base_url's
+  # /chat/completions with that model returns HTTP 410 Gone, and it is absent
+  # from /minerva/models. campaign_preflight surfaces it as
+  # "HTTPError: HTTP Error 410: Gone" with ready=false, which blocks the launch.
+  #
+  # `beam-1.0-bf16` (Reflection Beam 1.0) replaces it and keeps every property
+  # this setup depends on: a reasoning model with its own effort control
+  # (minimal..max, default `max`) that returns reasoning SEPARATELY from
+  # content, and a 1,048,576-token context. The separate output is why
+  # campaign_preflight._smoke_model falls back from `content` to `reasoning`,
+  # and why loam.yaml keeps omit_temperature: true.
+  #
+  # NOTE: run-campaign:159 COPIES this file over the campaign's
+  # .hermes/home/config.yaml on every launch, so editing the campaign copy is
+  # silently undone. This file is the one to change.
+  #
+  # Minerva now serves exactly three models; the others are
+  # mistral-large-4-nvfp4 and muse-spark-bf16.
+  default: beam-1.0-bf16
   provider: custom
-  base_url: http://localhost:61612/v1
-  api_key: local-no-auth   # Argo tunnel on :61612 is no-auth
+  base_url: https://inference-api.alcf.anl.gov/resource_server/minerva/api/v1
+  # NOT a literal. Hermes expands ${VAR} in any config string at load time
+  # (hermes_cli/config.py:_expand_env_vars) and re-expands when the referenced
+  # env changes, so the token stays out of this tracked file. launch.sh exports
+  # it from `alcf-tokens get-token inference`, which refreshes on demand; the
+  # access token itself is valid 48 h. An unset var is kept verbatim and the
+  # request fails with 401 rather than silently running unauthenticated.
+  api_key: ${ALCF_INFERENCE_TOKEN}
 _config_version: 33
 plugins:
   enabled:
@@ -25,10 +57,21 @@ mcp_servers:
     args: [
           /Users/msinclair/github/loam/skills/hpc-deployment/scripts/hpc_control.py]
     env:
-      HPC_ENV_FILE: 
-        /Users/msinclair/github/loam/skills/hpc-deployment/set_env_msinclair.sh
+      # Inherited, not hardcoded, so an hpcctl restart rebuilds the allocation
+      # this launch actually asked for. It was pinned to set_env_msinclair.sh
+      # (10 nodes, debug-scaling), which meant a mid-run restart during a
+      # capacity or 256-node run would quietly come back as a 10-node debug
+      # block. launch.sh exports HPC_ENV_FILE unconditionally. If it is somehow
+      # unset, Hermes keeps the reference verbatim and hpc_control fails on a
+      # missing file -- which is the right failure, because run-campaign's own
+      # default points at a DIFFERENT Globus endpoint (3724d6df...).
+      HPC_ENV_FILE: ${HPC_ENV_FILE}
       HPC_ALLOWED_QUEUES: debug,debug-scaling,capacity
-      HPC_MAX_NODES: "20"
+      # 256, not 20: this cap is what hpc_control.validate() checks, so a lower
+      # value here REFUSES a 256-node debug-scaling restart through the hpcctl
+      # tool even though the queue allows it -- the same trap as the walltime
+      # cap below. The per-queue limits in hpc_control still hold the real line.
+      HPC_MAX_NODES: "256"
       # 12 h, not 1 h: these caps are what hpc_control.validate() checks, so a
       # 1 h cap here REFUSES a capacity allocation through the hpcctl tool
       # (`walltime 04:00:00 exceeds the cap of 01:00:00`) even though the queue

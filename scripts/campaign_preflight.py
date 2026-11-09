@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -33,6 +34,30 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return value
 
 
+def _expand_env(value: Any) -> Any:
+    """Expand `${VAR}` in config strings exactly as Hermes does.
+
+    Hermes resolves these references itself when it loads its config
+    (`hermes_cli/config.py:_expand_env_vars`), which is how a credential stays
+    out of a tracked `config.yaml`: the Minerva entry carries
+    `api_key: ${ALCF_INFERENCE_TOKEN}`. This gate reads the same YAML directly,
+    so without the same expansion it would send the literal string
+    `${ALCF_INFERENCE_TOKEN}` as the bearer token and fail with 401 on an
+    endpoint that is in fact reachable and correctly configured.
+
+    Unresolved references are kept verbatim, as Hermes keeps them, so a missing
+    export still fails -- but against the real endpoint, where the 401 says so.
+    """
+
+    if isinstance(value, str):
+        return re.sub(r"\$\{([^}]+)\}", lambda m: os.environ.get(m.group(1), m.group(0)), value)
+    if isinstance(value, dict):
+        return {key: _expand_env(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(item) for item in value]
+    return value
+
+
 def _inference_roles(hermes_home: Path, loam_config: Path) -> dict[str, tuple[str, str, str]]:
     """Map each configured agent role to its (base_url, api_key, model).
 
@@ -47,7 +72,8 @@ def _inference_roles(hermes_home: Path, loam_config: Path) -> dict[str, tuple[st
     Roles that are not configured separately inherit and are simply absent.
     """
 
-    hermes = _load_yaml(hermes_home / "config.yaml")
+    # Expanded, because Hermes expands it: see _expand_env.
+    hermes = _expand_env(_load_yaml(hermes_home / "config.yaml"))
     model_cfg = hermes.get("model") or {}
     base_url = str(model_cfg.get("base_url") or "").rstrip("/")
     api_key = str(model_cfg.get("api_key") or "")
