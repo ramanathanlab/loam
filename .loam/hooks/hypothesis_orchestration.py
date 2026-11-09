@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 import sys
 from pathlib import Path
@@ -828,6 +829,75 @@ def _workdir(execution: Mapping[str, Any], plan_id: str, hypothesis_id: str) -> 
     return f"{root.rstrip('/')}/{plan_id}/{hypothesis_id}" if root else ''
 
 
+# Remote paths are POSIX regardless of where this hook runs, so compare them
+# with posixpath and never os.path.
+_HPC_PATH = re.compile(r"(?:/lus/flare/projects|/flare)/[^\s\"'`,;)\]}]*")
+
+
+def _allowed_hpc_roots(execution: Mapping[str, Any]) -> set[str]:
+    """Every spelling of the trees a remote child may legitimately name.
+
+    `/flare` and `/lus/flare/projects` are the same filesystem and the agents
+    use them interchangeably, so each configured root is registered under both.
+    The parent of workdir_root is included because that is HPC_BASE_DIR, which
+    legitimately holds siblings like `batches/` and `tools/`.
+    """
+    roots: set[str] = set()
+    for key in ('workdir_root', 'batch_root'):
+        value = str(execution.get(key) or '').strip()
+        if not value:
+            continue
+        normalized = posixpath.normpath(value)
+        for path in (normalized, posixpath.dirname(normalized)):
+            if not path or path in ('/', '.'):
+                continue
+            roots.add(path)
+            if path.startswith('/flare/'):
+                roots.add('/lus/flare/projects/' + path[len('/flare/'):])
+            elif path.startswith('/lus/flare/projects/'):
+                roots.add('/flare/' + path[len('/lus/flare/projects/'):])
+    return roots
+
+
+def _foreign_hpc_paths(blob: str, execution: Mapping[str, Any]) -> list[str]:
+    """HPC-looking absolute paths in `blob` that fall outside the configured tree.
+
+    A model that invents the project segment -- `/flare/SHAREIDP/...` for
+    `/flare/FRAME-IDP/...`, observed 2026-11-08 -- states it to a child as
+    settled fact ("The workspace is ..."), and the child then spends its budget
+    on a filesystem that does not exist. The write itself already fails closed
+    server-side, so this is not a safety check: it is what stops one
+    hallucinated root from being inherited by every descendant.
+    """
+    roots = _allowed_hpc_roots(execution)
+    if not roots:
+        return []  # nothing configured to check against -- fail open
+    seen: set[str] = set()
+    found: list[str] = []
+    for match in _HPC_PATH.findall(blob):
+        candidate = posixpath.normpath(match)
+        if any(candidate == root or candidate.startswith(root + '/') for root in roots):
+            continue
+        if match not in seen:
+            seen.add(match)
+            found.append(match)
+    return found[:4]
+
+
+def _foreign_path_block(arguments: Any, execution: Mapping[str, Any], workdir: str) -> dict[str, str] | None:
+    """Refuse a call that names an HPC tree outside the configured one."""
+    bad = _foreign_hpc_paths(json.dumps(arguments, default=str), execution)
+    if not bad:
+        return None
+    correct = workdir or str(execution.get('workdir_root') or '')
+    return _block(
+        f"These paths are not on this campaign's filesystem: {bad}. Nothing exists there and "
+        f"every write to them fails. Use {correct or 'the workdir named in your context'} "
+        "exactly as it appears in your context -- do not retype or infer the project "
+        "directory, and do not pass an invented path to a child."
+    )
+
+
 def _reserve_child_runs(payload: Mapping[str, Any], execution: Mapping[str, Any], workdir: str, plan_id: str,
                         hypothesis_id: str, goals: list[str]) -> tuple[list[str], str]:
     """Reserve one workspace run per child, and the folder the child writes under.
@@ -1469,6 +1539,15 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
         allowed = sorted(set(names.values()))
         if tool_name not in allowed:
             return _block(f'code-generator may use only the HPC MCP tools {allowed} and the read-only skill tools {sorted(skill_tools)}')
+        # A child can inherit an invented root from its parent's context, so
+        # refuse it here too rather than letting it burn its run_code budget
+        # writing into a project directory that does not exist.
+        foreign = _foreign_path_block(
+            payload.get('arguments'), execution,
+            _workdir(execution, start['plan_id'], start['hypothesis_id']),
+        )
+        if foreign is not None:
+            return foreign
         if tool_name == names.get('run_code'):
             return _run_code_budget(payload, names)
         return None
@@ -1501,6 +1580,13 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
         for goal in goals
     ):
         return _block('hypothesis-validator may delegate only tagged code-generator children in its plan')
+
+    # The whole delegation is scanned, not just `goal`: the invented root
+    # observed on 2026-11-08 was in `context`, which is where a validator
+    # restates the workspace for its child.
+    foreign = _foreign_path_block(arguments, execution, _workdir(execution, plan_id, start['hypothesis_id']))
+    if foreign is not None:
+        return foreign
 
     used = sum(
         1 for row in rows
