@@ -1,6 +1,21 @@
 #!/bin/bash
-# TEMPLATE. Copy this to set_env_<you>.sh, fill every FILL_IN, and point
-# HPC_ENV_FILE at your copy.
+# TEMPLATE / RECIPE for a new campaign's HPC environment. It is user- and
+# campaign-neutral: copy it, fill the blanks, and nothing in it names a person.
+#
+# Recipe:
+#   1. cp set_env.sh set_env_<campaign-or-you>.sh
+#   2. Fill every FILL_IN below (grep '^export .*FILL_IN' to list them):
+#        HPC_GLOBUS_ENDPOINT_ID  your Globus Compute endpoint/manager UUID
+#        HPC_BASE_DIR            a writable campaign dir on the parallel FS
+#        HPC_CAMPAIGN_ID         a unique id for this campaign
+#        HPC_LOAM_HOME           the loam clone on the shared FS the workers run
+#                                from (skills resolve "$HPC_LOAM_HOME/skills/...")
+#        HPC_VENV                the on-node venv the workers activate
+#      Review HPC_SYSTEM (aurora/polaris), HPC_NNODES, HPC_POOL_SIZE, and the
+#      queue/walltime in HPC_ENDPOINT_CONFIG_JSON for your allocation.
+#   3. export HPC_ENV_FILE=$PWD/skills/hpc-deployment/set_env_<...>.sh  (or pass
+#      it to run-campaign). run-campaign sources THAT file, not this template.
+#   4. source your copy in the shell you run every later step from.
 #
 # This file is run-campaign's DEFAULT when HPC_ENV_FILE is unset, so it
 # deliberately does not run: launch.sh greps for FILL_IN and refuses to start.
@@ -16,6 +31,23 @@ export HPC_GLOBUS_ENDPOINT_ID="FILL_IN_endpoint_manager_uuid"
 export HPC_POOL_SIZE=1
 export HPC_BASE_DIR="FILL_IN_absolute_path_on_the_parallel_filesystem"
 export HPC_CAMPAIGN_ID="FILL_IN_campaign_id"
+# The loam checkout on the shared filesystem that the compute-node workers run
+# from. Campaign skills reference their worker-visible scripts/launchers as
+# "$HPC_LOAM_HOME/skills/..." -- a worker cannot see your local checkout, so set
+# the clone location ONCE here and every skill resolves against it; no skill
+# hardcodes a path. It is also exported into worker_init below (a worker sees
+# only the environment that block sets).
+export HPC_LOAM_HOME="FILL_IN_absolute_path_to_the_loam_clone_on_the_shared_fs"
+# Read-only paths inspect_filesystem / run_batch may look at (colon-separated),
+# beyond HPC_BASE_DIR (always allowed). Include "$HPC_LOAM_HOME/skills" so
+# run_batch can validate/copy a skill runner script submitted straight from the
+# deployed loam tree (e.g. the rfd4-proteina route's rfd4_run_row.py); without it
+# a script_path under $HPC_LOAM_HOME is rejected as "outside allowed inspection
+# roots" and the agent must first copy the runner into HPC_BASE_DIR. Add the
+# project output tree(s) your tools write to. If /flare and /lus/flare/projects
+# (or similar) name the same filesystem on your site, list BOTH spellings since
+# agents use them interchangeably.
+export HPC_INSPECT_ROOTS="${HPC_LOAM_HOME}/skills:FILL_IN_absolute_path_to_tool_output_tree"
 export HPC_SYSTEM="aurora"
 # Nodes in the allocation. Both the PBS request (`nodes_per_block` below)
 # and the EL cluster's leaf count must agree.
@@ -30,9 +62,11 @@ export HPC_MCP_TRANSPORT="http"
 # No available_accelerators: EL owns tile placement, not Parsl.
 # Keys match globus_compute_endpoint_configs/alcf_aurora/user_config_template.yaml.j2.
 #
-# The shared venv and code the compute-node workers import from.
+# The shared venv and code the compute-node workers import from. The agent
+# modules live in the loam clone, so the worker PYTHONPATH derives from
+# HPC_LOAM_HOME above (override only if you keep the worker code elsewhere).
 HPC_VENV="FILL_IN_absolute_path_to_the_on_node_venv"
-HPC_WORKER_PYTHONPATH="FILL_IN_absolute_path_to_hpc_deployment_scripts"
+HPC_WORKER_PYTHONPATH="${HPC_LOAM_HOME}/skills/hpc-deployment/scripts"
 
 # Copper (ALCF cooperative caching) accelerates importing the shared venv from
 # Lustre when many nodes start at once. Turn it on with `export HPC_USE_COPPER=1`
@@ -57,6 +91,8 @@ else
   _pypath="$HPC_WORKER_PYTHONPATH"
 fi
 # worker_init must stay one line: the template renders it as one quoted YAML string.
-_worker_init="module reset; module load frameworks; ${_copper_init}source ${_venv}/bin/activate; which python; export PYTHONPATH=${_pypath}:\$PYTHONPATH; export TMPDIR=/tmp"
+# HPC_LOAM_HOME is exported here too: a worker's environment is ONLY what this
+# block sets, and the campaign skills reference "$HPC_LOAM_HOME/skills/...".
+_worker_init="module reset; module load frameworks; ${_copper_init}source ${_venv}/bin/activate; which python; export HPC_LOAM_HOME=${HPC_LOAM_HOME}; export PYTHONPATH=${_pypath}:\$PYTHONPATH; export TMPDIR=/tmp"
 export HPC_ENDPOINT_CONFIG_JSON='{"queue": "debug", "walltime": "00:30:00", "nodes_per_block": '"$HPC_NNODES"', "max_workers_per_node": '"$((HPC_POOL_SIZE + 1))"', "worker_init": "'"$_worker_init"'"}'
 unset _cop _copper_init _venv _pypath _worker_init

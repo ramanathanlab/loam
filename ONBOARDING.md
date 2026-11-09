@@ -119,7 +119,9 @@ allocation. `kill -9` orphans the EL cluster until walltime.
 
 **Copy `examples/hermes-config.yaml.example` into the Hermes home as
 `config.yaml`** (the shared home is `.hermes/.loam-home/config.yaml`) and fill in
-every `<PLACEHOLDER>`. Do not hand-write this file from the keys below — the
+every `<PLACEHOLDER>`. This sets up the shared/default config; a campaign can
+also carry its own `config.yaml` that `run-campaign` prefers — see Step 5. Do not
+hand-write this file from the keys below — the
 example is the complete one, and the pieces most easily missed are the ones that
 are not Loam-specific at all:
 
@@ -129,6 +131,14 @@ are not Loam-specific at all:
 - `delegation.base_url` / `api_key` / `model` — `delegate_task` ignores per-agent
   `model:` frontmatter, so this is the **only** place every child
   (hypothesis-validator and code-generator alike) gets its model.
+- `delegation.role_models` *(optional)* — run a single child role on its own
+  model/endpoint while the rest stay on `delegation.model`. A per-role entry is
+  either a model string (reuses the delegation endpoint) or a mapping carrying
+  its own `base_url`/`api_key`. The mapping (endpoint) form needs the carried
+  Hermes patch `patches/hermes-role-models-endpoints.patch` (apply per
+  `patches/README.md`): unpatched Hermes silently ignores it and leaves the role
+  on the default endpoint, so `scripts/campaign_preflight.py` fails the launch
+  when the config needs the patch and the installed Hermes lacks it.
 
 The Loam-specific keys the example already contains, and what each one does:
 
@@ -170,7 +180,9 @@ See `.loam/README.md` for the full hook contract and the global-install option.
 
 Copy `examples/loam.yaml.example` to `~/.hermes/loam.yaml` and edit every
 `<PLACEHOLDER>`. One active profile defines the tournament and the execution
-contract. Key blocks:
+contract. This `~/.hermes/loam.yaml` is the global default; a campaign can carry
+its own `loam.yaml` that overrides it, so the profile travels with the campaign —
+see Step 5. Key blocks:
 
 - `hypothesis_tournament` — `jnana_root`, the generation endpoint (`:51900`) and
   ranking endpoint (`:51911`), `initial_hypotheses`, `matches_per_run`, `top_k`,
@@ -334,6 +346,28 @@ redirect or merge a run. Two in particular are not knobs: the tournament cadence
 comes from the profile's `pre_llm_every`, not `LOAM_PRE_LLM_EVERY`, and the
 active profile from `active_profile` in `loam.yaml`, not `LOAM_PROFILE`.
 
+### Config and profile travel with the campaign
+
+`run-campaign` resolves both the Loam profile and the Hermes config
+**campaign-first**: a `loam.yaml` / `config.yaml` at the campaign root wins, then
+the campaign's `.hermes/` copy, then the global `~/.hermes/loam.yaml` / shared
+repo `config.yaml` as the fallback. So per-campaign settings — a different
+delegation model, a different tournament size — travel with the campaign, and
+switching campaigns is a `cd`, not an edit to a global file. The launcher exports
+`LOAM_CONFIG_PATH` to the chosen `loam.yaml`, and `scripts/drive_campaign.py`
+resolves the same paths in the same order, so the driver and the hooks never
+disagree about which profile is live. Steps 3 and 4 set up the global copies;
+dropping a `loam.yaml` / `config.yaml` beside `run-campaign` is all it takes to
+override them for one campaign.
+
+At launch `run-campaign` also runs `scripts/fill_alloc_skill.py`, which bakes the
+live allocation (`nodes x 12` tiles, divided by `top_k`) into the hpc-deployment
+skill's `<!-- LOAM_LIVE_ALLOC -->` sentinel, so code-generators size their
+`run_batch` fan-out to the pool that is actually allocated rather than the
+campaign goal's headline node count. Agents can read the same budget live from
+the `pool_status` MCP tool. It never fails the launch — if the node count can't
+be resolved, the skill is left generic.
+
 ### Validate the plumbing without a cluster first
 
 Run the five-round arithmetic campaign in `CAMPAIGN_TEST.md` with
@@ -453,7 +487,7 @@ round's claims have been reviewed and reconciled.
 | `scripts/campaign_preflight.py` | `ALCF_PROXY_PYTHON` default (`~/.loam-venv-312`), proxy port and log path |
 | `.loam/README.md` global shim | `LOAM_ROOT` default (points at another user's checkout) |
 | `~/.hermes/loam.yaml` | `jnana_root`, all `state_dir` paths, the `:51900` / `:51911` endpoints and model ids |
-| `skills/hpc-deployment/set_env_akv.sh` | `HPC_GLOBUS_ENDPOINT_ID`, `HPC_BASE_DIR`, `HPC_CAMPAIGN_ID`, `HPC_INSPECT_ROOTS`, and the venv/paths inside `worker_init` of `HPC_ENDPOINT_CONFIG_JSON` |
+| `skills/hpc-deployment/set_env_akv.sh` | `HPC_GLOBUS_ENDPOINT_ID`, `HPC_BASE_DIR`, `HPC_CAMPAIGN_ID`, `HPC_INSPECT_ROOTS`, `HPC_LOAM_HOME` (the loam checkout on `/flare` the workers run from), and the venv/paths inside `worker_init` of `HPC_ENDPOINT_CONFIG_JSON` |
 | `.hermes/.loam-home/config.yaml` | Argo/Minerva provider base URLs, API keys, and model ids; **and the `hpcctl` block's `command`, `args` and `HPC_ENV_FILE`, which name one user's venv, checkout and env file** |
 
 Two of these overlap with findings in the code review and are worth calling out
@@ -468,6 +502,13 @@ to a newcomer specifically:
   it (`walltime 04:00:00 exceeds the cap of 01:00:00`). It is set to 12 h here;
   the per-queue limits inside `hpc_control` still stop a debug block from asking
   for more than its hour.
+- **`HPC_LOAM_HOME` carries the `/flare` loam clone to the skills.** Tools run on
+  the Aurora worker, which cannot see your local checkout, so skills that invoke a
+  worker-side script (ProteinMPNN, Chai, RFD4) reference it as
+  `$HPC_LOAM_HOME/skills/...` rather than hardcoding a `/flare/.../loam` path.
+  `set_env_akv.sh` sets `HPC_LOAM_HOME` once **and** re-exports it inside
+  `worker_init` (the only environment a worker actually sees), so moving the clone
+  is a one-line edit there — the skill docs do not change.
 - **The preflight is the real readiness contract, not the config comments.** If
   it passes, all three subsystems are genuinely talking. If it fails, read
   `state/preflight.json` — it names the model role or the Aurora probe that

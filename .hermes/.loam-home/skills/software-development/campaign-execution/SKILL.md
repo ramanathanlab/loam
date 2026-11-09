@@ -44,6 +44,16 @@ Keep canonical reconstruction narrowly scoped to opted-in campaign workflows. Re
 - Require concrete execution evidence from the mandated local/remote runtime.
 - Persist append-only lifecycle and campaign records.
 - Treat missing lifecycle, missing output, invalid score, duplicate reasoner, or missing steering as a non-crediting failure.
+- Keep prerequisite/context evidence separate from hypothesis-bearing evidence. A verified prerequisite (e.g. an input sequence, a reference structure, or a context fold) does not support a downstream hypothesis-bearing claim unless the discriminating comparison the claim depends on actually ran.
+- Treat validator reports as unvalidated orchestration input until independent evidence review reconciles each claim against its authoritative source or hashed artifact. In particular, do not accept a child-reported batch ID, score, or artifact path without read-back verification.
+- Match every claim to its own source. Do not cite a target's UniProt URL as provenance for a campaign execution failure or computed result; use the batch manifest, scheduler record, or output artifact that produced that claim.
+- Distinguish blocked/inconclusive from refuted: absent candidates, failed tools, or an unexecuted gate produce no directional evidence and should retain an evidence score of 0.00 unless a completed experiment contradicts the hypothesis.
+
+## Loam round sequencing
+
+Use the canonical `loam_dispatch_round` for a pending plan rather than hand-composing validator or reviewer batches. After validators finish, dispatch the independent evidence-reviewer phase when the dispatcher requires it; after all review threads are terminal, dispatch exactly one reasoner. Do not dispatch a reasoner early, duplicate it, or report the round as synthesized before its returned brief is available.
+
+Each round's report should state: what was actually executed, which artifacts were independently verified, the evidence score, the first unmet acceptance criterion, and the single next discriminating action. A successful prerequisite phase is not a successful campaign round when the campaign's acceptance bar requires a complete funnel.
 
 ## Verification
 
@@ -54,6 +64,10 @@ Before final reporting, programmatically count distinct completed plans and insp
 ## User workflow preference
 
 For campaign requests, do not pause for an intermediate summary or ask whether to continue after partial progress. Continue through retries and the requested multi-round acceptance path unless an actual external blocker prevents further execution.
+
+## Dispatcher no-op gate
+
+A campaign-start request is not proof that a dispatch is pending. If the authoritative campaign dispatcher returns `nothing_to_dispatch`, do not fabricate a validator batch, substitute direct work, or repeatedly reissue the same dispatch blindly. Report the exact fail-closed state: either children are already running or the tournament selected nothing. If campaign-state inspection is available, inspect it before retrying; otherwise wait for a new pending plan or terminal child state. A repeated user request does not override the dispatcher’s prohibition on substitute work.
 
 ## References
 

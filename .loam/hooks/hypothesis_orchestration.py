@@ -417,16 +417,22 @@ def runbatch_nudge_for(payload: Mapping[str, Any]) -> str:
         return ''  # the run has made no calls yet
     functions = [hypothesis_workspace._hpc_function(call.get('tool', '')) for call in record.get('calls') or []]
     run_code = functions.count('run_code')
-    if run_code < 5 or 'run_batch' in functions:
+    # Fire once a run has leaned on serial run_code without ever batching. The
+    # threshold is 3 (lowered from 5): at 5 a context-heavy run had usually
+    # already hit the token-rate-limit wall this nudge exists to prevent, so we
+    # warn earlier. Any run_batch call at all means the generator knows the tool
+    # and is deliberately using run_code for a diagnostic, so stay silent.
+    if run_code < 3 or 'run_batch' in functions:
         return ''
     return (
         f"RUN_BATCH REMINDER: this run has {run_code} serial run_code calls and no run_batch. "
-        "A design tier's per-candidate fan-out (generate / fold / score many candidates) MUST go "
-        "through run_batch -- one JSONL row per candidate, one submit, then poll batch_status until "
-        "unfinished == 0 -- NOT a run_code loop. Each serial run_code resends your whole growing "
-        "context and is the main cause of the model token-rate-limit failures that abort runs; "
-        "run_batch executes the rows on HPC tiles without that per-call cost. Keep run_code only for "
-        "setup, a single probe fold, and post-batch aggregation."
+        "ALL real execution -- generating, folding, or scoring candidates, one or many -- MUST go "
+        "through run_batch: one JSONL row per job, one submit, then poll batch_status until "
+        "unfinished == 0, and read results from the recorded batch outputs. run_code is for a SHORT "
+        "diagnostic AFTER a batch job errors -- NOT for real work, smoke tests, or probe folds. "
+        "Each serial run_code resends your whole growing context and is the main cause of the model "
+        "token-rate-limit failures that abort runs; run_batch executes the rows on HPC tiles without "
+        "that per-call cost. Go straight to run_batch, even for a single candidate."
     )
 
 
@@ -1036,8 +1042,8 @@ def _child_context(instruction: str, execution: Mapping[str, Any], workdir: str,
     run_code = names.get(execution.get('function_name') or 'run_code', '')
     place = f"under {workdir}" if workdir else "under the HPC base directory (HPC_BASE_DIR)"
     lines = [
-        f"- `{run_code}`: run one Python program (`payload`) on a GPU worker; use it for one-off runs "
-        "and to write script or JSONL files to disk.",
+        f"- `{run_code}`: run one Python program (`payload`) on a GPU worker; also used to write the "
+        "batch's script and JSONL input files, harvest its results, and emit the required output manifest.",
     ]
     if 'run_batch' in names:
         lines += [
@@ -1053,7 +1059,10 @@ def _child_context(instruction: str, execution: Mapping[str, Any], workdir: str,
             "report the batch_id and counts as unfinished.",
             f"- `{names['inspect_filesystem']}`: read result files (ls/cat/tail).",
             f"- `{names['list_batches']}`: earlier batches for this plan or hypothesis.",
-            "Use run_batch rather than run_code for more than a handful of runs.",
+            "ALL science -- generating, folding, or scoring candidates, one or many -- goes through "
+            "run_batch, NEVER run_code. run_code only marshals the batch (writes its script/JSONL input "
+            "files, harvests its results, emits the required output manifest) and runs short post-error "
+            "diagnostics; it never runs a science tool itself.",
         ]
     # Said out loud: a child told to use no other tool will not try skill_view otherwise.
     others = (

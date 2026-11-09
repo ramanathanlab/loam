@@ -1,301 +1,184 @@
 ---
 name: rfd4-proteina
-description: Run RFD4-Proteina (Baker Lab x NVIDIA flow-matching all-atom protein design) inference on the ALCF Aurora Intel XPU install at /flare/FRAME-IDP/msinclair/software/RFD4-Proteina. Covers the venv and module situation (it uses Aurora's default frameworks/2026.1.0 - no module swap), ZE_AFFINITY_MASK tile pinning, the Hugging Face checkpoint download over the ALCF proxy, the lightning seed_everything incompatibility and its shim, `rfd4-generate` Hydra options, benchmark/annotated-CIF inputs (unconditional monomer, motif, enzyme, small-molecule and protein binders) and the output layout. Use whenever asked to generate or refine protein designs with RFD4 / RFproteina on Aurora. For RFdiffusion3 use the rfdiffusion3 skill instead.
+description: Run RFD4-Proteina (Baker Lab x NVIDIA flow-matching all-atom protein design) inference on ALCF Aurora Intel XPUs, under Loam, via the VERIFIED resident-worker route — David Kastner's pinned read-only deployment (frameworks/2026.1.0, Lightning 2.6.6, in-code SingleDeviceStrategy). Covers the pinned env + shared paths, one-resident-worker-per-tile execution, the Loam run_batch fan-out (rfd4_run_row.py + run_rfd4_resident.sh), annotated-CIF binder inputs, CLI/precision options, and outputs. Use whenever asked to generate protein/binder backbones with RFD4 / RFproteina on Aurora. For RFdiffusion3 use the rfdiffusion3 skill instead.
 ---
 
-# RFD4-Proteina on Aurora
+# RFD4-Proteina on Aurora (resident-worker route)
 
-RFD4-Proteina is a flow-matching all-atom design model. One entry point,
-`rfd4-generate`, covers unconditional monomers/complexes, folding and inverse
-folding, motif scaffolding, enzyme (active-site) design, small-molecule binders,
-protein binders and DNA binders. `rfd4-evaluate` scores designs. All arguments
-are Hydra `key=value` — **never** `--key value`.
+RFD4-Proteina is a flow-matching all-atom design model (unconditional monomers/
+complexes, folding/inverse-folding, motif scaffolding, enzyme design, small-
+molecule binders, protein binders, DNA binders).
 
-Install: `/flare/FRAME-IDP/msinclair/software/RFD4-Proteina` (read-only for your
-purposes: do not write runs, `.env.local`, or `data_path` into it).
+**On Aurora, under Loam, use ONLY the resident-worker route documented here.**
+It runs the pinned, read-only deployment maintained by David Kastner (FRAME-IDP)
+and delivered as `RFD4_Aurora_Handoff/` at the loam repo root. The adapter is
+single-device **by construction** (explicit `SingleDeviceStrategy` +
+`LightningEnvironment`, `num_workers=0`), so it does not deadlock when launched
+from an MPI/PALS worker — which is exactly how Loam's `run_batch` / Ensemble
+Launcher calls it.
 
-## 1. Environment
+> **Why the old route was removed.** The previous skill drove the msinclair
+> install (`/flare/FRAME-IDP/msinclair/software/RFD4-Proteina`) through a
+> `sitecustomize.py` Lightning-2.3 shim and `run_rfd4_generate.sh`, which scrubbed
+> the inherited PMIX_*/PALS_* rank env. Under Loam's run_batch/EL launcher that
+> approach **deadlocks**: the model builds, logs "Guidance is turned off /
+> Running inference / Validation", then hangs ~18 min with the XPU idle until it
+> is killed — producing **0 backbones**. Unsetting env vars is structurally
+> insufficient; the fix has to force single-device *in code*, which the resident
+> adapter does. That hang was the campaign's generation-stage failure. Do **not**
+> reintroduce the sitecustomize shim or mix the two stacks.
 
-Unlike the Foundry/RFD3 install, this venv was built against Aurora's **current
-default** module, `frameworks/2026.1.0`
-(`home = /opt/aurora/26.181.0/frameworks/aurora_frameworks-2026.1.0/bin`,
-`include-system-site-packages = true`), so **no `module swap` is needed** — the
-default login/PBS environment works. Verified: torch `2.13.0a0+gitcf30153`,
-`torch.xpu.is_available() == True`.
+## Verified result (2026-11-05)
 
-```bash
-REPO=/flare/FRAME-IDP/msinclair/software/RFD4-Proteina
-BASE=<your writable run dir>
+Through Loam's MCP `run_batch` / EL path, on a 2-node debug block:
 
-export ZE_AFFINITY_MASK=7                      # pin ONE tile
-export CLUSTER=local                            # else: "No .env file found for cluster ..."
-export DATA_PATH=$BASE/data_path                # native ckpts + optional assets
-export HF_HOME=$BASE/hf                         # HF bundle cache (~1.7 GB)
-export http_proxy=http://proxy.alcf.anl.gov:3128 \
-       https_proxy=http://proxy.alcf.anl.gov:3128   # compute nodes need this to reach HF
-export PYTHONPATH=$BASE/shim${PYTHONPATH:+:$PYTHONPATH}   # see §3
-cd "$REPO"
-$REPO/.venv/bin/rfd4-generate <hydra overrides>
-```
+- 1 worker: rc=0, 1 backbone + receipt, ~200 s cold.
+- **24-tile saturation: 24/24 rc=0, 24 backbones, 0 failures, ~175 s wall**
+  (per-row 74–156 s); both nodes covered tiles 0–11 with no overlap.
+- HER2 PPI benchmark input; binder length sampled 60–99 aa (mean ~82) from the
+  contig's length range, target chain fixed at 237 aa.
 
-`source .venv/bin/activate` also works; the absolute `.venv/bin/rfd4-*` path is
-equivalent and safer inside scripts. Commands must run from the repo root (it
-holds `.project-root`, the Hydra config tree, and `data/benchmarks`).
+Qualified through the handoff's acceptance step 2 (1 task → 2 nodes). NOT yet
+qualified: several designs per worker served serially (warm reuse), bounded
+failure/retry, and non-HER2 / ligand-conditioned inputs. BF16 replay determinism
+and large-scale stability are not promised — treat a second unexplained failure
+of a config as a stop, per the handoff.
 
-The repo has **no `.env.local`** (only `.env.local.example`). With
-`CLUSTER=local` and `DATA_PATH`/`HF_HOME` exported, the exported values win and
-no env file is needed. `atomworks` prints harmless warnings that
-`CCD_MIRROR_PATH` / `PDB_MIRROR_PATH` are unset — ignore them for plain
-generation.
+## 1. Pinned deployment — shared paths and access
 
-## 2. Checkpoints
-
-`configs/inference.yaml` defaults to the **Hugging Face bundle**
-`hf_ckpt_path=nvidia/RFD4-Proteina` pinned at revision
-`a06e2509c7033b010fc43614e9fd840303588502`, which overrides the native
-checkpoint paths. On a compute node with the proxy exported this downloads
-itself into `$HF_HOME` on first run (~1.7 GB, ~16 s measured) — point `HF_HOME`
-at a shared flare directory so you pay for it once.
-
-Native checkpoints are the alternative (`hf_ckpt_path=null`):
-`${DATA_PATH}/flow_checkpoints/rfd4-proteina-flow-release-2026-10-19.ckpt` plus
-the matching autoencoder
-`${DATA_PATH}/ae_checkpoints/rfd4-proteina-ae-release-2026-10-19.ckpt`; fetch
-them with `./scripts/download_assets.sh "$DATA_PATH"`. Neither is present on
-this install — **the HF path is the verified one here**. Always keep the flow
-checkpoint and its AE paired.
-
-RFD4 does **not** use the Foundry `checkpoints/` directory or
-`FOUNDRY_CHECKPOINT_DIRS`; those are RFD3/RF3 only.
-
-## 3. Aurora blockers — the `sitecustomize.py` shim (required)
-
-Out of the box **nothing runs**: the venv's `lightning` is an Intel-patched
-**2.3.0dev**, far older than what `src/rfproteina` expects, and the frameworks
-module provides torch 2.13 with *native* XPU support and **no
-`intel_extension_for_pytorch`**. Three separate failures result, in this order:
-
-1. `TypeError: seed_everything() got an unexpected keyword argument 'verbose'`
-   — `generate.py:642` calls `L.seed_everything(cfg.seed, verbose=...)`;
-   lightning 2.3's signature is `(seed, workers)`. Happens for any `verbose`
-   value.
-2. `MisconfigurationException: No supported gpu backend found!` —
-   `generate.py:708` hardcodes `L.Trainer(accelerator="gpu")`. This lightning
-   *does* have an `XPUAccelerator`, but both
-   `lightning/{pytorch,fabric}/accelerators/xpu.py` gate it behind a
-   `RequirementCache("intel_extension_for_pytorch")`, which is unsatisfiable
-   here, so `is_available()` is `False`. The next error after patching only the
-   pytorch copy is `You requested gpu: [0] But your machine only has: []` from
-   `lightning/fabric/utilities/device_parser.py` — the fabric copy and
-   `_get_all_visible_xpu_devices` must be patched too.
-3. `IndexError: pop from empty list` in `rich/console.py:clear_live`, from
-   lightning 2.3's `RichProgressBar._init_progress()` against the newer `rich`
-   in frameworks/2026.1.0 (reached through the repo's `GenerationProgressBar`
-   at `trainer.validate()`).
-
-Since the software tree must not be modified, all three are patched from
-`PYTHONPATH` via a `sitecustomize.py`. Use the tested copy at
-`scripts/sitecustomize.py` beside this skill:
+Read-only; do **not** modify, reinstall, or `pip install` into it. Requires
+`FRAME-IDP` group membership (check from the running account: `id -nG | tr ' ' '\n'
+| grep FRAME-IDP`, then `test -r` the files below). Stop and report permission
+errors rather than changing permissions.
 
 ```bash
-mkdir -p $BASE/shim && cp <this skill>/scripts/sitecustomize.py $BASE/shim/
-export PYTHONPATH=$BASE/shim${PYTHONPATH:+:$PYTHONPATH}
+RFD4_SHARE=/lus/flare/projects/FRAME-IDP/dkastner/Projects/IDeA
+RFD4_PYTHON="$RFD4_SHARE/envs/rfd4-xpu-2026.1.0/bin/python"     # frameworks/2026.1.0, Lightning 2.6.6
+RFD4_ADAPTER="$RFD4_SHARE/experiments/pmd_design_20261026T070010Z/source/v34"
+RFD4_ENGINE="$RFD4_SHARE/experiments/aurora_performance_20261023T194443Z/source/rfd4_phase1"
 ```
 
-It drops the unsupported `verbose` kwarg, forces `_IPEX_AVAILABLE`/
-`is_available()`/`num_xpu_devices()`/`_get_all_visible_xpu_devices()` in both
-accelerator modules to use `torch.xpu.*`, and makes `Console.clear_live()`
-swallow the `IndexError`. Each patch is a no-op if the underlying version
-already behaves.
+Verified identities (checked by `run_rfd4_resident.sh` before each run):
+- adapter `src/idea/engines/rfd4_persistent.py` sha256 `2a0a9392…d742f0`
+- adapter `src/idea/engines/rfd4_xpu.py`        sha256 `ef8e69f4…bf190`
+- checkpoint `nvidia/RFD4-Proteina` rev `a06e2509…`, bundle sha256 `5b549dd6…68fb0`
+- upstream RFD4 source rev `274c366a0981d680bf3ba79924d99da5e91ae107`
+- HF cache `$RFD4_SHARE/cache/huggingface` (used with `HF_HUB_OFFLINE=1`)
 
-Root cause: this install's `pyproject.toml` has `torch>=2.11` and
-`lightning>=2.6.0` commented out of `dependencies` (so torch comes from the
-frameworks module), which left an Intel-patched lightning 2.3.0dev in the venv
-against code that expects >= 2.4.
+## 2. Execution model
 
-**The proper fix is upgrading `lightning` in the RFD4 venv** to the version
-`pyproject.toml` expects (>= 2.4, which has `verbose`, native-XPU accelerator
-support and a rich-compatible progress bar). That was deliberately not attempted
-here, to avoid perturbing a working XPU environment near the end of a job.
-Treat the shim as a workaround, not the intended configuration, and re-test it
-after any venv change.
+- **One independent resident worker per assigned XPU tile**, normally 12/node.
+  These are independent samplers — **never distribute one model across MPI ranks.**
+- The worker is a **fresh subprocess** with the full env block; `ZE_AFFINITY_MASK`
+  is set to the EL-assigned tile **before** Torch import (changing it after import
+  is too late). With one tile visible the adapter selects logical `xpu:0`.
+- Keep BLAS/OMP single-threaded (`OMP/MKL/OPENBLAS_NUM_THREADS=1`); the adapter
+  itself calls `torch.set_num_threads(4)`. Allocate ~4 CPUs per worker.
+- The worker loads the model **once** and runs every sample in its plan serially,
+  amortizing startup. Do not run concurrent calls against one resident process.
 
-## 4. Verified minimal run
+## 3. Running it under Loam (run_batch fan-out)
 
-Script: `scripts/run_rfd4_min.sh` beside this skill. It performs the exports in
-§1 (including the shim) and runs:
+Two scripts in `scripts/` do everything (deploy the skill to `$HPC_LOAM_HOME` on
+flare so Aurora can see them):
 
-```bash
-cd /flare/FRAME-IDP/msinclair/software/RFD4-Proteina
-.venv/bin/rfd4-generate \
-  inputs=data/benchmarks/monomer \
-  subset_to_examples=monomer-short \
-  num_replicates=1 batch_size=1 \
-  out_dir=$BASE/out_smoke \
-  ~metrics compile_lengths=null verbose=true
+- `run_rfd4_resident.sh <plan.json> <fresh_run_dir> <seconds>` — the pinned-stack
+  launch: module load, env block, tile from `ZE_AFFINITY_MASK`, hash + import/tile
+  probe (300 s), then the resident worker. Self-contained.
+- `rfd4_run_row.py` — the `run_batch` row runner: reads one JSONL row, writes a
+  1-sample plan, invokes the wrapper on this row's tile, records
+  `result.json {host,tile,seconds,rc,n_receipts,n_cifs}`.
+
+**Fan out across tiles with `run_batch(gpus=1)`** — one row per tile, up to the
+pool's `total_tiles` (nodes×12) concurrently. Each JSONL row:
+
+```json
+{"id":"sat_00","input":"/abs/annotated.cif","seed":101,"seconds":900}
 ```
 
-`monomer-short` is a 100-residue unconditional monomer — the smallest shipped
-benchmark example. `~metrics` deletes the metrics config group (no oracle
-needed); `compile_lengths=null` disables `torch.compile` bucket padding, which
-matters on XPU (see §7).
+Submit (fastmcp client against the hpc-deployment MCP server; `run_batch` resolves
+`script_path`/`inputs_path` on **Aurora's** filesystem):
 
-**Verified 2026-10-29 on an Aurora debug node, tile 7: PASS, 1m22s wall**
-(`user` 88 min — the XPU tile is well fed; checkpoint already cached in
-`HF_HOME`, add ~20 s for the first download). Log markers:
-`GPU available: True (xpu), used: True`, then
-`✓ Generation complete! Results saved to ...`.
-
-Output:
-
-```
-out_smoke/inference_samples/monomer-short/monomer-short_generated.cif
-out_smoke/inference_metrics/per_example_metrics.csv
+```python
+await c.call_tool("run_batch", {
+    "script_path": f"{HPC_LOAM_HOME}/skills/diffusion-models/rfd4-proteina/scripts/rfd4_run_row.py",
+    "inputs_path": "<aurora>/rfd4_rows.jsonl",   # one row per tile
+    "gpus": 1, "timeout_each": 1200,
+    "labels": {"tool": "rfd4-proteina", "stage": "rfd4_generate"}})
 ```
 
-The CIF is a real all-atom design: 801 `ATOM` records, one chain, a 100-residue
-designed sequence
-(`SSKEELISDISELVSEKLSSFSEDDQVDLTLVISSLFVAIHEEDIDEIISCLKEIDEIDHSLCLEILELILPYLSEDQRLKLLSAFKHNSEMSDLIKEYL`),
-so XPU numerics produce sane structures, not just a non-crashing run.
-`per_example_metrics.csv` is written even with `~metrics`: it records the
-resolved generation config per design (seed, `nsteps=60`, `tsr_k`, checkpoint
-`nvidia/RFD4-Proteina` / `model.safetensors`, input path), which is worth
-keeping for provenance.
+The row runner resolves the wrapper via `row["wrapper"]` → `$RFD4_WRAPPER` →
+`$HPC_LOAM_HOME/.../run_rfd4_resident.sh`. Set `HPC_LOAM_HOME` (or `RFD4_WRAPPER`)
+in the pool/worker env. Size each fan-out to the live free tiles (`pool_status`
+capacity minus in-flight work from `list_batches`); each row must finish within
+the block walltime (debug/debug-scaling reclaim ~hourly).
 
-## 5. Inputs
+**Design count = rows × samples-per-plan.** Distinct `seed`s are distinct designs;
+reusing a seed is a replay, not new diversity. A design funnel wants a large
+library — reach it by fanning out across tiles (and, once qualified, several
+samples per plan for warm reuse), not one long serial job.
 
-`inputs=` takes either a directory of benchmark examples or a single
-`.cif` / `.cif.zst`. Pick named keys inside a directory with
-`subset_to_examples=<key>` (a key is the file stem, e.g. `monomer-short`).
+## 4. Inputs — annotated CIF
 
-| Task | Example input under `data/benchmarks/` |
-|---|---|
-| Unconditional monomer | `monomer` (`monomer-short` 100 aa, `-medium` 150, `-long` 250) |
-| Fold-class-conditioned monomer | `adherence/monomer_helical`, `adherence/monomer_ig` |
-| Motif scaffolding | `motif_scaffolding/motif_indexed`, `motif_unindexed`, `motif_indexed_internal_coords` |
-| Enzyme / active site | `mcsa/mcsa_37`, `mcsa_37_fixed_ligand`, `mcsa_37_no_ligand` |
-| Small-molecule binder | `small_molecule_binder/sm_binder`, `SAM_hbonds.cif.zst` |
-| Protein binder (PPI) | `ppi/`, plus `docs/how-to/input_prep/examples/condition_spec_ppi.yaml` |
-| DNA binder | `dna_binder/dna_binder_denovo_val` |
-| RNA / structure prediction | `rna/`, `structure_prediction/` |
+RFD4 inputs are **annotated CIFs** (`SA_*` columns + `pdbx_PDB_model_num` + a
+condition spec: contig `"<binder_len>, /0, <target>"` with `C_CRDGRP`/`C_SEQ`/
+`C_HOT`). A generic PDB does not encode fixed atoms, sequence constraints or
+ligand conditioning — it will fail.
 
-For anything custom — a specific length, hotspots, fixed ligands, unindexed
-motifs, H-bond or RASA conditioning — the input format is an **annotated CIF**
-with per-atom conditioning columns, built with the repo's
-`skills/rfd4-proteina-annotated-cif`. There is no contig mini-language as in
-RFD3; conditioning lives in the CIF. Design length is set by the input, so
-"design a 70-residue monomer" means building an annotated CIF, not a CLI flag.
+- **Build a binder input:** `scripts/make_rfd4_input.py --target <pdb> --target-chain
+  <ch> --hotspots <resids> --binder-len <N|range> --target-range <a-b> --out <cif>`
+  wraps the engine's `write_condition_spec_cif`. `--binder-len` sets/narrows the
+  designed length (the HER2 benchmark uses a *range*, hence the 60–99 aa spread).
+  NOTE: validate a freshly built CIF against this engine rev (`274c366`) on a
+  1-row smoke before fanning out.
+- **Ready-made benchmark inputs** (matched to this engine, guaranteed valid) live
+  under `$RFD4_ENGINE/data/benchmarks/` — e.g. protein binders in `ppi/ppi_bb_only/`
+  (`28_HER2_AAV.cif.zst`, …), plus `monomer/`, `motif_scaffolding/`,
+  `small_molecule_binder/`, `dna_binder/`, `rna/`. Use these for smoke tests.
 
-Conditioning conventions worth preserving (from the repo's AGENTS.md): for PPI,
-default to target backbone-only internal coordinates (`C_CRDGRP`), full target
-sequence (`C_SEQ`) and the requested hotspots; fixing sidechains also fixes
-residue identity, so use backbone-only conditioning when the sequence is to be
-redesigned.
+## 5. CLI / precision (what the adapter runs)
 
-Unconditional/motif/binder commands beyond the verified monomer case are
-**documented but unverified on this machine** — see the per-task references in
-`skills/rfd4-proteina-generate/references/tasks/`.
+`python -m idea.engines.rfd4_persistent --plan <plan.json> --output <dir>
+--device 0 --precision {32|bf16-mixed} --matmul {highest|high|medium}
+--deterministic --recycle-strategy medium/midpeak [--mode full|partial|inverse_folding]
+[--compile-length N …]`. Plan: `{"samples":[{"input":"<cif>","seed":N}, …]}`.
 
-## 6. Key options
+Internally it composes `inference_experiment=quickstart` with `num_replicates=1
+batch_size=1 num_workers=0 nn.tri_mult_backend=torch nn.attention_type=torch
++idea_keep_model_on_xpu=true` — native eager Torch kernels, model resident on XPU.
+Measured warm throughput (handoff, 388-aa PPI): ~64 s/design BF16, ~112 s FP32.
+Keep compilation/dynamic shapes off initially.
 
-| Argument | Default | Meaning |
-|---|---|---|
-| `inputs` | — | Benchmark dir or annotated CIF. |
-| `out_dir` | `./runs/<run_name>` | Use an absolute path outside the repo. |
-| `subset_to_examples` | null | Run only these example keys. |
-| `num_replicates` | 1 | Designs per example (8-80 for real work). |
-| `batch_size` | 1 | Raise to ~8 only after the longest input passes at 1. |
-| `seed` | null | Reproducibility. |
-| `skip_existing` | true | Resume; use a fresh `out_dir` when changing settings. |
-| `prevalidate_inputs` | false | Fail fast on bad inputs. |
-| `precision` | `bf16-mixed` | Left as-is on XPU. |
-| `compile_lengths` | 15-bucket list | `null` disables compile padding (used here). |
-| `recycle_strategy` | `thinking_medium` | Task presets in `configs/recycle_strategy/`; see `docs/how-to/run-the-model.md#recycling-schedules`. |
-| `generation.args.nsteps` | 60 | Model evaluations per design. |
-| `generation.model.bb_ca.simulation_step_params.tsr_k` | 16 | Backbone temperature; lower = more diverse. |
-| `generation.model.local_latents.simulation_step_params.tsr_k` | 4 | Latent temperature. |
-| `generation.args.partial_trajectory_fraction_steps` | null | Partial diffusion as a fraction of `nsteps`. |
-| `generation.model.*.gt.mode=ode` | sde | Deterministic sampling. |
-| `metrics_tags` | `[]` | Inline metrics; every `*_refolding` tag needs the AF3/OF3 oracle container (**not installed here**). |
-| `compress_outputs` | false | Compress CIFs. |
-| `save_chain_of_interest` | false | Required for later foldseek clustering. |
-| `inference_backend` | `native` | `bioir` is a CUDA-oriented path — do not use on XPU. |
-| `verbose` | false | `true` prints the composed config and diagnostics. |
-| `hardware.ngpus_per_node_` / `hardware.nnodes_` | 1 / 1 | Trainer devices/nodes. Leave at 1 — multi-tile is untested. |
+## 6. Outputs
 
-## 7. Aurora / XPU gotchas
+Per sample: `<run_dir>/predictions/sample_NNNN/output/inference_samples/<name>/<name>_generated.cif`
+plus `receipt.json`, and a batch `summary.json` with the full protocol
+(adapter/engine/checkpoint hashes, precision, device, seed, memory). The generated
+CIF has the designed binder chain + the fixed target chain(s). **Output existence
+alone is not completion** — require rc=0 **and** `summary.json` + the expected
+`receipt.json`(s) with matching input/seed identities.
 
-1. **Do not swap frameworks modules for this repo.** It wants the default
-   `frameworks/2026.1.0`. (The sibling Foundry/RFD3 install wants
-   `frameworks/2025.3.1` — the two cannot share one shell. Run them in separate
-   shells or separate scripts.)
-2. **lightning `verbose` crash** — §3; this is the one hard blocker.
-3. **`bash skills/rfd4-proteina-setup/scripts/preflight.sh` does not work
-   here**: it goes through `scripts/rfproteina_exec.sh`, which did not pick up
-   the `.venv`, and failed with `ModuleNotFoundError: No module named
-   'atomworks'` even though `atomworks` is installed in `.venv`. Verify the
-   environment with `.venv/bin/python -c "import torch, atomworks"` instead.
-   Also note its GPU check is written for CUDA/NVIDIA drivers.
-4. **Pin a tile** with `ZE_AFFINITY_MASK=<n>` before launching; otherwise the
-   run takes tile 0 and collides with other users.
-5. **Internet** needs `http_proxy`/`https_proxy=http://proxy.alcf.anl.gov:3128`
-   on compute nodes for the HF checkpoint fetch. Pre-warm `HF_HOME` if you plan
-   offline runs.
-6. **`compile_lengths=null`** was used for the verified run. The default padding
-   list exists for `torch.compile`, and torch.compile/Triton-XPU is the most
-   fragile part of the stack here; leave it `null` unless you are deliberately
-   testing compilation.
-7. **`inference_backend=bioir`** and its CUDA-graph settings are NVIDIA-specific
-   — keep `native`.
-8. Expect **~2 minutes of imports** before anything happens, plus noisy
-   deprecation warnings and an `aten::topk` XPU kernel-override warning from the
-   frameworks module. Not errors.
-9. **Refolding metrics are unavailable** on this install: no AF3/OpenFold3
-   container or weights, and `scripts/download_assets.sh` + Apptainer were not
-   attempted. Any `metrics_tags=[*_refolding]` run will fail.
-10. **Multi-tile / multi-node and the SLURM launchers are untested.** The repo's
-    `scripts/launch_*.sh` assume SLURM; Aurora uses PBS, so a PBS wrapper would
-    have to be written.
+## 7. Troubleshooting (from the handoff stall table)
 
-## 8. Outputs
+| Observation | Check / response |
+| --- | --- |
+| Hangs after model build, idle tile | You are on the OLD stack. Confirm `$RFD4_PYTHON` + adapter paths; the resident adapter forces single-device. Do not reintroduce the sitecustomize shim. |
+| Import probe times out (rc=124) | Cold imports off Lustre; the probe budget is 300 s. Raise it, or accept the worker's own cold import under its `seconds` budget. Not a hang. |
+| `seed_everything(verbose=…)` / XPU errors | You loaded the old Lightning-2.3 env, not this deployment. Use `$RFD4_PYTHON`. |
+| Many workers slow together | Check CPU affinity, thread counts (OMP=1), unique tiles, and Lustre/checkpoint I/O contention on simultaneous cold imports. |
+| CIF exists but run didn't return | Not a completion receipt — verify rc=0 + summary.json + receipt.json. Keep partial receipts; never count missing output as done. |
+| Timeout / SIGABRT | Preserve logs/seed/input; terminate only the owned process group. At most one retry after a concrete diagnosis; a second unexplained failure disables that config and reports to the operator. |
 
-Under `out_dir`:
+Do not enable broad CPU fallback or run on a login node to bypass the allocation
+check (the adapter verifies it is on a node in `$PBS_NODEFILE`). SVD falls back to
+CPU by design on this Torch build (logged); that is not permission for general
+fallback.
 
-```
-out_dir/inference_samples/<example-key>/<example-key>_generated.cif
-out_dir/inference_metrics/per_example_metrics.csv
-```
+## 8. Provenance / further reading
 
-(As observed: one subdirectory per example key, and the metrics CSV is written
-even with `~metrics` — it then holds the resolved config rather than metric
-values. The repo's `references/outputs.md` describes CIFs landing directly in
-`out_dir`; the actual layout is the nested one above.)
-
-(`rfd4-evaluate` writes `evaluation_samples/` and `evaluation_metrics/`.) Each
-design is an annotated CIF carrying per-atom provenance columns `SA_SRC`,
-`SA_CRDSRC`, `SA_IDXGRPSRC`, `SA_UII` that tie output atoms back to the input
-spec. Check the structures and metrics, not just the exit code.
-
-## 9. Troubleshooting
-
-- `seed_everything() got an unexpected keyword argument 'verbose'` — §3 shim.
-- `No .env file found for cluster '<name>'` — `export CLUSTER=local`.
-- `--inputs`/`--out_dir` not recognized — use `=`, Hydra style.
-- Checkpoint not found — check `HF_HOME` + proxy, or `DATA_PATH` and
-  `ckpt_name`/`ckpt_path` for the native path; keep flow + AE paired.
-- `ModuleNotFoundError: atomworks` from the preflight script — §7.3.
-- OOM — lower `batch_size`; confirm the longest input at `batch_size=1`.
-- Segfault in rdkit/posebusters — the repo `Makefile` notes `LD_PRELOAD` must
-  point at the bundled `libstdc++.so.6` (**unverified here**).
-- Nothing regenerated — `skip_existing=true`; use a fresh `out_dir`.
-
-## 10. Further reading (in the install)
-
-- `AGENTS.md` / `CLAUDE.md` — repo-wide agent rules and conditioning defaults.
-- `skills/rfd4-proteina-generate/SKILL.md` + `references/tasks/*.md` — per-task
-  commands and overrides (the authoritative detail).
-- `skills/rfd4-proteina-annotated-cif/` — build conditioned inputs.
-- `skills/rfd4-proteina-search/`, `.../-evaluate/`, `.../-campaign/` — beam
-  search, metrics, multi-stage campaigns.
-- `docs/quickstart.rst`, `docs/how-to/run-the-model.md`,
-  `docs/how-to/evaluate-with-metrics.md`, `configs/inference.yaml`.
+Source of truth: `RFD4_Aurora_Handoff/` at the loam repo root (dkastner) —
+`SKILL.md`, `deployment_notes.md`, and `rfd4-aurora-verified/`. The handoff's
+performance report (`reports/aurora_performance_20261023.md`, private Dezyme repo)
+records the measured timings. This route has been qualified inside Loam only to
+acceptance step 2 (see "Verified result" above); extend qualification (warm
+multi-sample, failure/retry, new inputs) before relying on it at larger scale.

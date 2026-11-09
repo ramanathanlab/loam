@@ -29,6 +29,26 @@ export TMPDIR=/tmp
 Versions seen: torch 2.13.0a0+gitcf30153, transformers 4.50.3, genslm_esm_sae 0.2.0.
 `torch.device('xpu')` and the HF Trainer (`TrainingArguments.device` = `xpu:0`) both pick up the pinned tile automatically.
 
+## Running under an MPI/PMIx launcher (Loam run_batch / EL / Parsl)
+
+When launched by an Ensemble-Launcher / Parsl / Globus-Compute worker (Loam's
+`run_batch` / `run_code` path), the task inherits a live PALS/PMIx context
+(`PMIX_RANK`, `PMIX_NAMESPACE`, `PALS_*`). The HF `Trainer` auto-detects rank/size
+env the way Lightning does and can attempt a distributed init with no peers.
+Scrub it before launching Python:
+
+```bash
+unset PMIX_RANK PMIX_NAMESPACE PMI_RANK PMI_SIZE RANK LOCAL_RANK LOCAL_WORLD_SIZE \
+      PALS_RANKID PALS_NODEID PARSL_WORKER_RANK
+export WORLD_SIZE=1 RANK=0 LOCAL_RANK=0
+```
+
+**Timeout under concurrency.** One run loads the 2.2 GB backbone + SAE and inits
+the XPU in ~160 s solo (XPU peak ~2.6 GB). With many rows per node those loads
+contend on Lustre, so give `run_batch` a generous per-row timeout
+(`timeout_each >= 1800` for ~12 rows/node); the 600 s default is too short and
+every row times out mid-load. This is I/O + load contention, not a code bug.
+
 ## Weights (local)
 
 | What | Path |

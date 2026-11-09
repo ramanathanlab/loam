@@ -6,7 +6,9 @@
 # workers run the same hpc_agent.py as this tree -- `git pull` there to update).
 
 # loam-aurora-flex on Aurora (~/.globus_compute/loam-aurora-flex, aurora-uan-0009).
-export HPC_GLOBUS_ENDPOINT_ID="e9a292e7-a158-4418-8897-aef6a113657e"
+# Recreated 2026-11-04 (delete --force + re-register to clear a wedged exchange);
+# UUID changes on recreate -- read from ~/.globus_compute/loam-aurora-flex/endpoint.json.
+export HPC_GLOBUS_ENDPOINT_ID="580ada8f-b812-4f66-9e7a-8f3ccae54af3"
 # Client agents in the pool = how many children can submit AT THE SAME TIME.
 # Raised 1 -> 4 on 2026-10-21. At 1, the orchestration's three concurrent
 # validators (each allowed up to three code-generator children) all queued on a
@@ -25,6 +27,11 @@ export HPC_POOL_SIZE=4
 export HPC_BASE_DIR="/flare/FRAME-IDP/avasan/hpc-run"
 export HPC_CAMPAIGN_ID="akv-aurora-1"
 export HPC_SYSTEM="aurora"
+# The loam checkout on /flare that the workers run from. Skills reference their
+# worker-visible scripts/launchers as "$HPC_LOAM_HOME/skills/..." instead of
+# hardcoding this path, so moving the clone only means editing it HERE (and in
+# the worker_init export below, the one place a worker gets its own environment).
+export HPC_LOAM_HOME="/flare/FRAME-IDP/avasan/loam"
 # Read-only paths inspect_filesystem may look at (colon-separated). Unset, it is
 # confined to HPC_BASE_DIR, so the agent could not stat or read the very
 # artifacts it had just written: folds land under the binder_design project tree,
@@ -32,10 +39,15 @@ export HPC_SYSTEM="aurora"
 # inspection roots" (observed 2026-10-21, after the round1_h1 Chai-1 fold). Both
 # spellings of each tree are listed because /flare and /lus/flare/projects are
 # the same filesystem and the agent uses them interchangeably.
-export HPC_INSPECT_ROOTS="/flare/FRAME-IDP/avasan/hpc-run:/lus/flare/projects/FRAME-IDP/avasan/hpc-run:/flare/FRAME-IDP/agentic_campaign_09_26/binder_design:/lus/flare/projects/FRAME-IDP/agentic_campaign_09_26/binder_design"
+# $HPC_LOAM_HOME/skills is included so run_batch can validate/copy skill runner
+# scripts submitted straight from the deployed loam tree (e.g. the rfd4-proteina
+# route's rfd4_run_row.py). Without it a script_path under $HPC_LOAM_HOME is
+# rejected as "outside allowed inspection roots" and the agent must first copy the
+# runner into HPC_BASE_DIR (observed 2026-11-05, rfd4 code-gen unit test).
+export HPC_INSPECT_ROOTS="/flare/FRAME-IDP/avasan/hpc-run:/lus/flare/projects/FRAME-IDP/avasan/hpc-run:/flare/FRAME-IDP/agentic_campaign_09_26/binder_design:/lus/flare/projects/FRAME-IDP/agentic_campaign_09_26/binder_design:/flare/FRAME-IDP/avasan/loam/skills:/lus/flare/projects/FRAME-IDP/avasan/loam/skills"
 # Nodes in the allocation. Both the PBS request (`nodes` below, rendered into
 # nodes_per_block) and the EL cluster's leaf count must agree.
-export HPC_NNODES=2
+export HPC_NNODES="${HPC_NNODES:-2}"
 export ACADEMY_EXCHANGE_URL="https://exchange.academy-agents.org/v1"
 export HPC_MCP_TRANSPORT="http"
 # ---- Allocation knobs (edit these) -----------------------------------------
@@ -48,9 +60,20 @@ export HPC_MCP_TRANSPORT="http"
 # Defaults are a 30-minute, 2-node DEBUG block -- the smoke-test footprint. For
 # a real campaign raise these, e.g. HPC_QUEUE=capacity and HPC_WALLTIME=12:00:00
 # (and remember the debug queue reclaims at its short walltime -> ManagerLost).
-export HPC_ACCOUNT="FRAME-IDP"
-export HPC_QUEUE="debug"
-export HPC_WALLTIME="00:30:00"
+#
+# All four are ${VAR:-default}, so you can override them per launch WITHOUT
+# editing this file -- run-campaign does not scrub HPC_*, so they reach the
+# preflight and the allocation it requests:
+#
+#   HPC_QUEUE=capacity HPC_WALLTIME=12:00:00 HPC_NNODES=4 ./run-campaign
+#
+# The hpcctl caps in .hermes/.loam-home/config.yaml gate this independently
+# (HPC_ALLOWED_QUEUES, HPC_MAX_NODES, HPC_MAX_WALLTIME): hpc_control.validate()
+# REFUSES anything above them, so raise the cap there too before asking for
+# more. Per-queue limits are enforced on top of that -- `qstat -Qf <queue>`.
+export HPC_ACCOUNT="${HPC_ACCOUNT:-FRAME-IDP}"
+export HPC_QUEUE="${HPC_QUEUE:-debug}"
+export HPC_WALLTIME="${HPC_WALLTIME:-00:30:00}"
 # Block maintenance -- QUEUE-AGNOSTIC. These make Loam keep one block of whatever
 # queue is selected above alive and request a REPLACEMENT by itself when a block
 # ends or its node is lost, so a 30-min debug block self-replaces during a longer
@@ -72,5 +95,5 @@ export HPC_MAX_IDLETIME="${HPC_MAX_IDLETIME:-3600}"
 # globus-compute-endpoint/sdk 4.19.0, dill 0.3.9, ensemble_launcher@c36dc43.
 # Keys match globus_compute_endpoint_configs/alcf_aurora/user_config_template.yaml.j2.
 # worker_init must be one line: the template renders it as one quoted YAML string.
-export HPC_ENDPOINT_CONFIG_JSON='{"account": "'"$HPC_ACCOUNT"'", "queue": "'"$HPC_QUEUE"'", "walltime": "'"$HPC_WALLTIME"'", "nodes_per_block": '"$HPC_NNODES"', "max_workers_per_node": '"$((HPC_POOL_SIZE + 1))"', "init_blocks": '"$HPC_INIT_BLOCKS"', "min_blocks": '"$HPC_MIN_BLOCKS"', "max_blocks": '"$HPC_MAX_BLOCKS"', "max_idletime": '"$HPC_MAX_IDLETIME"', "worker_init": "export TMPDIR=/tmp; export HTTP_PROXY=http://proxy.alcf.anl.gov:3128 HTTPS_PROXY=http://proxy.alcf.anl.gov:3128 http_proxy=http://proxy.alcf.anl.gov:3128 https_proxy=http://proxy.alcf.anl.gov:3128 NO_PROXY=localhost,127.0.0.1,.alcf.anl.gov no_proxy=localhost,127.0.0.1,.alcf.anl.gov; module reset; module load frameworks; source /flare/FRAME-IDP/avasan/loam-hpc/venv/bin/activate; which python; export PYTHONPATH=/flare/FRAME-IDP/avasan/loam/skills/hpc-deployment/scripts:$PYTHONPATH"}'
+export HPC_ENDPOINT_CONFIG_JSON='{"account": "'"$HPC_ACCOUNT"'", "queue": "'"$HPC_QUEUE"'", "walltime": "'"$HPC_WALLTIME"'", "nodes_per_block": '"$HPC_NNODES"', "max_workers_per_node": '"$((HPC_POOL_SIZE + 1))"', "init_blocks": '"$HPC_INIT_BLOCKS"', "min_blocks": '"$HPC_MIN_BLOCKS"', "max_blocks": '"$HPC_MAX_BLOCKS"', "max_idletime": '"$HPC_MAX_IDLETIME"', "worker_init": "export TMPDIR=/tmp; export HTTP_PROXY=http://proxy.alcf.anl.gov:3128 HTTPS_PROXY=http://proxy.alcf.anl.gov:3128 http_proxy=http://proxy.alcf.anl.gov:3128 https_proxy=http://proxy.alcf.anl.gov:3128 NO_PROXY=localhost,127.0.0.1,.alcf.anl.gov no_proxy=localhost,127.0.0.1,.alcf.anl.gov; module reset; module load frameworks; source /flare/FRAME-IDP/avasan/loam-hpc/venv/bin/activate; which python; export HPC_LOAM_HOME=/flare/FRAME-IDP/avasan/loam; export PYTHONPATH=$HPC_LOAM_HOME/skills/hpc-deployment/scripts:$PYTHONPATH"}'
 # Optional: HPC_TOOL_SMOKE_TIMEOUT=120, HPC_LOCAL_STAGE=/tmp/loam-tools

@@ -11,7 +11,7 @@ Code: `/flare/FRAME-IDP/msinclair/software/ProteinMPNN` (do not edit). Entry poi
 
 ```bash
 MPNN=/flare/FRAME-IDP/msinclair/software/ProteinMPNN
-SKILL=<skill>                             # this skill's own directory
+SKILL=${HPC_LOAM_HOME:?set HPC_LOAM_HOME to the loam clone on /flare}/skills/inverse-folding/proteinmpnn   # worker-visible copy in the /flare loam clone (run_batch runs on the Aurora worker, which cannot see the local skill dir). HPC_LOAM_HOME is exported by the deployment env (set_env) into the worker, so emit it verbatim in the batch script and let it resolve worker-side — do NOT hardcode the /flare path.
 export ZE_AFFINITY_MASK=8                 # pin to one tile; it then appears as xpu:0
 source $MPNN/.venv/bin/activate           # uv venv on top of aurora_frameworks-2026.1.0 (torch 2.13, system site-packages)
 export PYTHONPATH=$SKILL/scripts/ipex_shim${PYTHONPATH:+:$PYTHONPATH}   # REQUIRED, see below

@@ -31,6 +31,7 @@ Never guess, hard-code, or inherit these from an earlier campaign:
 | `HPC_POOL_SIZE` | Agents to launch. Direct mode: equal to requested addressable GPU/tile count. Cluster mode: number of client agents submitting into the EL cluster. |
 | `HPC_ENDPOINT_CONFIG_JSON` | JSON object accepted by the endpoint user-config schema; defines PBSPro resources. |
 | `HPC_BASE_DIR` | Campaign directory visible to all workers. |
+| `HPC_LOAM_HOME` | The loam checkout on the shared FS (e.g. `/flare/.../loam`) that the workers run from. Skills reference their worker-visible scripts/launchers as `$HPC_LOAM_HOME/skills/...` instead of hardcoding the path. Must also be exported inside `worker_init` (see below), since a worker only sees the environment that block sets. |
 | `HPC_CAMPAIGN_ID` | Immutable ID used to isolate agent discovery/adoption. |
 | `ACADEMY_EXCHANGE_URL` | Academy exchange the manager and agents rendezvous through. |
 | `HPC_SYSTEM` | `aurora` or `polaris`. Selects the EL `SystemConfig` and the GPU-pinning variable (`ZE_AFFINITY_MASK` / `CUDA_VISIBLE_DEVICES`). Cluster mode only. |
@@ -49,8 +50,10 @@ Cluster-mode health checking (see "Self-healing" below) reads `HPC_POOL_PROBE_IN
 exchange listen stream stays open before a clean reconnect. When the ALCF proxy
 severs a stream, the server's reader for it lingers up to this long and can take
 the next message for a connection that no longer exists, so a shorter window
-loses fewer messages. Agents also ride out a 429/5xx from the exchange on both
-the listen stream and the heartbeat, instead of dying on one burst.
+loses fewer messages. (The listen/heartbeat 429/5xx hardening that used to ride
+out such bursts is **currently disabled** — commented out in `hpc_agent.py`
+pending a cleaner fix — so a sustained exchange outage again surfaces as agent
+loss.)
 
 ### Setting them: `set_env.sh`
 
@@ -71,6 +74,19 @@ adopts another campaign's agents.
 UUID, queue, walltime, and `HPC_CAMPAIGN_ID` together in it so the whole
 configuration is reviewable in one place.
 
+**New-campaign recipe.** `set_env.sh` ships as a user- and campaign-neutral
+TEMPLATE whose header is the recipe: copy it to `set_env_<campaign>.sh`, fill
+every `FILL_IN` (`grep '^export .*FILL_IN' set_env_<campaign>.sh` lists them —
+endpoint UUID, `HPC_BASE_DIR`, `HPC_CAMPAIGN_ID`, `HPC_LOAM_HOME`, `HPC_VENV`),
+review the allocation knobs (`HPC_SYSTEM`, `HPC_NNODES`, `HPC_POOL_SIZE`, and the
+queue/walltime in `HPC_ENDPOINT_CONFIG_JSON`), then point `HPC_ENV_FILE` at your
+copy. The template refuses to run until the blanks are filled, so a launch that
+forgets `HPC_ENV_FILE` cannot silently use someone else's endpoint. The per-user
+files (`set_env_akv.sh`, `set_env_hari.sh`, `set_env_msinclair.sh`) are worked
+examples of a filled-in copy. `HPC_LOAM_HOME` and `HPC_VENV` are the only paths
+you repeat; set `HPC_LOAM_HOME` once and the skills + worker `PYTHONPATH` both
+resolve from it.
+
 Two couplings belong in the file itself, not in the operator's head:
 
 - **Worker count.** The endpoint needs one worker slot per client agent *plus*
@@ -79,7 +95,9 @@ Two couplings belong in the file itself, not in the operator's head:
   `"workers": '"$((HPC_POOL_SIZE + 1))"'`.
 - **Worker environment.** `worker_init` must activate the environment and put
   `HPC_BASE_DIR` on `PYTHONPATH`, or the agent modules will not import on the
-  worker.
+  worker. It must also `export HPC_LOAM_HOME=<loam clone>` here, because a worker
+  sees only the environment `worker_init` sets — skills that reference
+  `$HPC_LOAM_HOME/skills/...` depend on it being exported in this block.
 
 Example only—pass keys only when the supplied endpoint's user-config schema permits them:
 
@@ -207,7 +225,16 @@ The Academy agent's public capabilities:
 - `run_code(payload, workdir, timeout)` — execute a Python payload on the agent's pinned accelerator.
 - `inspect_filesystem(operation, path, offset, limit)` — read-only visibility into the worker filesystem without SSH.
 - `run_batch` / `batch_status` / `list_batches` (cluster mode) — run one script once per row of a JSONL file through EL; returns a `batch_id` at once, resumable by `batch_id`.
-- `register_tool` / `list_tools` — a per-campaign library of frozen, versioned, smoke-tested scripts under `HPC_BASE_DIR/tools/`, runnable with `run_batch(tool=...)`. Tools are never deleted or deprecated.
+- `pool_status()` — the compute budget: `system`, `nodes`, `tiles_per_node`, `total_tiles` (how many `run_batch(gpus=1)` rows run at once), `queue`, and `walltime`. Call it before sizing a large fan-out so the number of parallel jobs matches the tiles actually allocated; it reports capacity, not live free tiles, so pair it with `list_batches` for what is in flight.
+- **There is NO tool registry.** `register_tool` / `list_tools` and the
+  `run_batch(tool=...)` form are not available on this server. You run work by
+  writing the script yourself and submitting it with
+  `run_batch(script_path=..., inputs_path=..., gpus=1)` (one JSONL row per job).
+  The campaign SKILLS are how you get each invocation right — read the relevant
+  skill (`skill_view`), copy its launcher/venv/weights-path exactly, and point
+  `run_batch` at your script. **The absence of a "registered" or pre-approved
+  design/fold/score tool is NEVER a reason to report blocked:** writing the
+  script and submitting it through `run_batch` *is* the task.
 
 **`run_batch` `gpus` is tiles per row, not per batch — use `gpus=1` for any script that touches one device (`xpu:0` / `cuda:0`).** EL then places rows side by side on every free tile: on Aurora (FLAT hierarchy) each row gets its own `ZE_AFFINITY_MASK` tile with 64 GB, and 12 rows fill a node at once. Verified 2026-10-20: 12 rows at `gpus=1` ran concurrently on masks 0–11 in 15 s. `gpus=12` instead reserves the whole node for every row, so rows run one at a time and a one-device script leaves 11 tiles idle (observed: 12 Chai folds took ~8.5 min instead of ~45 s). Raise `gpus` only when a single row itself spans several devices. EL tracks CPUs (`ppn=1`, one of 102 per Aurora node) and tiles, not host memory or thread counts; if many concurrent rows are CPU-heavy, cap `OMP_NUM_THREADS` in the script.
 
@@ -220,6 +247,32 @@ The Academy agent's public capabilities:
 | `tail` | UTF-8 text read from end, with line numbers. | At most 200 lines and 64 KiB. |
 
 The action resolves paths and restricts them to the explicit allowed roots: `HPC_BASE_DIR`, `HPC_INSPECT_ROOTS` (colon-separated optional additional roots), and `/tmp`. It rejects symlink escapes, binary data, directories passed to `cat`/`tail`, device files, and every write/mutation operation. Do not add a generic `shell`, `exec`, `find`, `grep`, environment dump, scheduler query, or recursive listing action. For programmatic analysis beyond bounded inspection, write it as a `run_code` payload.
+
+## How much compute you have — size your batch to it (code-generators)
+
+<!-- LOAM_LIVE_ALLOC --> **Live pool for this run: 2 nodes x 12 = 24 tiles.** Your fair share is ~2 tiles (the pool divided 10 ways by top_k; all code-generators draw on the same tiles). A run_batch row = 1 tile (gpus=1): size each batch to ~2 rows per wave, poll batch_status to unfinished==0, then submit the next wave. More rows just queue and will not finish in the hour.
+
+A `run_batch` row gets `gpus=1` = one Aurora **tile**, and a node has **12 tiles**
+(6 GPUs x 2). The pool is therefore `nodes x 12` tiles. **Do not assume the node
+count** — the campaign goal's headline number (e.g. "1024 nodes") is an
+aspiration, not the live allocation. Get the real one from the hpcctl tool
+`hpc_allocation_status` (it returns the running block's `nodes`), or from the
+value handed to you. The live allocation varies widely from run to run, so
+guessing is wrong — read the real node count.
+
+**You do not get the whole pool — you share it.** Up to `top_k` hypothesis tracks
+run in parallel (default **3**), and their code-generators all draw on the same
+tiles, so size to your fair share rather than the whole pool:
+
+    tiles_for_you  ~=  (nodes * 12) / top_k
+
+Size each `run_batch` to roughly that many one-tile rows so the pool fills in a
+single wave and your siblings are not starved. Submitting far more rows is not an
+error — run_batch just queues the extra behind the running ones — but the surplus
+will not finish inside the one-hour wall, so a batch far larger than the live pool
+mostly waits. For a job that needs many more items than your share, submit your
+share, poll `batch_status` to `unfinished == 0`, then submit the next wave (or
+resume the same batch_id).
 
 ## Non-negotiable constraints
 
