@@ -52,7 +52,13 @@ onboarding:
 delegation:
   max_spawn_depth: 2
   orchestrator_enabled: true
-  max_concurrent_children: 160
+  # 400, up from 160, for the 2026-11-09 reservation run at top_k: 100. The
+  # bound this has to clear is validators PLUS their children: 100 validators
+  # each allowed max_children: 2 is 300 agents in flight at the peak. Below
+  # that they queue on the parent's slots, and a queueing child is how Hermes'
+  # process-global circuit breaker gets opened by a timeout that was never a
+  # server fault (see the HPC_POOL_SIZE note in set_env_msinclair.sh).
+  max_concurrent_children: 400
 mcp_servers:
   hpc:
     url: http://127.0.0.1:8000/mcp

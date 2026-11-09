@@ -27,11 +27,18 @@ from parser import REVIEWS_FILE, Parser
 # Must match DISPATCH_TOOL_NAME in .loam/adapters/hermes/plugin/__init__.py.
 DISPATCH_TOOL = 'loam_dispatch_round'
 
-# How many evidence reviewers one turn may dispatch. A round produces at most
-# top_k candidates, so this binds only the opt-in backlog catch-up -- which
-# would otherwise put a campaign's whole accumulated pile of pending candidates
-# into a single delegate_task batch.
-REVIEW_BATCH = 5
+# How many evidence reviewers one turn may dispatch.
+#
+# This used to say it "binds only the opt-in backlog catch-up, because a round
+# produces at most top_k candidates" -- true while top_k was 5 and this was 5.
+# It stopped being true when top_k went to 100 for the 2026-11-09 reservation
+# run: at 5, one round's candidates would need twenty turns to clear, and a
+# round that cannot finish reviewing cannot close.
+#
+# So this tracks top_k rather than sitting under it. Raise them together. It
+# still bounds the backlog catch-up, now at a round's width rather than a fifth
+# of it.
+REVIEW_BATCH = 100
 
 
 # --- ledger -----------------------------------------------------------------
