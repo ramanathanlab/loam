@@ -516,21 +516,28 @@ def _safe_write_path(raw: str, base_dir: str, inspect_roots: list[str]) -> Path:
     file being created by definition cannot satisfy. Non-strict `resolve` still
     expands any symlink in the EXISTING part of the path, so the containment
     check below cannot be evaded by writing through a symlinked parent.
+
+    The writable roots are the campaign tree and the inspect roots, but NOT the
+    /tmp that `_roots` adds for reading: /tmp is per node on the cluster, so a
+    script staged there is invisible to the compute nodes run_batch fans out
+    to, and admitting it made every path under /tmp writable from a child.
     """
 
     path = Path(raw).expanduser()
     if not path.is_absolute():
         path = Path(base_dir) / path
+    # Judge the final component before resolve(), which would follow the link
+    # and leave nothing for is_symlink() to see.
+    if path.is_symlink():
+        raise ValueError("refusing to write through a symlink")
     path = path.resolve()
-    roots = _roots(base_dir, inspect_roots)
+    roots = [Path(item).resolve() for item in (base_dir, *inspect_roots) if item]
     if not any(root in path.parents for root in roots):
         allowed = ", ".join(str(root) for root in roots)
         raise ValueError(
             f"path {str(path)!r} is outside the writable campaign roots; "
             f"write only within: {allowed}"
         )
-    if path.is_symlink():
-        raise ValueError("refusing to write through a symlink")
     if path.is_dir():
         raise ValueError(f"path {str(path)!r} is a directory")
     return path

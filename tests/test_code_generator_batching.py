@@ -75,8 +75,8 @@ class RunCodeBudgetTests(unittest.TestCase):
                 "child_session_id": session,
                 "child_subagent_id": f"sa-{session}",
                 "child_goal": (
-                    f"Compute it [loam-agent-role=code-generator] "
-                    f"[loam-plan-id=plan_1] [loam-hypothesis-id=h-1]"
+                    "Compute it [loam-agent-role=code-generator] "
+                    "[loam-plan-id=plan_1] [loam-hypothesis-id=h-1]"
                 ),
             }
         )

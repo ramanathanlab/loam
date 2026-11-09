@@ -147,7 +147,7 @@ class WriteFilesTests(unittest.TestCase):
             self._write(files)
 
     def test_a_bad_shape_is_refused(self) -> None:
-        for files in ({}, [], "script.py", None, {f"": "x"}, {"ok.py": 3}):
+        for files in ({}, [], "script.py", None, {"": "x"}, {"ok.py": 3}):
             with self.subTest(files=files):
                 with self.assertRaises(ValueError):
                     self._write(files)
