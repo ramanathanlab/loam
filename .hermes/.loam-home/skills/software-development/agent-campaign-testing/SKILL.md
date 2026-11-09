@@ -52,6 +52,17 @@ Before replacing local code-generator execution with a remote backend (for examp
 4. If endpoint-side validation/startup fails, preserve its returned error and repair/escalate the endpoint configuration. Do not route production code-generator credit through that backend until the probe succeeds.
 5. Change the campaign execution contract only after the remote tool round trip is verified. Persist remote invocation target, task identifier, stdout/stderr/return code, and status as code-generator lifecycle evidence.
 
+### Placeholder / synthetic artifact disclosure; provenance contract; 2-child budget; first-unmet gate; coordinator synthesis hold
+
+A session-derived failure-mode cluster: placeholder artifacts shown as real; workspace/plan-block behavior; 2-child budget; first-unmet gate naming; provenance contract format.
+
+- Placeholder disclosure: inspect child files directly; report `cofold_inspected_real=0`, `dual_domain_retention_confirmed=false`, `free_energy_computed=false` explicitly; never fabricate co-fold/trajectory/free-energy numbers. See `references/agent-campaign-testing-extensions.md`.
+- Provenance contract: each evidence claim must include versioned JSON (`hypotheses` + `evidence_candidates` with real `source_url` — either verified file:// path or real URI — and `stance`). A reconstructed/non-existent `plan_...` path is a contradiction finding, not context.
+- 2-child budget (hard): at most 2 `delegate_task` leaves per validator. After cap, only read-only inspection (`inspect_filesystem` / `batch_status` / `list_batches`).
+- First-unmet gate: name the exact gate string in Outcome (e.g. `CONTRADICTION_AT_PILOT_SCALE_BY_MANDATORY_COMPLETENESS_GATE`); don't relabel contradiction as inconclusive.
+- Coordinator synthesis hold: dispatch exactly one `reasoner` after validators complete; if `loam_record_decision` blocked (no open workspace run), record rationale in response and retry later; treat plan-guard errors ("The active campaign plan is pending") as real workspace state, not something to work around.
+- Execution contract: `delegate_task` only executable mechanism for validators; no direct computation by validator; do not substitute plausible artifacts for executed results.
+
 ### Managed Polaris / Globus Compute repair ladder
 
 For a managed multi-user Globus Compute endpoint, `online` is only a control-plane signal. Diagnose the manager and user endpoint separately before using it for campaign evidence:
@@ -93,3 +104,4 @@ See `references/remote-hpc-execution-gate.md` for the Globus Compute/ALCF Polari
 - `references/loam-hermes-nested-delegation.md` records the reusable Loam/Hermes batch-role and isolated-launcher pitfalls.
 - `references/polaris-globus-academy-control-plane.md` records the Polaris MCP → Academy → Globus Compute validation ladder, user-config consistency rule, and worker-registration diagnostics.
 - `references/polaris-managed-endpoint-repair.md` records the managed-endpoint readiness ladder, sanitized-PATH diagnosis, and exact-Fraction revalidation contract.
+- `references/agent-campaign-testing-extensions.md` (new, session-derived 2026-11-06) — placeholder-artifact audit format, provenance-contract JSON template, workspace/plan-guard behavior, 2-child budget, first-unmet gate naming, coordinator synthesis order.
