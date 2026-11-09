@@ -7,17 +7,26 @@
 # Allocation: 1024 nodes on the CUSTOM RESERVATION R9046423, charged to
 # FRAME-IDP. Endpoint, account, queue and paths are all set.
 #
-# The reservation (pbs_rstat -f R9046423, read 2026-11-09 16:10 UTC) runs
-# 16:00-22:30 UTC on 2026-11-09, holds 1028 nodes, and caps a job at 06:30:00.
+# The reservation (pbs_rstat -F R9046423, re-read 2026-11-09 20:38 UTC) runs
+# 16:00 UTC 2026-11-09 -> 03:00 UTC 2026-11-10, holds 1028 nodes, and caps a
+# job at 11:00:00. It was EXTENDED IN PLACE after the first ~2.5 h were lost to
+# a hung job holding 882 of its nodes: reserve_end moved 22:30 -> 03:00 and the
+# job cap 06:30 -> 11:00. Same reservation (ctime still Fri Nov 06), so the
+# queue NAME is unchanged and neither HPC_ALLOWED_QUEUES list needed touching.
 # Two things follow, and both are already applied below:
 #   * 1024 of 1028 nodes leaves four spare rather than asking for every node a
 #     reservation that also has to schedule its own owner's work.
-#   * HPC_WALLTIME is 05:45:00, NOT the 06:30:00 the reservation allows. The
-#     ceiling is the reservation's END, not its duration: a block that starts
-#     at 16:30 and asks for 06:30:00 would run past 22:30 and be killed with
-#     the campaign still in it. 05:45:00 from a ~16:20 start lands at ~22:05.
-#     If you launch materially later than that, cut the walltime to match or
-#     the block waits in the queue and never runs.
+#   * HPC_WALLTIME is 05:30:00, NOT the 11:00:00 the reservation now allows.
+#     THE CEILING IS reserve_end, NOT THE DURATION: a block that starts at
+#     20:45 and asks for 11:00:00 would run to 07:45, long past 03:00, and be
+#     killed with the campaign still in it. 05:30:00 from a ~20:55 start lands
+#     at ~02:25, leaving ~35 min of margin. (05:45:00 was right for a 20:45
+#     start and left only 20 min by 20:55 -- this is why the rule below is a
+#     clock calculation, not a constant.)
+#     RECOMPUTE THIS BEFORE EVERY LAUNCH -- it is a function of the clock, not
+#     a setting. Launch an hour later and 05:45:00 becomes an overrun; the rule
+#     is (reserve_end - expected start - ~30 min margin). 07:30:00 was correct
+#     for a 19:00 start earlier today and is WRONG now.
 #
 # Fully populated, and the worker-side import chain is verified: hpc_agent,
 # pool_manager, ensemble_launcher, academy.manager and globus_compute_sdk all
@@ -103,7 +112,7 @@ export HPC_MCP_TRANSPORT="http"
 # at their short walltime -> ManagerLost.
 export HPC_ACCOUNT="FRAME-IDP"
 export HPC_QUEUE="R9046423"
-export HPC_WALLTIME="05:45:00"
+export HPC_WALLTIME="05:30:00"
 
 # Guardrail caps hpc_control.validate() checks every allocation against. Its
 # defaults (debug,debug-scaling,capacity; 4 nodes) reject the reservation above.

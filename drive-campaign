@@ -19,4 +19,29 @@ if [[ ! -f "${LOAM_REPO:-}/scripts/drive_campaign.py" ]]; then
   exit 1
 fi
 export LOAM_REPO
+
+# Credentials the DRIVER itself needs go here, not in launch.sh.
+#
+# The driver re-runs scripts/campaign_preflight.py periodically to check pool
+# health, and that gate smoke-tests every configured inference role. launch.sh
+# is a CHILD of the driver, so anything it exports is invisible to the driver's
+# own probe. If a role's endpoint needs a bearer token and only launch.sh has
+# it, the probe runs UNAUTHENTICATED, gets a 401, and _preflight_fault reads it
+# as a revoked credential and stops the campaign -- correctly, on bad
+# information. That happened on 2026-11-09: one completed round, then a stop
+# with ~5 h of reservation left and a healthy endpoint, because the tournament's
+# ranking judge had moved to an endpoint requiring auth.
+#
+# So a campaign that needs per-site credentials puts them in drive-env.sh beside
+# this script, where the driver and everything it spawns inherit one copy:
+#
+#     # drive-env.sh
+#     export SOME_INFERENCE_TOKEN="$(my-site-auth print-token)"
+#
+# Keep it untracked -- it is per-user by nature. Fail there, not mid-run.
+if [[ -f "$CAMPAIGN_DIR/drive-env.sh" ]]; then
+  # shellcheck source=/dev/null
+  set -a; . "$CAMPAIGN_DIR/drive-env.sh"; set +a
+fi
+
 exec python3 "$LOAM_REPO/scripts/drive_campaign.py" --campaign "$CAMPAIGN_DIR" "$@"

@@ -972,6 +972,75 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
     return status
 
 
+# The fewest rows a NEW batch may carry. Enforced here, on the cluster, because
+# this is the only layer that can see the inputs file at all: the policy hook in
+# .loam/hooks/hypothesis_orchestration.py and mcp_server.py both run on the
+# operator's laptop and cannot stat a path under /flare, which is how every
+# degenerate submission below got through.
+#
+# Measured on a 1024-node (12,288-device) reservation, 2026-11-09. Run
+# 2627a00e's first five run_batch calls were /dev/stdin, a laptop path named
+# test_input.jsonl, /dev/null, the literal string "dummy", and /dev/stdin again
+# -- all probes. The run before it created batches of 1, 1, 0 and 1 rows. Peak
+# utilisation was ~1 device of 12,288. A 0-row batch was created SUCCESSFULLY,
+# because `inputs.is_file()` passes for an empty file and the row loop below
+# simply does nothing, so nothing ever objected.
+#
+# Operator-controlled, not agent-controlled: run_batch takes no floor argument,
+# because an agent that could set its own would set 1. Set HPC_MIN_BATCH_ROWS=1
+# to disable (a genuine single-candidate campaign, or a debug run).
+_MIN_BATCH_ROWS = max(1, int(os.environ.get("HPC_MIN_BATCH_ROWS", "32") or 1))
+
+# How many DISTINCT jobs a batch must describe, counting a row's parameters and
+# ignoring the keys that only name the row or say where to write.
+#
+# Why a row count alone is not enough. On 2026-11-09, once _MIN_BATCH_ROWS
+# refused 1-row batches, agents widened to exactly 32 and filled the width with
+# padding: of 352 rows dispatched across 11 batches, only 47 payloads were
+# distinct (13.4%). EIGHT of the 11 batches had all 32 rows identical once id
+# and out_dir were stripped -- and in those the stripped payload was `{}`, i.e.
+# the rows carried NO parameters at all, so the batch ran one job 32 times.
+# Three batches even shared one out_dir across all rows, so the rows overwrote
+# each other. Only one batch of the 11 was a real sweep (a 32-seed sweep).
+#
+# A row count specifies a shape and padding satisfies the shape. This checks
+# that the rows describe different WORK, which padding cannot fake: to pass,
+# whatever actually varies between jobs has to appear in the rows -- which is
+# also what makes the sweep reproducible.
+_MIN_BATCH_DISTINCT = max(1, int(os.environ.get("HPC_MIN_BATCH_DISTINCT", "2") or 1))
+
+# How old a batch may be and still be resumable, in seconds. Default 12 h, which
+# comfortably covers resuming across a block boundary inside one reservation
+# while refusing yesterday's work.
+#
+# Resume bypasses the row floor and the distinctness check by design (the rows
+# were validated at creation), which makes a stale batch a way around both. On
+# 2026-11-09 a child reactivated a 1-row batch created the previous day. 0
+# disables the guard.
+_MAX_RESUME_AGE_SECONDS = max(
+    0.0, float(os.environ.get("HPC_MAX_RESUME_AGE_SECONDS", str(12 * 3600)) or 0.0))
+
+# Keys that identify or place a row rather than parameterising it. A batch whose
+# rows differ ONLY in these is 32 copies of one job: `out_dir` pointing at
+# run01..run32 is still the same computation, just filed separately. If those
+# runs are deliberate replicates, the varying input (a seed) belongs in the row.
+_ROW_IDENTITY_KEYS = frozenset({
+    "id", "name", "label", "tag", "index", "idx", "row", "run", "run_id",
+    "out", "outdir", "out_dir", "output", "output_dir", "outpath", "out_path",
+    "dir", "workdir", "work_dir", "path", "prefix",
+})
+
+
+def _row_signature(row: object) -> str:
+    """A row reduced to the work it describes, ignoring identity/placement keys."""
+    import json as _json
+
+    if not isinstance(row, dict):
+        return repr(row)
+    payload = {k: v for k, v in row.items() if str(k).lower() not in _ROW_IDENTITY_KEYS}
+    return _json.dumps(payload, sort_keys=True, default=str)
+
+
 def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: str | None,
                    labels: dict | None, timeout_each: float, gpus: float,
                    venv_path: str | None, base_dir: str, inspect_roots: list[str],
@@ -994,9 +1063,64 @@ def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: s
 
     if entry_path.exists():
         entry = json.loads(entry_path.read_text())
+        existing_labels = entry.get("labels") or {}
         for key in ("plan_id", "hypothesis_id"):
-            if labels.get(key) and labels[key] != entry["labels"].get(key):
+            if labels.get(key) and labels[key] != existing_labels.get(key):
                 raise ValueError(f"batch {batch_id} belongs to another {key}")
+        # RESUME IS EXEMPT FROM THE ROW FLOOR AND THE DISTINCTNESS CHECK, because
+        # the rows were validated when the batch was created. That exemption is
+        # what lets a walltime-interrupted batch finish -- and it was also a hole:
+        # on 2026-11-09 a child reactivated b-2f95dbc8caab, a ONE-ROW batch
+        # created 2026-11-08T21:14 with `labels: {}`, bypassing both guards.
+        #
+        # The loop above only fires when the stored labels CONFLICT. An empty
+        # stored label set conflicts with nothing, so an unlabelled batch from a
+        # previous day could be resumed by any hypothesis and its output
+        # attributed to today's. The campaign contract forbids exactly this
+        # ("never reach for a convenient existing artifact ... may be stale,
+        # wrong, or from another hypothesis").
+        #
+        # The conflict loop above is not enough, and NOT for the reason it first
+        # appears. With an empty stored label set it does fire when the caller
+        # passes labels ('P1' != None). The hole is the DOCUMENTED resume form
+        # `run_batch(batch_id=...)` with NO labels: then `labels.get(key)` is
+        # falsy, the loop is skipped entirely, and any batch on disk can be
+        # reactivated by anyone. That is how b-2f95dbc8caab was resumed.
+        #
+        # So the test is a property of the BATCH, not of the call: a batch with
+        # no plan_id/hypothesis_id has no provenance and is not campaign work --
+        # every batch Loam creates is labelled by the orchestration. Refuse to
+        # resume it however the call is shaped.
+        if not (existing_labels.get("plan_id") or existing_labels.get("hypothesis_id")):
+            raise ValueError(
+                f"batch {batch_id} has no plan_id or hypothesis_id and cannot be resumed: it was "
+                f"created at {entry.get('created_at', 'an unknown time')} outside any campaign "
+                "plan, so its rows are not this hypothesis's work and its results must not be "
+                "attributed here. Every batch the campaign creates is labelled; an unlabelled one "
+                "is leftover or hand-made. Create a NEW batch with write_files + run_batch for "
+                "the work you actually need."
+            )
+        # Age guard. A batch from a previous run is stale by construction: the
+        # staged script and inputs are frozen copies from whenever it was made,
+        # so resuming one silently runs yesterday's code on yesterday's inputs.
+        created = str(entry.get("created_at") or "")
+        if created and _MAX_RESUME_AGE_SECONDS > 0:
+            try:
+                from datetime import datetime, timezone
+
+                age = (datetime.now(timezone.utc)
+                       - datetime.fromisoformat(created)).total_seconds()
+            except (TypeError, ValueError):
+                age = 0.0
+            if age > _MAX_RESUME_AGE_SECONDS:
+                raise ValueError(
+                    f"batch {batch_id} was created {age / 3600:.1f} h ago ({created}) and is too "
+                    f"old to resume (limit {_MAX_RESUME_AGE_SECONDS / 3600:.1f} h). Its script and "
+                    "inputs are frozen copies from that time, so resuming runs stale code on "
+                    "stale inputs and reports the result as current. Create a new batch instead. "
+                    "Set HPC_MAX_RESUME_AGE_SECONDS=0 to disable this guard for a genuinely "
+                    "long-running campaign batch."
+                )
     else:
         if bool(script_path) == bool(tool) or not inputs_path:
             raise ValueError("a new batch needs inputs_path and exactly one of script_path or tool")
@@ -1007,9 +1131,49 @@ def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: s
         if not (script.is_file() and inputs.is_file()):
             raise ValueError("script_path and inputs_path must be files")
         # Reject bad inputs before creating anything.
+        n_rows = 0
+        signatures: set[str] = set()
         for run_id, row in _read_rows(inputs):
+            n_rows += 1
+            signatures.add(_row_signature(row))
             if spec:
                 _check_row(row, spec, f"inputs row {run_id!r}")
+        # Width check BEFORE mkdir, so a refused batch leaves no directory and
+        # no registry entry for a later call to "resume".
+        if n_rows < _MIN_BATCH_ROWS:
+            raise ValueError(
+                f"this batch has {n_rows} row(s); the minimum is {_MIN_BATCH_ROWS}. "
+                f"{inputs_path} is the sweep, one JSONL row per job, and rows run SIDE BY SIDE "
+                "across every free device in the allocation -- so submitting the whole sweep in "
+                "one batch costs the same wall clock and the same tool call as submitting one "
+                "row. Do not retry this batch unchanged and do not fall back to run_code: widen "
+                "the inputs file (every design, fold or scoring job you intend to run), write it "
+                "with write_files, and submit once. If this hypothesis genuinely has fewer than "
+                f"{_MIN_BATCH_ROWS} candidates, say so in your Result and report the constraint "
+                "rather than padding the file."
+            )
+        # Distinctness check, also BEFORE mkdir. A row count specifies a shape
+        # and padding satisfies the shape; this requires the rows to describe
+        # different work. See _MIN_BATCH_DISTINCT for the measurements that
+        # made it necessary.
+        if n_rows > 1 and len(signatures) < _MIN_BATCH_DISTINCT:
+            only = next(iter(signatures), "{}")
+            empty = only in ("{}", "")
+            raise ValueError(
+                f"this batch has {n_rows} rows but only {len(signatures)} distinct job(s): every "
+                f"row describes the same work once {sorted(_ROW_IDENTITY_KEYS)} are ignored"
+                + (" -- the rows carry NO parameters at all beyond their id/output path."
+                   if empty else f" -- every row reduces to {only[:160]}.")
+                + " Running one job N times costs N devices and yields one result. Put whatever"
+                " actually differs between jobs INTO each row: the candidate sequence or its"
+                " file, the design/seed, the topology, the parameter being swept. If these are"
+                " deliberate replicates of a stochastic method, give each row its own explicit"
+                " seed -- that is what makes the replicate reproducible and is not padding."
+                " Varying only id or out_dir is NOT variation: run01..run32 of one computation"
+                " is one computation. Do not resubmit this file unchanged; rewrite it with"
+                " write_files. If the hypothesis genuinely implies a single job, say so in your"
+                " Result and report the constraint instead."
+            )
         batch_dir.mkdir(parents=True)  # a fresh id must not collide
         shutil.copy2(script, batch_dir / "script.py")
         shutil.copy2(inputs, batch_dir / "inputs.jsonl")

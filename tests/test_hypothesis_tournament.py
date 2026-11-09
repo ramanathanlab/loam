@@ -144,7 +144,9 @@ class HypothesisTournamentTests(unittest.TestCase):
                 profile = config.load_profile()
 
         assert profile is not None
-        self.assertEqual(config.payload_values(profile)["loam_execution"], {"mode": "local", "tool_name": "", "endpoint": "", "function_name": "", "input_schema": "", "runtime": "python3.11", "setup": "", "workdir_root": "", "tool_prefix": ""})
+        # max_children defaults to 1 (one code-generator per validator) and is
+        # carried on the payload, because the hook reads it from there.
+        self.assertEqual(config.payload_values(profile)["loam_execution"], {"mode": "local", "tool_name": "", "endpoint": "", "function_name": "", "input_schema": "", "runtime": "python3.11", "setup": "", "workdir_root": "", "tool_prefix": "", "max_children": 1})
 
     def test_execution_parses_workdir_root_and_tool_prefix(self) -> None:
         config = _load("loam_config_generated_execution", CONFIG)

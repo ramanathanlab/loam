@@ -126,6 +126,16 @@ class ExecutionConfig:
     # on Aurora /lus/flare/projects/X and /flare/X are one directory. The
     # workspace checks compare HPC paths as text, so they need to be told.
     workdir_aliases: tuple[tuple[str, str], ...] = ()
+    # Code-generator children ONE VALIDATOR may start for its hypothesis, as a
+    # LIFETIME TOTAL -- the guard counts `agent_started` ledger events and never
+    # decrements them when a child finishes, so this is a budget, not a
+    # concurrency limit. 1 gives N_codegen == N_validators; that one child may
+    # still make unlimited sequential write_files/run_batch/batch_status calls
+    # (only run_code is separately budgeted).
+    #
+    # This key used to be read and DROPPED here while the hook hardcoded 2,
+    # so a profile setting it was silently ignored.
+    max_children: int = 1
     # Where the HPC server keeps run_batch results (its HPC_BATCH_ROOT).
     # Empty: <workdir_root>/../batches (hypothesis_workspace.batch_root_for).
     batch_root: str = ""
@@ -378,6 +388,8 @@ def _execution_config(value: Any) -> ExecutionConfig | None:
         tool_prefix=_clean_text(raw.get("tool_prefix")),
         setup=_clean_text(raw.get("setup")),
         workdir_aliases=_aliases(raw.get("workdir_aliases")),
+        # Live, not dropped. Defaults to 1 (one code-generator per validator).
+        max_children=_positive_int(raw.get("max_children"), 1),
         batch_root=_clean_text(raw.get("batch_root")),
     )
     if mode == "local":
@@ -707,6 +719,10 @@ def payload_values(profile: LoamProfile) -> dict[str, Any]:
             "setup": execution.setup,
             "workdir_root": execution.workdir_root,
             "tool_prefix": execution.tool_prefix,
+            # The hook reads this off the PAYLOAD, so a key missing here is
+            # dropped however correct the YAML is -- which is what "DEAD CONFIG"
+            # meant before.
+            "max_children": execution.max_children,
         }
         if execution.workdir_aliases:
             values["loam_execution"]["workdir_aliases"] = dict(execution.workdir_aliases)

@@ -74,6 +74,13 @@ class RunBatchTests(unittest.TestCase):
 
         self.hpc = hpc_agent
         self.hpc.Task = FakeTask
+        # These tests exercise freezing, resume, leases and status -- not batch
+        # WIDTH -- and the fixture below deliberately uses four rows. The
+        # production floor (_MIN_BATCH_ROWS, default 32) would refuse every one
+        # of them, so pin it to 1 here and let BatchWidthFloorTests own the
+        # floor's behaviour. Restored in tearDown so it cannot leak.
+        self._floor = hpc_agent._MIN_BATCH_ROWS
+        hpc_agent._MIN_BATCH_ROWS = 1
         self.base = Path(tempfile.mkdtemp())
         os.environ.pop("HPC_BATCH_ROOT", None)
         (self.base / "sim.py").write_text(SIM)
@@ -87,6 +94,7 @@ class RunBatchTests(unittest.TestCase):
         self.labels = {"plan_id": "P1", "hypothesis_id": "H7"}
 
     def tearDown(self) -> None:
+        self.hpc._MIN_BATCH_ROWS = self._floor
         sys.path.remove(str(SCRIPTS))
 
     def _call(self, action_name, /, *args, **kwargs):
@@ -567,6 +575,349 @@ class ExchangeTransientErrorTests(unittest.TestCase):
         with self.assertRaises(Exception) as caught:
             asyncio.run(beat(object()))   # 401: not ours to hide
         self.assertEqual(getattr(caught.exception, "status", None), 401)
+
+
+@unittest.skipUnless(HAVE_DEPS, "hpc-deployment dependencies not installed")
+class BatchWidthFloorTests(unittest.TestCase):
+    """A new batch must carry enough rows to be worth an allocation.
+
+    Every case here is a submission actually observed on a 1024-node
+    (12,288-device) reservation on 2026-11-09, where peak utilisation was ~1
+    device: one-row batches, and a zero-row batch that was created SUCCESSFULLY
+    because `inputs.is_file()` passes for an empty file and the row loop does
+    nothing.
+
+    The floor lives on the cluster because nothing else can see the file: the
+    policy hook and mcp_server.py both run on the operator's laptop and cannot
+    stat a path under /flare, so neither can count rows.
+    """
+
+    def setUp(self) -> None:
+        sys.path.insert(0, str(SCRIPTS))
+        import hpc_agent
+
+        self.hpc = hpc_agent
+        self.hpc.Task = FakeTask
+        self._floor = hpc_agent._MIN_BATCH_ROWS
+        hpc_agent._MIN_BATCH_ROWS = 32
+        self.base = Path(tempfile.mkdtemp())
+        os.environ.pop("HPC_BATCH_ROOT", None)
+        (self.base / "sim.py").write_text(SIM)
+        self.agent = hpc_agent.HpcClientAgent("campaign", str(self.base), "ckpt")
+        self.agent._client = FakeClient()
+
+    def tearDown(self) -> None:
+        self.hpc._MIN_BATCH_ROWS = self._floor
+        sys.path.remove(str(SCRIPTS))
+
+    def _submit(self, n_rows: int):
+        path = self.base / "inputs.jsonl"
+        path.write_text("".join(json.dumps({"id": f"r{i}", "x": i}) + "\n" for i in range(n_rows)))
+        method = getattr(type(self.agent), "run_batch")
+        method = getattr(method, "__wrapped__", method)
+        return asyncio.run(method(self.agent, script_path=str(self.base / "sim.py"),
+                                  inputs_path=str(path)))
+
+    def test_a_one_row_batch_is_refused(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            self._submit(1)
+        message = str(caught.exception)
+        self.assertIn("1 row", message)
+        self.assertIn("32", message)
+
+    def test_an_empty_inputs_file_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            self._submit(0)
+
+    def test_a_refused_batch_leaves_no_directory_or_registry_entry(self) -> None:
+        # The check must precede mkdir, or a refusal leaves a resumable stub and
+        # the next call "resumes" a batch that never had rows.
+        with self.assertRaises(ValueError):
+            self._submit(1)
+        batches = self.base / "batches"
+        created = [p.name for p in batches.iterdir() if p.name != "registry"] if batches.exists() else []
+        self.assertEqual(created, [], "a refused batch must not leave a batch directory")
+        registry = batches / "registry"
+        self.assertEqual(list(registry.glob("*.json")) if registry.exists() else [], [],
+                         "a refused batch must not leave a registry entry")
+
+    def test_a_wide_batch_is_accepted(self) -> None:
+        self.assertEqual(self._submit(32)["total"], 32)
+
+    def test_the_refusal_tells_the_agent_to_widen_not_to_retry(self) -> None:
+        # The message is all the child sees; one that reads as transient gets
+        # resubmitted unchanged or abandoned for run_code. Both were observed.
+        with self.assertRaises(ValueError) as caught:
+            self._submit(2)
+        message = str(caught.exception)
+        self.assertIn("write_files", message)
+        self.assertIn("run_code", message)
+        self.assertIn("Do not retry this batch unchanged", message)
+
+    def test_the_floor_is_operator_controlled_not_agent_controlled(self) -> None:
+        # run_batch takes no floor argument: an agent that could set its own
+        # would set 1. Only HPC_MIN_BATCH_ROWS moves it.
+        import inspect
+
+        method = getattr(type(self.agent), "run_batch")
+        method = getattr(method, "__wrapped__", method)
+        params = set(inspect.signature(method).parameters)
+        self.assertNotIn("min_rows", params)
+
+    def test_resume_is_not_blocked_by_the_floor(self) -> None:
+        # Resuming passes only batch_id and must not be re-validated for width:
+        # those rows were already accepted when the batch was created.
+        #
+        # The batch is created WITH labels on purpose. Resume also requires
+        # provenance (see ResumeProvenanceTests), so an unlabelled fixture would
+        # be refused here for a different reason and this test would stop
+        # exercising the floor exemption at all.
+        self.hpc._MIN_BATCH_ROWS = 1
+        path = self.base / "inputs.jsonl"
+        path.write_text("".join(json.dumps({"id": f"r{i}", "x": i}) + "\n" for i in range(2)))
+        method = getattr(type(self.agent), "run_batch")
+        method = getattr(method, "__wrapped__", method)
+        created = asyncio.run(method(self.agent, script_path=str(self.base / "sim.py"),
+                                     inputs_path=str(path),
+                                     labels={"plan_id": "P1", "hypothesis_id": "H7"}))
+        self.hpc._MIN_BATCH_ROWS = 32
+        resumed = asyncio.run(method(self.agent, batch_id=created["batch_id"]))
+        self.assertEqual(resumed["batch_id"], created["batch_id"])
+
+
+@unittest.skipUnless(HAVE_DEPS, "hpc-deployment dependencies not installed")
+class BatchDistinctnessTests(unittest.TestCase):
+    """Rows must describe DIFFERENT work, not just be numerous.
+
+    Observed 2026-11-09 on the 1024-node reservation: once _MIN_BATCH_ROWS
+    refused 1-row batches, agents widened to exactly 32 and padded. Of 352 rows
+    across 11 batches only 47 payloads were distinct (13.4%); 8 of the 11 had
+    all 32 rows identical after id/out_dir were stripped, with the stripped
+    payload literally `{}`. The shapes below are those real batches.
+    """
+
+    def setUp(self) -> None:
+        sys.path.insert(0, str(SCRIPTS))
+        import hpc_agent
+
+        self.hpc = hpc_agent
+        self.hpc.Task = FakeTask
+        self._floor = hpc_agent._MIN_BATCH_ROWS
+        self._distinct = hpc_agent._MIN_BATCH_DISTINCT
+        hpc_agent._MIN_BATCH_ROWS = 1          # isolate the distinctness rule
+        hpc_agent._MIN_BATCH_DISTINCT = 2
+        self.base = Path(tempfile.mkdtemp())
+        os.environ.pop("HPC_BATCH_ROOT", None)
+        (self.base / "sim.py").write_text(SIM)
+        self.agent = hpc_agent.HpcClientAgent("campaign", str(self.base), "ckpt")
+        self.agent._client = FakeClient()
+
+    def tearDown(self) -> None:
+        self.hpc._MIN_BATCH_ROWS = self._floor
+        self.hpc._MIN_BATCH_DISTINCT = self._distinct
+        sys.path.remove(str(SCRIPTS))
+
+    def _submit(self, rows):
+        path = self.base / "inputs.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        method = getattr(type(self.agent), "run_batch")
+        method = getattr(method, "__wrapped__", method)
+        return asyncio.run(method(self.agent, script_path=str(self.base / "sim.py"),
+                                  inputs_path=str(path)))
+
+    def test_rows_with_no_parameters_at_all_are_refused(self) -> None:
+        # b-8f8c0f6439fe: {"id":"s01"} .. {"id":"s32"}
+        with self.assertRaises(ValueError) as caught:
+            self._submit([{"id": f"s{i:02d}"} for i in range(1, 33)])
+        message = str(caught.exception)
+        self.assertIn("32 rows but only 1 distinct", message)
+        self.assertIn("NO parameters at all", message)
+
+    def test_varying_only_the_output_dir_is_refused(self) -> None:
+        # b-1a4cacdcba83: gate01..gate32, each with its own run0N out_dir.
+        # Same computation filed separately is still one computation.
+        with self.assertRaises(ValueError) as caught:
+            self._submit([{"id": f"gate{i:02d}", "out_dir": f"/flare/x/run{i:02d}"}
+                          for i in range(1, 33)])
+        self.assertIn("Varying only id or out_dir is NOT variation", str(caught.exception))
+
+    def test_identical_rows_sharing_one_output_dir_are_refused(self) -> None:
+        # b-1fec34bdfed4: every row wrote to the SAME out_dir, so rows raced.
+        with self.assertRaises(ValueError):
+            self._submit([{"id": f"egfr_structural_gate_{i:02d}", "out_dir": "/flare/x/h1"}
+                          for i in range(1, 33)])
+
+    def test_a_real_seed_sweep_is_accepted(self) -> None:
+        # b-8c88eceb5702: strategy+seed per row -- the one real sweep of the 11.
+        rows = [{"id": f"junction_{i:02d}", "strategy": "junction", "seed": 100 + i}
+                for i in range(1, 33)]
+        self.assertEqual(self._submit(rows)["total"], 32)
+
+    def test_a_small_but_genuine_parameter_sweep_is_accepted(self) -> None:
+        # b-3666210247e5 shape: few distinct topologies across many rows. Thin,
+        # but it does describe different work, so it must not be refused.
+        rows = [{"id": f"preorganized_{i:02d}",
+                 "topology": ["two_module", "three_module", "rigid"][i % 3]}
+                for i in range(32)]
+        self.assertEqual(self._submit(rows)["total"], 32)
+
+    def test_explicit_replicate_seeds_pass_where_bare_replicates_fail(self) -> None:
+        # The refusal names this fix, so it has to actually work: bare
+        # replicate_01..N is refused, the same replicates with per-row seeds pass.
+        with self.assertRaises(ValueError):
+            self._submit([{"id": f"replicate_{i:02d}"} for i in range(1, 33)])
+        rows = [{"id": f"replicate_{i:02d}", "seed": 1000 + i} for i in range(1, 33)]
+        self.assertEqual(self._submit(rows)["total"], 32)
+
+    def test_a_single_row_batch_is_not_judged_on_distinctness(self) -> None:
+        # One row cannot be "all the same as itself"; the ROW FLOOR is what
+        # governs that case, and these two rules must not double-refuse.
+        self.assertEqual(self._submit([{"id": "only", "seq": "MKT"}])["total"], 1)
+
+    def test_a_refused_batch_leaves_no_directory_or_registry_entry(self) -> None:
+        with self.assertRaises(ValueError):
+            self._submit([{"id": f"s{i}"} for i in range(32)])
+        batches = self.base / "batches"
+        created = [p.name for p in batches.iterdir() if p.name != "registry"] if batches.exists() else []
+        self.assertEqual(created, [], "a refused batch must not leave a batch directory")
+
+    def test_non_dict_rows_do_not_crash_the_check(self) -> None:
+        # _read_rows may yield a non-mapping; _row_signature must tolerate it
+        # rather than raising inside the guard and failing open.
+        self.assertEqual(self.hpc._row_signature(["a", 1]), repr(["a", 1]))
+        self.assertEqual(self.hpc._row_signature("x"), repr("x"))
+
+    def test_identity_key_matching_is_case_insensitive(self) -> None:
+        with self.assertRaises(ValueError):
+            self._submit([{"ID": f"s{i}", "OUT_DIR": f"/flare/x/{i}"} for i in range(32)])
+
+
+@unittest.skipUnless(HAVE_DEPS, "hpc-deployment dependencies not installed")
+class ResumeProvenanceTests(unittest.TestCase):
+    """Resume must not become a way around the width guards or provenance.
+
+    Resume is exempt from the row floor and the distinctness check because the
+    rows were validated at creation -- that exemption is what lets a
+    walltime-interrupted batch finish. On 2026-11-09 a child reactivated
+    b-2f95dbc8caab, a ONE-ROW batch created the previous day with `labels: {}`,
+    bypassing both guards; the pre-existing conflict check never fired because
+    an EMPTY stored label set conflicts with nothing.
+    """
+
+    def setUp(self) -> None:
+        sys.path.insert(0, str(SCRIPTS))
+        import hpc_agent
+
+        self.hpc = hpc_agent
+        self.hpc.Task = FakeTask
+        self._floor = hpc_agent._MIN_BATCH_ROWS
+        self._distinct = hpc_agent._MIN_BATCH_DISTINCT
+        self._age = hpc_agent._MAX_RESUME_AGE_SECONDS
+        hpc_agent._MIN_BATCH_ROWS = 1
+        hpc_agent._MIN_BATCH_DISTINCT = 1
+        self.base = Path(tempfile.mkdtemp())
+        os.environ.pop("HPC_BATCH_ROOT", None)
+        (self.base / "sim.py").write_text(SIM)
+        self.inputs = self.base / "inputs.jsonl"
+        self.inputs.write_text(json.dumps({"id": "a", "x": 1}) + "\n")
+        self.agent = hpc_agent.HpcClientAgent("campaign", str(self.base), "ckpt")
+        self.agent._client = FakeClient()
+        self.labels = {"plan_id": "P1", "hypothesis_id": "H7"}
+
+    def tearDown(self) -> None:
+        self.hpc._MIN_BATCH_ROWS = self._floor
+        self.hpc._MIN_BATCH_DISTINCT = self._distinct
+        self.hpc._MAX_RESUME_AGE_SECONDS = self._age
+        sys.path.remove(str(SCRIPTS))
+
+    def _run_batch(self, **kwargs):
+        method = getattr(type(self.agent), "run_batch")
+        method = getattr(method, "__wrapped__", method)
+        return asyncio.run(method(self.agent, **kwargs))
+
+    def _create(self, labels):
+        return self._run_batch(script_path=str(self.base / "sim.py"),
+                               inputs_path=str(self.inputs), labels=labels)
+
+    def _registry(self, batch_id):
+        return self.base / "batches" / "registry" / f"{batch_id}.json"
+
+    def test_an_unlabelled_batch_cannot_be_resumed_even_with_no_labels_passed(self) -> None:
+        """The exact 2026-11-09 case, and the form that actually slipped through.
+
+        `run_batch(batch_id=...)` with NO labels is the documented resume call,
+        and it skips the conflict loop entirely (`labels.get(key)` is falsy), so
+        any batch on disk could be reactivated by anyone. The guard therefore has
+        to be a property of the BATCH, not of the call.
+        """
+        created = self._create(None)
+        entry = json.loads(self._registry(created["batch_id"]).read_text())
+        self.assertEqual(entry["labels"], {}, "fixture must reproduce the empty label set")
+        with self.assertRaises(ValueError) as caught:
+            self._run_batch(batch_id=created["batch_id"])      # no labels: the real path
+        message = str(caught.exception)
+        self.assertIn("no plan_id or hypothesis_id", message)
+        self.assertIn("must not be attributed", message)
+
+    def test_an_unlabelled_batch_is_also_refused_when_labels_are_passed(self) -> None:
+        created = self._create(None)
+        with self.assertRaises(ValueError):
+            self._run_batch(batch_id=created["batch_id"], labels=self.labels)
+
+    def test_resuming_this_plans_own_batch_still_works(self) -> None:
+        # The legitimate case must not regress: same plan, same hypothesis.
+        created = self._create(self.labels)
+        resumed = self._run_batch(batch_id=created["batch_id"], labels=self.labels)
+        self.assertEqual(resumed["batch_id"], created["batch_id"])
+
+    def test_resume_without_labels_works_for_a_LABELLED_batch(self) -> None:
+        # Passing only batch_id is the documented resume form and must keep
+        # working -- for a batch that carries provenance. An earlier version of
+        # this test allowed it for ANY batch, which is precisely the hole that
+        # let an unlabelled day-old batch be reactivated.
+        created = self._create(self.labels)
+        resumed = self._run_batch(batch_id=created["batch_id"])
+        self.assertEqual(resumed["batch_id"], created["batch_id"])
+
+    def test_a_conflicting_label_is_still_refused(self) -> None:
+        created = self._create(self.labels)
+        with self.assertRaises(ValueError) as caught:
+            self._run_batch(batch_id=created["batch_id"],
+                            labels={"plan_id": "P2", "hypothesis_id": "H7"})
+        self.assertIn("belongs to another plan_id", str(caught.exception))
+
+    def test_a_stale_batch_is_refused_by_age(self) -> None:
+        created = self._create(self.labels)
+        path = self._registry(created["batch_id"])
+        entry = json.loads(path.read_text())
+        entry["created_at"] = "2026-11-08T21:14:27+00:00"   # the real stale batch's timestamp
+        path.write_text(json.dumps(entry))
+        with self.assertRaises(ValueError) as caught:
+            self._run_batch(batch_id=created["batch_id"], labels=self.labels)
+        message = str(caught.exception)
+        self.assertIn("too old to resume", message)
+        self.assertIn("stale code on stale inputs", message)
+
+    def test_the_age_guard_can_be_disabled(self) -> None:
+        created = self._create(self.labels)
+        path = self._registry(created["batch_id"])
+        entry = json.loads(path.read_text())
+        entry["created_at"] = "2026-11-08T21:14:27+00:00"
+        path.write_text(json.dumps(entry))
+        self.hpc._MAX_RESUME_AGE_SECONDS = 0
+        resumed = self._run_batch(batch_id=created["batch_id"], labels=self.labels)
+        self.assertEqual(resumed["batch_id"], created["batch_id"])
+
+    def test_an_unparseable_created_at_does_not_block_resume(self) -> None:
+        # A corrupt timestamp must not strand a batch: fail OPEN on age, since
+        # the labels check already carries the provenance guarantee.
+        created = self._create(self.labels)
+        path = self._registry(created["batch_id"])
+        entry = json.loads(path.read_text())
+        entry["created_at"] = "not-a-timestamp"
+        path.write_text(json.dumps(entry))
+        resumed = self._run_batch(batch_id=created["batch_id"], labels=self.labels)
+        self.assertEqual(resumed["batch_id"], created["batch_id"])
 
 
 if __name__ == "__main__":

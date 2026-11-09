@@ -38,6 +38,12 @@ REMOTE = {
     "function_name": "run_code",
     "workdir_root": WORKDIR_ROOT,
     "batch_root": BATCH_ROOT,
+    # 2, not the production default of 1, because this module's fixture starts a
+    # code-generator in setUp. With a budget of 1 that child spends the whole
+    # budget and the validator's delegation is refused for BUDGET reasons, so
+    # the foreign-root assertions below would pass or fail for the wrong cause.
+    # Budget behaviour is tested in test_hypothesis_orchestration.
+    "max_children": 2,
 }
 
 PLAN = "plan_8ed4bb773a77577c"

@@ -1,0 +1,134 @@
+# TEMPLATE -- copy to config.yaml and edit. config.yaml itself is gitignored.
+#
+# WHY THIS IS A TEMPLATE. config.yaml is per-user and per-machine: it names the
+# absolute path of YOUR campaign venv and YOUR loam checkout for the hpcctl MCP
+# server, and its model block names whichever inference endpoint you can
+# actually reach (an ssh tunnel on 127.0.0.1 exists only on the machine that
+# opened it). It was tracked until 2026-11-09 and three different people had
+# edited it, so every pull overwrote somebody's working configuration -- and a
+# `git checkout` of a branch silently reverted a live campaign's model to
+# whatever the branch happened to carry.
+#
+#   cp .hermes/.loam-home/config.yaml.example .hermes/.loam-home/config.yaml
+#   # then replace <YOUR-CAMPAIGN-DIR> and <YOUR-LOAM-CHECKOUT>, and point the
+#   # model block at an endpoint you can reach.
+#
+# NOTE: run-campaign COPIES .hermes/.loam-home/config.yaml over the campaign's
+# own .hermes/home/config.yaml on every launch, so editing the campaign copy is
+# silently undone. The file above is the one to change.
+#
+# The values below are a WORKING example (Argo over an ssh tunnel for the
+# agents, with the tournament judge configured separately in ~/.hermes/loam.yaml),
+# kept so the shape of a real configuration is visible. Treat the endpoints as
+# illustrative, not as something that will resolve on your machine.
+
+model:
+  # Argo, via the ssh tunnel on :61612, OpenAI-compatible. Replaces the ALCF
+  # Inference Service (Tara / inkling-bf16) as of 2026-11-09.
+  #
+  # 127.0.0.1, NOT localhost. The tunnel is
+  #   ssh -4 -N -f -o ExitOnForwardFailure=yes -L 61612:localhost:61612 homes-01
+  # and `ssh -4` binds IPv4 ONLY, so it listens on 127.0.0.1:61612 and nothing
+  # answers on [::1]:61612. `curl http://localhost:61612/...` fails with
+  # "Failed to connect to localhost port 61612" whenever localhost resolves to
+  # ::1 first, which is the default on this machine. The literal IPv4 address
+  # removes the dependency on resolution order entirely.
+  #
+  # If every request fails with a connection error, check the tunnel before
+  # suspecting the model -- it has no supervisor and dies with its ssh process:
+  #   lsof -nP -iTCP:61612 -sTCP:LISTEN
+  #   curl -fsS http://127.0.0.1:61612/v1/models
+  #
+  # `argo:gpt-5.6-luna` -- the colon is part of the id, not a prefix to strip.
+  # Verified 2026-11-09 against /v1/models (66 ids) and a real
+  # /chat/completions round trip: content in `content`, finish_reason `stop`,
+  # and NO api key required.
+  #
+  # Unlike inkling-bf16 this is NOT a split-output reasoning model: it fills
+  # `content` directly and returns no separate `reasoning` field
+  # (reasoning_tokens: 0). campaign_preflight._smoke_model's fallback from
+  # `content` to `reasoning` is therefore dead weight here rather than
+  # load-bearing, and inkling's "small max_tokens returns reasoning with
+  # content: null" failure mode does not apply.
+  #
+  # RANKING DOES NOT RUN HERE. The tournament judge is
+  # meta-llama/Meta-Llama-3.1-8B-Instruct on the ALCF Sophia cluster, set in
+  # ~/.hermes/loam.yaml under hypothesis_tournament.ranking. This block is the
+  # agents and generation only.
+  #
+  # Argo on this port answered only "ACCESS REVOKED / Monthly limit exceeded"
+  # from 2026-11-01, which drove the original move to ALCF. It is serving
+  # again; if that message returns the quota is out and no config change helps.
+  #
+  # NOTE: run-campaign:159 COPIES this file over the campaign's
+  # .hermes/home/config.yaml on every launch, so editing the campaign copy is
+  # silently undone. This file is the one to change.
+  default: argo:gpt-5.6-luna
+  provider: custom
+  base_url: http://127.0.0.1:61612/v1
+  # The tunnel requires no auth -- a real round trip succeeded with no
+  # Authorization header, and one sent with the literal unexpanded
+  # "${ARGO_API_KEY}" still returned HTTP 200. Kept as an env reference so no
+  # key is ever a literal in this tracked file.
+  api_key: ${ARGO_API_KEY}
+_config_version: 33
+plugins:
+  enabled:
+    - loam-hooks
+onboarding:
+  seen:
+    tool_progress_prompt: true
+    busy_input_prompt: true
+delegation:
+  max_spawn_depth: 2
+  orchestrator_enabled: true
+  # 400, up from 160, for the 2026-11-09 reservation run at top_k: 100. The
+  # bound this has to clear is validators PLUS their children: 100 validators
+  # each allowed max_children: 2 is 300 agents in flight at the peak. Below
+  # that they queue on the parent's slots, and a queueing child is how Hermes'
+  # process-global circuit breaker gets opened by a timeout that was never a
+  # server fault (see the HPC_POOL_SIZE note in set_env_msinclair.sh).
+  max_concurrent_children: 400
+mcp_servers:
+  hpc:
+    url: http://127.0.0.1:8000/mcp
+    timeout: 900
+    connect_timeout: 120
+  hpcctl:                       # -> mcp__hpcctl__hpc_allocation_status / hpc_restart
+    command: <YOUR-CAMPAIGN-DIR>/.venv/bin/python
+    args: [
+          <YOUR-LOAM-CHECKOUT>/skills/hpc-deployment/scripts/hpc_control.py]
+    env:
+      # Inherited, not hardcoded, so an hpcctl restart rebuilds the allocation
+      # this launch actually asked for. It was pinned to set_env_msinclair.sh
+      # (10 nodes, debug-scaling), which meant a mid-run restart during a
+      # capacity or 256-node run would quietly come back as a 10-node debug
+      # block. launch.sh exports HPC_ENV_FILE unconditionally. If it is somehow
+      # unset, Hermes keeps the reference verbatim and hpc_control fails on a
+      # missing file -- which is the right failure, because run-campaign's own
+      # default points at a DIFFERENT Globus endpoint (3724d6df...).
+      HPC_ENV_FILE: ${HPC_ENV_FILE}
+      # R9046423 is the FRAME-IDP custom reservation for 2026-11-09
+      # 16:00-22:30 UTC (1028 nodes). A reservation queue must be listed here
+      # as well as in set_env_msinclair.sh: this is the list hpcctl's own
+      # validate() reads, so without it a mid-run hpc_restart refuses the
+      # reservation with "queue 'R9046423' not allowed" while the launch
+      # preflight, which reads the env file, is perfectly happy. A reservation
+      # queue is absent from hpc_control's QUEUE_LIMITS table, so the only
+      # ceiling on it is HPC_MAX_NODES / HPC_MAX_WALLTIME below.
+      HPC_ALLOWED_QUEUES: debug,debug-scaling,capacity,R9046423
+      # 1024, not 256: this cap is what hpc_control.validate() checks, so a
+      # lower value here REFUSES a 1024-node reservation restart through the
+      # hpcctl tool even though the reservation holds 1028 -- the same trap as
+      # the walltime cap below. The per-queue limits in hpc_control still hold
+      # the real line for the named Aurora queues.
+      HPC_MAX_NODES: "1024"
+      # 12 h, not 1 h: these caps are what hpc_control.validate() checks, so a
+      # 1 h cap here REFUSES a capacity allocation through the hpcctl tool
+      # (`walltime 04:00:00 exceeds the cap of 01:00:00`) even though the queue
+      # allows 168 h. The per-queue limits in hpc_control already stop a debug
+      # block from asking for more than its hour.
+      HPC_MAX_WALLTIME: "12:00:00"
+    timeout: 300                # a restart waits up to 180 s for the old server to exit
+approvals:
+  mcp_reload_confirm: false

@@ -79,3 +79,28 @@ loam_state/
 
 # Local working notes (see notes/README.md). Never part of the framework.
 notes/
+
+# PER-USER, PER-MACHINE configuration. Tracked until 2026-11-09, by which point
+# three different people had edited it and every pull overwrote somebody's
+# working setup -- a `git checkout` of a branch also silently reverted a live
+# campaign's model and endpoint to whatever that branch carried, mid-run.
+#
+# It is per-user because it hardcodes the absolute paths of YOUR campaign venv
+# and YOUR loam checkout for the hpcctl MCP server, and because its model block
+# names an endpoint only your machine can reach (an ssh tunnel on 127.0.0.1
+# exists only where it was opened).
+#
+# Start from the tracked template, which keeps the shape and the rationale:
+#   cp .hermes/.loam-home/config.yaml.example .hermes/.loam-home/config.yaml
+.hermes/.loam-home/config.yaml
+
+# PER-USER agent memory: statements about what one particular person prefers.
+# Tracked until 2026-11-09, by which point two people had written into it and
+# each pull overwrote the other's preferences -- so the agent would act on a
+# colleague's preferences as if they were yours. Start from the template:
+#   cp .hermes/.loam-home/memories/USER.md.example .hermes/.loam-home/memories/USER.md
+.hermes/.loam-home/memories/USER.md
+
+# Per-site credentials the DRIVER needs before it starts probing (see
+# drive-campaign). Per-user by nature: tokens, site auth commands.
+drive-env.sh

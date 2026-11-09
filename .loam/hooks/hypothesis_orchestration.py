@@ -40,6 +40,17 @@ DISPATCH_TOOL = 'loam_dispatch_round'
 # of it.
 REVIEW_BATCH = 100
 
+# Child statuses that mean "it finished and told us something". Anything else,
+# with no summary, is a child that went down: a crash, a provider abort, a dead
+# endpoint. `blocked` counts as REPORTED -- a child that honestly reports it
+# cannot proceed has produced evidence and must not be replaced.
+_REPORTED_STATUSES = frozenset({'ok', 'success', 'completed', 'done', 'blocked'})
+
+# How many replacement code-generators one validator may earn, however many of
+# its children die. Without a ceiling a crash loop would mint a new child every
+# time and a single hypothesis could consume the round's whole agent budget.
+_MAX_CODEGEN_REPLACEMENTS = 1
+
 
 # --- ledger -----------------------------------------------------------------
 
@@ -440,8 +451,11 @@ def _validator_directive(payload: Mapping[str, Any], count: int) -> str:
         "than the campaign's work. Each validator receives its hypothesis, the campaign goal and "
         f"rules, and its role definition ({validator.prompt_path.name}) inlined by the dispatch. "
         "Do not perform experimental code or tool calls yourself.",
-        "Every executable action MUST be delegated by that validator to at most 2 leaf code-generator "
-        "children; no other child may execute code.",
+        # Read from the profile rather than stating a literal, which drifted
+        # from the budget tool_policy enforces the moment max_children changed.
+        f"Every executable action MUST be delegated by that validator to at most "
+        f"{max(1, int((payload.get('loam_execution') or {}).get('max_children') or 1))} leaf "
+        "code-generator children; no other child may execute code.",
     ))
 
 
@@ -729,9 +743,15 @@ def _validator_tasks(plan_id: str, selected: list[dict[str, Any]], payload: Mapp
         hypothesis_id = item['hypothesis']['hypothesis_id']
         tasks.append({
             'goal': (
-                "Validate the supplied hypothesis by designing the smallest decisive experiment and delegating "
-                "it to at most 2 code-generator leaf children, one at a time, iterating on their actual "
-                "results. Do not compute anything yourself; delegate_task is your only executable tool, though "
+                "Validate the supplied hypothesis by designing the decisive experiment AT THE WIDEST SCALE "
+                "THE ALLOCATION SUPPORTS and delegating it to your code-generator child. The allocation holds "
+                "thousands of devices that run rows side by side and is paid for whether or not work is on "
+                "it, so a narrow experiment is not cheaper than a wide one -- it is the same wall clock with "
+                "most of the machine idle. Instruct your child to sweep the whole candidate set in ONE batch "
+                "(every design, fold and scoring job the hypothesis implies), not a probe followed by a real "
+                "run: your child may make as many sequential run_batch/write_files/batch_status calls as the "
+                "work needs, so breadth costs you nothing in children. "
+                "Do not compute anything yourself; delegate_task is your only executable tool, though "
                 f"you may call {observation} to check on and read a child's run. "
                 "As you commit to each high-level decision -- the experiment design, what to delegate, "
                 "whether the evidence is sufficient -- record it with the loam_record_decision tool before "
@@ -750,7 +770,11 @@ def _validator_tasks(plan_id: str, selected: list[dict[str, Any]], payload: Mapp
                     'child_template': {
                         'role': 'leaf',
                         'goal_suffix': _child_tags(plan_id, hypothesis_id),
-                        'max_children': 2,
+                        # From the profile (execution.max_children), not a
+                        # literal 2: this template is what the validator reads,
+                        # so a hardcoded value here contradicts the budget
+                        # tool_policy actually enforces.
+                        'max_children': max(1, int(execution.get('max_children') or 1)),
                         'workdir': _workdir(execution, plan_id, hypothesis_id),
                     },
                     'validator_instructions': (
@@ -760,12 +784,20 @@ def _validator_tasks(plan_id: str, selected: list[dict[str, Any]], payload: Mapp
                         "the tournament state or the campaign files, so write selected_hypothesis into each "
                         "child's goal/context in full -- statement, candidate sequence and the falsifying "
                         "prediction. A hypothesis id is a provenance tag, not a reference a child can resolve. "
-                        "Restate the hypothesis as a falsifiable claim and design the smallest decisive experiment. "
+                        "Restate the hypothesis as a falsifiable claim and design the decisive experiment at "
+                        "the WIDEST scale the allocation supports -- the hypothesis text usually states the "
+                        "sweep it needs (how many backbones, which paralogs, which variants); deliver that, "
+                        "not a reduced version of it. A result from a handful of candidates does not "
+                        "falsify a claim about a design strategy. "
                         "Delegate each executable step to a code-generator child: role=leaf, goal = what to compute "
                         "and the acceptance condition, ending with child_template.goal_suffix; context = exact "
                         "inputs, parameter ranges and expected outputs. Children write their own code, can reuse "
                         "registered HPC tools, and run large sweeps as batches. At most max_children children in "
-                        "total. Never compute or run code yourself. Do poll and read a child's run yourself with "
+                        "total -- a LIFETIME budget, not a concurrency limit, so a finished child does not free "
+                        "a slot. With max_children=1 you get ONE child: give it the complete sweep in its first "
+                        "instruction, because there is no second child to widen later. A replacement is granted "
+                        "only if a child dies without reporting. "
+                        "Never compute or run code yourself. Do poll and read a child's run yourself with "
                         f"{observation} rather than spending a child on it, and verify a "
                         "child's reported numbers against the files it actually wrote. Then return exactly these headings: "
                         "### Hypothesis; ### Outcome; ### Evidence Ledger; ### Credit Assignment; "
@@ -1595,13 +1627,40 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     if foreign is not None:
         return foreign
 
-    used = sum(
-        1 for row in rows
-        if row.get('event') == 'agent_started' and row.get('role') == 'code-generator'
-        and row.get('plan_id') == plan_id and row.get('hypothesis_id') == start['hypothesis_id']
+    # The code-generator budget is a LIFETIME TOTAL, not a concurrency limit:
+    # `agent_started` events are counted and never decremented when a child
+    # finishes. It was hardcoded to 2 while execution.max_children was read and
+    # DROPPED by loam_config, so a profile asking for 1 was silently ignored.
+    hypothesis_id = start['hypothesis_id']
+    budget = max(1, int(execution.get('max_children') or 1))
+
+    def _codegen(event: str) -> list[Mapping[str, Any]]:
+        return [row for row in rows
+                if row.get('event') == event and row.get('role') == 'code-generator'
+                and row.get('plan_id') == plan_id and row.get('hypothesis_id') == hypothesis_id]
+
+    used = len(_codegen('agent_started'))
+    # A child that WENT DOWN earns its validator a replacement, so a crash, a
+    # rate-limit abort or a dead endpoint does not silently cost the round this
+    # hypothesis. A child that finished AND reported -- including an honest
+    # `blocked` -- is NOT replaceable: it produced evidence, and re-running it
+    # would only buy a second opinion on the same work.
+    dead = sum(
+        1 for row in _codegen('code_generator_completed')
+        if str(row.get('status') or 'error').lower() not in _REPORTED_STATUSES
+        and not str(row.get('summary') or '').strip()
     )
-    if used + (len(tasks) or 1) > 2:
-        return _block(f'code-generator budget for this hypothesis is 2 and {used} are used; return your report now.')
+    allowed = budget + min(dead, _MAX_CODEGEN_REPLACEMENTS)
+    if used + (len(tasks) or 1) > allowed:
+        extra = (f' ({budget} budgeted plus {min(dead, _MAX_CODEGEN_REPLACEMENTS)} replacement '
+                 f'for a child that died without reporting)') if dead else ''
+        return _block(
+            f'code-generator budget for this hypothesis is {allowed}{extra} and {used} are used; '
+            'return your report now. One child may make as many sequential '
+            'write_files/run_batch/batch_status calls as the work needs -- this budget limits '
+            'CHILDREN, not tool calls -- so instruct a single child to run the whole sweep '
+            'rather than asking for another child.'
+        )
     return None
 
 

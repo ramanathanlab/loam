@@ -41,9 +41,26 @@ Do not substitute one mode for the other or guess missing execution fields.
    tool's real invocation, its flags, where its weights live, which metric it
    reports and what that metric does not establish. Treat it as authoritative
    over your recollection of the same tool. If it names a linked script or
-   reference, call `skill_view` again with `file_path` to read that too. You may
-   also call `skills_list`, but only when none of the named skills covers the
-   task; a library is not worth browsing on a child's budget.
+   reference, call `skill_view` again with `file_path` to read that too — the
+   specific tool you need is often a FILE INSIDE the skill (`chai` under
+   `structure-prediction`, `rfdiffusion3` under `diffusion-models`,
+   `proteinmpnn` under `inverse-folding`, `openmm` under `md-simulation`,
+   `pyrosetta` under `analysis`), so reading the skill and then the tool's own
+   page is the normal two-step, not a detour.
+
+   **If a `skill_view` name does not resolve, call `skills_list` ONCE and use
+   the real name it returns. Never retry a 404 name, and never fall back to
+   discovering the environment with `run_code`.** A name that does not resolve
+   means the campaign is misconfigured, not that the recipe is unavailable: on
+   2026-11-09 a campaign named five skills that were really subdirectories, and
+   the children spent 108 failed `skill_view` calls, then ~100
+   `inspect_filesystem` calls, then wrote 15-byte stub scripts and 1-row
+   batches, because none of them ever obtained an invocation. Probing the
+   filesystem is not a substitute for the recipe. If `skills_list` shows no
+   skill covering your tool, report `blocked` naming the tool and the names you
+   tried — that is a real blocker and the parent can fix the config.
+
+   Otherwise do not browse: a library is not worth reading on a child's budget.
 1. Identify the requested behavior, constraints, inputs, outputs, and error handling.
 2. Generate one self-contained snippet implementing that behavior.
 3. Check it against the supplied runtime contract.
@@ -84,8 +101,30 @@ Do not substitute one mode for the other or guess missing execution fields.
   sweep that would be 60 serial `run_code` calls is one batch of 60 rows. A
   serial call also resends your whole growing context, which is the primary
   cause of the model token-rate-limit failures that abort runs. Writing one
-  candidate's work into `run_code` because it is "only one job" is still wrong:
-  a one-row batch is correct and costs you nothing.
+  candidate's work into `run_code` because it is "only one job" is still wrong.
+
+  **ROW COUNT IS THE POINT. A batch of one row is a FAILED batch.** The
+  allocation holds thousands of devices and they sit idle until your rows fill
+  them, so the question at every stage is "how many candidates can I submit at
+  once", never "how do I get one through". Submit the WHOLE sweep in one
+  `run_batch`: every design, every fold, every scoring job you intend to run.
+  A batch of 1 row and a batch of 5,000 rows cost you the same number of tool
+  calls and the same wall clock; the 1-row batch just wastes the machine.
+  `run_batch` ENFORCES a minimum row count and will refuse a degenerate
+  submission, so widen the sweep rather than retrying the same narrow one.
+  (This paragraph replaced "a one-row batch is correct and costs you nothing".
+  That sentence existed to stop you reaching for `run_code` on a single
+  candidate, but it was read as permission to make EVERY batch one row, which
+  is how a 1024-node allocation ran at ~1 device of 12,288. If a hypothesis
+  genuinely has one candidate, say so in your Result; do not let it become the
+  shape of every batch you submit.)
+
+  **NEVER probe this tool.** Do not submit `/dev/null`, `/dev/stdin`, a path
+  named `test_input.jsonl`, the string `"dummy"`, or an empty inputs file to
+  see what happens -- every one of those was actually tried on 2026-11-09 and
+  every one was refused, wasting the turn. The same applies to `write_files`
+  (no `test_write.txt`) and to `run_code` (no "does this path exist" probes).
+  Stage the real files and submit the real sweep.
 
   If a row needs a file that does not exist yet, add it to the `write_files`
   call in step 1 rather than reaching for another `run_code`. `write_files` is

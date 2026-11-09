@@ -1,3 +1,18 @@
+# TEMPLATE -- copy to USER.md and make it your own. USER.md itself is gitignored.
+#
+# This is Hermes' PER-USER memory: statements about what one particular person
+# prefers, accumulated as they work. It was tracked until 2026-11-09 and two
+# different people had written into it, so each one's preferences overwrote the
+# other's on every pull -- and the agent then acted on a colleague's
+# preferences as if they were yours.
+#
+#   cp .hermes/.loam-home/memories/USER.md.example .hermes/.loam-home/memories/USER.md
+#
+# Entries are separated by a lone section mark. Keep each to one durable
+# preference and say WHY where the reason is not obvious from the statement.
+# Campaign-wide rules that apply to everyone belong in the campaign brief or in
+# .loam/agents/*.md, NOT here -- anything in this file is about one person.
+
 User prefers biology experiment suggestions to be in silico and executable by the assistant, rather than wet-lab experiments.
 §
 User prefers end-to-end Loam/Hermes campaign tests to run in isolated temporary state/config directories and to fail closed with explicit first-unmet acceptance criteria rather than simulated completion.

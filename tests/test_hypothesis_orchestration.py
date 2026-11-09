@@ -593,12 +593,17 @@ class HypothesisOrchestrationTests(unittest.TestCase):
             payload = self._generated_payload(Path(temporary))
             directive = orchestration.context_for(dict(payload))
             tasks = orchestration.canonical_delegation_args(payload)["tasks"]
-        self.assertIn("at most 2 leaf code-generator children", directive)
+        # 1, from execution.max_children, not a literal: one code-generator per
+        # validator, so N_codegen == N_validators. Both the coordinator's
+        # directive and the validator's child_template must quote the SAME
+        # number tool_policy enforces -- they were independently hardcoded to 2
+        # before, so changing the budget silently contradicted them.
+        self.assertIn("at most 1 leaf code-generator children", directive)
         context = json.loads(tasks[0]["context"])
         self.assertNotIn("required_child", context)
         self.assertNotIn("Fraction", tasks[0]["context"])
         self.assertEqual(context["loam_validator_contract"], "v1")
-        self.assertEqual(context["child_template"]["max_children"], 2)
+        self.assertEqual(context["child_template"]["max_children"], 1)
         self.assertIn("[loam-agent-role=code-generator]", context["child_template"]["goal_suffix"])
         self.assertTrue(context["child_template"]["workdir"].startswith("/lus/campaign/work/plan_"))
         self.assertIn("### Evidence Score", context["validator_instructions"])
