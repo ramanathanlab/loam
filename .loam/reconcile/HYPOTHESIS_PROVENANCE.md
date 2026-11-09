@@ -44,6 +44,17 @@ A child may return a fenced JSON object:
 }
 ```
 
+`hypothesis_key` is a label local to this object; it joins `evidence_candidates`
+to `hypotheses`, and is mapped to a durable `hypothesis_id` only at
+reconciliation. `parent_hypothesis_keys` draws on that same local namespace:
+every entry must be the `hypothesis_key` of a hypothesis declared in the *same*
+object, or the object is rejected `unknown_parent_hypothesis_key`. Neither
+reconciliation nor the memory projection resolves these against the
+key→`hypothesis_id` map — both copy the list through verbatim — so a key that
+names nothing here names nothing anywhere. In particular, a child must not put
+the `hypothesis_id` it was assigned into this field; that id reaches Loam
+through the ledger row, not the contract.
+
 On normal completed child observation, Loam appends the shape-valid object to
 `candidate-results.jsonl` with `candidate_status: pending`. It does not create
 a hypothesis, evidence, or credit record at hook time.

@@ -149,6 +149,20 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
                 """Bounded read-only ls/cat/tail inspection on a pinned campaign worker."""
                 return await dispatch("inspect_filesystem", operation, path, offset=offset, limit=limit)
 
+            async def write_files(files: dict) -> dict:
+                """Write text files onto the cluster filesystem, creating parent directories.
+
+                Pass `files` as {absolute_path: file_contents}; several in one call.
+                This is how you stage a batch: `run_batch` needs its script_path and
+                inputs_path to exist already, so write both here, then submit. Nothing
+                is executed, so use it for the script, the inputs JSONL, and any small
+                config a row reads -- not for data a row can generate itself. Paths are
+                confined to the campaign tree; a relative path resolves inside it.
+                Returns the resolved path and byte count per file. Prefer this over
+                `run_code` for every file you need to create.
+                """
+                return await dispatch("write_files", files)
+
             async def run_batch(script_path: str | None = None, inputs_path: str | None = None,
                                 timeout_each: float = 900.0, gpus: float = 1,
                                 venv_path: str | None = None, batch_id: str | None = None,
@@ -267,7 +281,7 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
             # Un-exposing both leaves run_batch(script_path=...) as the only path: a fresh
             # script built from the skill each time. The functions remain defined above.
             # To re-enable, add  register_tool, list_tools  back into this list.
-            tools = [run_code, inspect_filesystem, batch_status, list_batches, pool_status]
+            tools = [run_code, write_files, inspect_filesystem, batch_status, list_batches, pool_status]
             if cluster:
                 # Build the pool before serving: a tool call must never have to
                 # launch or verify an agent, or concurrent calls serialize. The
@@ -287,7 +301,9 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
                     await pool.stop()
 
     return FastMCP(name="hpc-deployment", instructions=(
-        "run_code executes Python on a pinned accelerator. inspect_filesystem is bounded read-only ls/cat/tail; it is not a shell. "
+        "run_code executes Python on a pinned accelerator. write_files creates files on the cluster filesystem "
+        "without executing anything -- use it to stage a batch's script and inputs rather than running code that writes them. "
+        "inspect_filesystem is bounded read-only ls/cat/tail; it is not a shell. "
         "For many runs of one script use run_batch, then poll batch_status; list_batches shows past batches. "
         "Call pool_status to see the compute budget (nodes, addressable tiles, queue, walltime) before sizing a large fan-out, "
         "so you match the number of parallel run_batch rows to the tiles actually available."

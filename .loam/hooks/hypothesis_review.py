@@ -70,8 +70,10 @@ def _stripped(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def extract_contract_object(summary: str) -> tuple[dict[str, Any] | None, str]:
-    return extract_fenced_contract(summary, CONTRACT_VERSION)
+def extract_contract_object(
+    summary: str, full_path: str | None = None
+) -> tuple[dict[str, Any] | None, str]:
+    return extract_fenced_contract(summary, CONTRACT_VERSION, full_path)
 
 
 def _at_index(items: list[Mapping[str, Any]], value: Any) -> Mapping[str, Any] | None:

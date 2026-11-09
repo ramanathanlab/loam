@@ -150,6 +150,17 @@ to the specific record, not a search page — this is the machine-checkable half
 of the fetch-don't-recall rule, so a claim you cannot give a URL for does not
 belong here.
 
+`hypothesis_key` is a short local label — `h1`, `h2` — whose only job is to
+join the two arrays above, and **`parent_hypothesis_keys` holds those same
+local labels**, naming a hypothesis declared in *this* block that the entry
+refines. Leave it `[]` unless you are proposing a hypothesis derived from
+another one you are also declaring here.
+
+Do **not** put the hypothesis id you were assigned in it. That id already
+travels with your report, and the contract is joined to it for you; a UUID here
+names nothing. It is rejected as `unknown_parent_hypothesis_key`, and that
+discards the whole contract — every piece of evidence in it included.
+
 ### What must appear, and with which stance
 
 **Every predeclared gate outcome is an evidence candidate.** You set a threshold

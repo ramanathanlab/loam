@@ -1,8 +1,46 @@
 model:
-  default: argo:gpt-5.6-sol
+  # ALCF Inference Service, TARA cluster, OpenAI-compatible. Replaces the Argo
+  # ssh tunnel on :61612, which stopped answering anything but "ACCESS REVOKED /
+  # Monthly limit exceeded" on 2026-11-01.
+  #
+  # Model, cluster and path are from
+  # https://docs.alcf.anl.gov/services/inference-endpoints/api/ -- this is the
+  # Tara route. The CLUSTER IS PART OF THE URL, so moving clusters means
+  # changing base_url, not only the model name.
+  #
+  # `inkling-bf16` was retired from MINERVA on 2026-11-08 (HTTP 410 Gone, and
+  # absent from /minerva/models), which is why this pointed at Minerva's
+  # `beam-1.0-bf16` for a day. It is alive and serving on TARA -- verified
+  # 2026-11-09 against /tara/models and a real /chat/completions round trip --
+  # so the campaign is back on inkling by way of the other cluster.
+  #
+  # It keeps every property this setup depends on: a reasoning model with its
+  # own effort control that returns reasoning SEPARATELY from content. The
+  # separate output is why campaign_preflight._smoke_model falls back from
+  # `content` to `reasoning`, and why loam.yaml keeps omit_temperature: true.
+  #
+  # One operational consequence of that separation, measured on Tara: inkling
+  # spends its budget on reasoning FIRST, so a request with a small max_tokens
+  # returns `reasoning` filled and `content: null`. That is not an error, it is
+  # truncation -- and it is what loam.yaml's json_max_tokens: 16384 prevents.
+  #
+  # NOTE: run-campaign:159 COPIES this file over the campaign's
+  # .hermes/home/config.yaml on every launch, so editing the campaign copy is
+  # silently undone. This file is the one to change.
+  #
+  # Tara serves seven models; the others are mistral-large-4, muse-spark-bf16,
+  # nemotron-3-ultra, nemotron-35-super-vl, openai/gpt-oss-120b and
+  # openai/gpt-oss-20b. Only /chat/completions exists -- /completions is a 404.
+  default: inkling-bf16
   provider: custom
-  base_url: http://localhost:61612/v1
-  api_key: local-no-auth   # Argo tunnel on :61612 is no-auth
+  base_url: https://inference-api.alcf.anl.gov/resource_server/tara/api/v1
+  # NOT a literal. Hermes expands ${VAR} in any config string at load time
+  # (hermes_cli/config.py:_expand_env_vars) and re-expands when the referenced
+  # env changes, so the token stays out of this tracked file. launch.sh exports
+  # it from `alcf-tokens get-token inference`, which refreshes on demand; the
+  # access token itself is valid 48 h. An unset var is kept verbatim and the
+  # request fails with 401 rather than silently running unauthenticated.
+  api_key: ${ALCF_INFERENCE_TOKEN}
 _config_version: 33
 plugins:
   enabled:
@@ -14,7 +52,13 @@ onboarding:
 delegation:
   max_spawn_depth: 2
   orchestrator_enabled: true
-  max_concurrent_children: 160
+  # 400, up from 160, for the 2026-11-09 reservation run at top_k: 100. The
+  # bound this has to clear is validators PLUS their children: 100 validators
+  # each allowed max_children: 2 is 300 agents in flight at the peak. Below
+  # that they queue on the parent's slots, and a queueing child is how Hermes'
+  # process-global circuit breaker gets opened by a timeout that was never a
+  # server fault (see the HPC_POOL_SIZE note in set_env_msinclair.sh).
+  max_concurrent_children: 400
 mcp_servers:
   hpc:
     url: http://127.0.0.1:8000/mcp
@@ -25,10 +69,30 @@ mcp_servers:
     args: [
           /Users/msinclair/github/loam/skills/hpc-deployment/scripts/hpc_control.py]
     env:
-      HPC_ENV_FILE: 
-        /Users/msinclair/github/loam/skills/hpc-deployment/set_env_msinclair.sh
-      HPC_ALLOWED_QUEUES: debug,debug-scaling,capacity
-      HPC_MAX_NODES: "20"
+      # Inherited, not hardcoded, so an hpcctl restart rebuilds the allocation
+      # this launch actually asked for. It was pinned to set_env_msinclair.sh
+      # (10 nodes, debug-scaling), which meant a mid-run restart during a
+      # capacity or 256-node run would quietly come back as a 10-node debug
+      # block. launch.sh exports HPC_ENV_FILE unconditionally. If it is somehow
+      # unset, Hermes keeps the reference verbatim and hpc_control fails on a
+      # missing file -- which is the right failure, because run-campaign's own
+      # default points at a DIFFERENT Globus endpoint (3724d6df...).
+      HPC_ENV_FILE: ${HPC_ENV_FILE}
+      # R9046423 is the FRAME-IDP custom reservation for 2026-11-09
+      # 16:00-22:30 UTC (1028 nodes). A reservation queue must be listed here
+      # as well as in set_env_msinclair.sh: this is the list hpcctl's own
+      # validate() reads, so without it a mid-run hpc_restart refuses the
+      # reservation with "queue 'R9046423' not allowed" while the launch
+      # preflight, which reads the env file, is perfectly happy. A reservation
+      # queue is absent from hpc_control's QUEUE_LIMITS table, so the only
+      # ceiling on it is HPC_MAX_NODES / HPC_MAX_WALLTIME below.
+      HPC_ALLOWED_QUEUES: debug,debug-scaling,capacity,R9046423
+      # 1024, not 256: this cap is what hpc_control.validate() checks, so a
+      # lower value here REFUSES a 1024-node reservation restart through the
+      # hpcctl tool even though the reservation holds 1028 -- the same trap as
+      # the walltime cap below. The per-queue limits in hpc_control still hold
+      # the real line for the named Aurora queues.
+      HPC_MAX_NODES: "1024"
       # 12 h, not 1 h: these caps are what hpc_control.validate() checks, so a
       # 1 h cap here REFUSES a capacity allocation through the hpcctl tool
       # (`walltime 04:00:00 exceeds the cap of 01:00:00`) even though the queue

@@ -14,6 +14,11 @@ __pycache__/
 # Hermes' own skill-registry state (taps, index cache, audit log), written
 # whenever it reads the library. Not the library itself, which is tracked.
 .hermes/.loam-home/skills/.hub/
+# Curator bookkeeping, rewritten on every launch and carrying the absolute path
+# of whoever ran it. It was tracked, so it arrived in every diff as churn and
+# leaked one developer's home directory; the library it describes stays tracked.
+.hermes/.loam-home/skills/.curator_state
+.hermes/.loam-home/skills/.usage.json
 *.lock
 
 # --- Secrets: never track ---

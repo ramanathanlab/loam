@@ -208,8 +208,16 @@ def candidate_path(payload: Mapping[str, Any]) -> Path:
     return ledger_path(payload).with_name("candidate-results.jsonl")
 
 
-def build_candidate_records(stop_record: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Extract opt-in pending candidates from a completed child without accepting them."""
+def build_candidate_records(
+    stop_record: Mapping[str, Any], summary_full_path: str = ""
+) -> list[dict[str, Any]]:
+    """Extract opt-in pending candidates from a completed child without accepting them.
+
+    ``summary_full_path`` is the harness's spill file for this child, passed
+    through so a contract that the parent's context budget cut in half is still
+    read whole. It is not part of ``stop_record`` because it says nothing about
+    the child's lifecycle -- it is a fact about how the summary reached us.
+    """
 
     if stop_record.get("observation_status") != "observed":
         return []
@@ -224,7 +232,7 @@ def build_candidate_records(stop_record: Mapping[str, Any]) -> list[dict[str, An
     for version, extractor, normalizer in (
         (HYPOTHESIS_CONTRACT_VERSION, extract_hypothesis_contract, normalize_hypothesis_candidate),
     ):
-        value, presence = extractor(raw_summary)
+        value, presence = extractor(raw_summary, summary_full_path)
         if presence == "absent" or value is None:
             continue
         candidate, status = normalizer(value)
@@ -258,7 +266,9 @@ def write_stop_and_candidate(payload: Mapping[str, Any]) -> Path:
 
     stop_record = build_stop_record(payload)
     path = write_record(payload, stop_record)
-    candidates = build_candidate_records(stop_record)
+    candidates = build_candidate_records(
+        stop_record, _text(payload.get("child_summary_full_path"))
+    )
     for candidate in candidates:
         append_record(candidate_path(payload), candidate)
     return path

@@ -403,8 +403,13 @@ class ReviewPhaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             payload = self._payload(Path(temporary))
             state = Path(payload["loam_state_dir"])
+            # More candidates than the batch, whatever the batch is set to --
+            # the fixture used to write exactly 9, which silently stopped
+            # testing the bound when REVIEW_BATCH was raised past 10 and simply
+            # asserted that all of them came back.
+            surplus = self.orchestration.REVIEW_BATCH + 4
             with (state / "candidate-results.jsonl").open("a", encoding="utf-8") as handle:
-                for number in range(9):
+                for number in range(surplus):
                     extra = _candidate(unit_id=f"unit-{number}", child_session_id="validator-session")
                     extra["candidate_id"] = f"candidate-extra-{number}"
                     handle.write(json.dumps(extra) + "\n")

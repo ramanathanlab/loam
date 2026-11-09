@@ -4,8 +4,20 @@
 # LIVE for campaign1, which runs execution.mode: remote_mcp against the EGFR
 # binder-design goal. HPC_ENV_FILE in .hermes/.loam-home/config.yaml points here.
 #
-# Allocation: 10 nodes for one hour on the debug-scaling queue, charged to
+# Allocation: 1024 nodes on the CUSTOM RESERVATION R9046423, charged to
 # FRAME-IDP. Endpoint, account, queue and paths are all set.
+#
+# The reservation (pbs_rstat -f R9046423, read 2026-11-09 16:10 UTC) runs
+# 16:00-22:30 UTC on 2026-11-09, holds 1028 nodes, and caps a job at 06:30:00.
+# Two things follow, and both are already applied below:
+#   * 1024 of 1028 nodes leaves four spare rather than asking for every node a
+#     reservation that also has to schedule its own owner's work.
+#   * HPC_WALLTIME is 05:45:00, NOT the 06:30:00 the reservation allows. The
+#     ceiling is the reservation's END, not its duration: a block that starts
+#     at 16:30 and asks for 06:30:00 would run past 22:30 and be killed with
+#     the campaign still in it. 05:45:00 from a ~16:20 start lands at ~22:05.
+#     If you launch materially later than that, cut the walltime to match or
+#     the block waits in the queue and never runs.
 #
 # Fully populated, and the worker-side import chain is verified: hpc_agent,
 # pool_manager, ensemble_launcher, academy.manager and globus_compute_sdk all
@@ -73,7 +85,7 @@ export HPC_INSPECT_ROOTS="/flare/FRAME-IDP/msinclair/hpc-run:/lus/flare/projects
 #
 # This also fixes the agent slot budget at HPC_NNODES x 12 -- see the CEILING
 # note above HPC_POOL_SIZE before changing it. The two must move together.
-export HPC_NNODES=10
+export HPC_NNODES=1024
 export ACADEMY_EXCHANGE_URL="https://exchange.academy-agents.org/v1"
 export HPC_MCP_TRANSPORT="http"
 
@@ -81,21 +93,24 @@ export HPC_MCP_TRANSPORT="http"
 # These render into HPC_ENDPOINT_CONFIG_JSON below, so change the allocation's
 # queue/walltime/account here rather than editing the JSON string by hand. The
 # queue constrains walltime and node count -- validate with `qstat -Qf <queue>`
-# on Aurora before a long run.
+# on Aurora before a long run, or `pbs_rstat -f <resv>` when the queue IS a
+# reservation, since a reservation's real limit is its reserve_end wall clock
+# and that does not appear in qstat's queue limits at all.
 #
-# Defaults are a 30-minute, 2-node DEBUG block -- the smoke-test footprint. For
-# a real campaign raise these, e.g. HPC_QUEUE=capacity and HPC_WALLTIME=12:00:00
-# (and remember the debug queue reclaims at its short walltime -> ManagerLost).
+# Currently a 1024-node block on reservation R9046423 (see the header). On the
+# named queues the shape to remember is HPC_QUEUE=capacity with
+# HPC_WALLTIME=12:00:00 for a long campaign, and that the debug queues reclaim
+# at their short walltime -> ManagerLost.
 export HPC_ACCOUNT="FRAME-IDP"
-export HPC_QUEUE="debug-scaling"
-export HPC_WALLTIME="01:00:00"
+export HPC_QUEUE="R9046423"
+export HPC_WALLTIME="05:45:00"
 
 # Guardrail caps hpc_control.validate() checks every allocation against. Its
 # defaults (debug,debug-scaling,capacity; 4 nodes) reject the reservation above.
 # They must be here, not only in the Hermes config: the launch preflight sources
 # this file and starts the allocation before Hermes exists.
-export HPC_ALLOWED_QUEUES="debug,debug-scaling,capacity,R8984162"
-export HPC_MAX_NODES=256
+export HPC_ALLOWED_QUEUES="debug,debug-scaling,capacity,R9046423"
+export HPC_MAX_NODES=1024
 export HPC_MAX_WALLTIME="12:00:00"
 
 # Block maintenance -- QUEUE-AGNOSTIC. These make Loam keep one block of
@@ -138,8 +153,9 @@ export HPC_MAX_IDLETIME="${HPC_MAX_IDLETIME:-3600}"
 #
 # Because available_accelerators is pinned, 12 is a CEILING and not a request:
 # Parsl derives the per-node worker count from the accelerator list, so raising
-# this number buys nothing. At HPC_NNODES=10 the block therefore holds 10 x 12
-# = 120 agent slots, which is what caps HPC_POOL_SIZE at 119.
+# this number buys nothing. At HPC_NNODES=1024 the block therefore holds
+# 1024 x 12 = 12288 agent slots, so HPC_POOL_SIZE=5 is nowhere near the
+# ceiling; the formula is HPC_NNODES x 12 - 1.
 #
 # Do NOT quote walltime here: the manager's Jinja env already quotes
 # client-supplied strings, and a second pair renders ""01:00:00"" -> ParserError.

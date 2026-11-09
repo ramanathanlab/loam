@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Any, Mapping
 import hypothesis_review
 import hypothesis_workspace
 import ledger
+import tool_audit
 from campaign import CampaignContext, agent_registry, campaign_context, campaign_field, campaign_text, skills_text
 from hypothesis_tournament import Tournament
 from parser import REVIEWS_FILE, Parser
@@ -25,11 +27,18 @@ from parser import REVIEWS_FILE, Parser
 # Must match DISPATCH_TOOL_NAME in .loam/adapters/hermes/plugin/__init__.py.
 DISPATCH_TOOL = 'loam_dispatch_round'
 
-# How many evidence reviewers one turn may dispatch. A round produces at most
-# top_k candidates, so this binds only the opt-in backlog catch-up -- which
-# would otherwise put a campaign's whole accumulated pile of pending candidates
-# into a single delegate_task batch.
-REVIEW_BATCH = 5
+# How many evidence reviewers one turn may dispatch.
+#
+# This used to say it "binds only the opt-in backlog catch-up, because a round
+# produces at most top_k candidates" -- true while top_k was 5 and this was 5.
+# It stopped being true when top_k went to 100 for the 2026-11-09 reservation
+# run: at 5, one round's candidates would need twenty turns to clear, and a
+# round that cannot finish reviewing cannot close.
+#
+# So this tracks top_k rather than sitting under it. Raise them together. It
+# still bounds the backlog catch-up, now at a round's width rather than a fifth
+# of it.
+REVIEW_BATCH = 100
 
 
 # --- ledger -----------------------------------------------------------------
@@ -827,6 +836,75 @@ def _workdir(execution: Mapping[str, Any], plan_id: str, hypothesis_id: str) -> 
     return f"{root.rstrip('/')}/{plan_id}/{hypothesis_id}" if root else ''
 
 
+# Remote paths are POSIX regardless of where this hook runs, so compare them
+# with posixpath and never os.path.
+_HPC_PATH = re.compile(r"(?:/lus/flare/projects|/flare)/[^\s\"'`,;)\]}]*")
+
+
+def _allowed_hpc_roots(execution: Mapping[str, Any]) -> set[str]:
+    """Every spelling of the trees a remote child may legitimately name.
+
+    `/flare` and `/lus/flare/projects` are the same filesystem and the agents
+    use them interchangeably, so each configured root is registered under both.
+    The parent of workdir_root is included because that is HPC_BASE_DIR, which
+    legitimately holds siblings like `batches/` and `tools/`.
+    """
+    roots: set[str] = set()
+    for key in ('workdir_root', 'batch_root'):
+        value = str(execution.get(key) or '').strip()
+        if not value:
+            continue
+        normalized = posixpath.normpath(value)
+        for path in (normalized, posixpath.dirname(normalized)):
+            if not path or path in ('/', '.'):
+                continue
+            roots.add(path)
+            if path.startswith('/flare/'):
+                roots.add('/lus/flare/projects/' + path[len('/flare/'):])
+            elif path.startswith('/lus/flare/projects/'):
+                roots.add('/flare/' + path[len('/lus/flare/projects/'):])
+    return roots
+
+
+def _foreign_hpc_paths(blob: str, execution: Mapping[str, Any]) -> list[str]:
+    """HPC-looking absolute paths in `blob` that fall outside the configured tree.
+
+    A model that invents the project segment -- `/flare/SHAREIDP/...` for
+    `/flare/FRAME-IDP/...`, observed 2026-11-08 -- states it to a child as
+    settled fact ("The workspace is ..."), and the child then spends its budget
+    on a filesystem that does not exist. The write itself already fails closed
+    server-side, so this is not a safety check: it is what stops one
+    hallucinated root from being inherited by every descendant.
+    """
+    roots = _allowed_hpc_roots(execution)
+    if not roots:
+        return []  # nothing configured to check against -- fail open
+    seen: set[str] = set()
+    found: list[str] = []
+    for match in _HPC_PATH.findall(blob):
+        candidate = posixpath.normpath(match)
+        if any(candidate == root or candidate.startswith(root + '/') for root in roots):
+            continue
+        if match not in seen:
+            seen.add(match)
+            found.append(match)
+    return found[:4]
+
+
+def _foreign_path_block(arguments: Any, execution: Mapping[str, Any], workdir: str) -> dict[str, str] | None:
+    """Refuse a call that names an HPC tree outside the configured one."""
+    bad = _foreign_hpc_paths(json.dumps(arguments, default=str), execution)
+    if not bad:
+        return None
+    correct = workdir or str(execution.get('workdir_root') or '')
+    return _block(
+        f"These paths are not on this campaign's filesystem: {bad}. Nothing exists there and "
+        f"every write to them fails. Use {correct or 'the workdir named in your context'} "
+        "exactly as it appears in your context -- do not retype or infer the project "
+        "directory, and do not pass an invented path to a child."
+    )
+
+
 def _reserve_child_runs(payload: Mapping[str, Any], execution: Mapping[str, Any], workdir: str, plan_id: str,
                         hypothesis_id: str, goals: list[str]) -> tuple[list[str], str]:
     """Reserve one workspace run per child, and the folder the child writes under.
@@ -885,7 +963,7 @@ def hpc_tool_names(execution: Mapping[str, Any] | None) -> dict[str, str]:
     prefix = execution.get('tool_prefix', '')
     if not prefix and function_name and tool_name.endswith(function_name):
         prefix = tool_name[:-len(function_name)]
-    functions = ('run_code', 'run_batch', 'batch_status', 'list_batches', 'register_tool', 'list_tools', 'inspect_filesystem')
+    functions = ('run_code', 'write_files', 'run_batch', 'batch_status', 'list_batches', 'register_tool', 'list_tools', 'inspect_filesystem')
     names = {name: prefix + name for name in functions} if prefix else {}
     if tool_name:
         names[function_name or 'run_code'] = tool_name
@@ -1147,7 +1225,12 @@ def _record_review(payload: Mapping[str, Any], rows: list[dict[str, Any]], start
         # Structurally impossible today, and refused anyway: the whole point of
         # this step is that the acceptor is not the producer.
         return {'review_status': 'self_review_refused'}
-    contract, presence = hypothesis_review.extract_contract_object(summary)
+    # The spill path as well as the summary: a reviewer's contract is the last
+    # one written in a round and so the first the parent's shrinking context
+    # budget truncates. See hypothesis_provenance.extract_fenced_contract.
+    contract, presence = hypothesis_review.extract_contract_object(
+        summary, str(payload.get('child_summary_full_path') or '')
+    )
     if presence == 'absent' or contract is None:
         return {'review_status': 'contract_absent'}
     hypothesis_id = start.get('hypothesis_id', '')
@@ -1338,6 +1421,64 @@ def workspace_stop(payload: Mapping[str, Any]) -> None:
 
 # --- pre-tool policy ----------------------------------------------------------
 
+# A code-generator's `run_code` allowance, before and after it has submitted a
+# batch. These are not round numbers: across 2026-10-31, 11-01 and 11-06, 62
+# code-generator children made 524 `run_code` calls and 15 `run_batch` calls,
+# and only FIVE children ever batched at all -- so the allocation ran at about
+# 1% of its tiles while the agents worked one job at a time. The role
+# definition has told them to batch since the beginning and they do not.
+#
+# A flat cap cannot be the answer, because `run_code` is structurally required:
+# `run_batch` takes a script_path and an inputs_path that must already exist on
+# the cluster, and no tool here writes a file, so the only way to create them is
+# to run code that does. The old instruction ("`run_code` ONLY as a diagnostic
+# AFTER a batch has errored") was therefore impossible to obey, which is the
+# likeliest reason it was disregarded wholesale.
+#
+# So the budget is phased to match the real shape of the work. Writing a script
+# and an inputs file takes one or two calls; the five children that did batch
+# used 1, 2, 3, 7 and 10 calls before their first batch, and 1 to 6 after it for
+# diagnosis. STAGING=4 leaves room for the median batcher and redirects 48 of
+# the 55 children that never batched; AFTER_BATCH=6 covers diagnosis without
+# reopening the serial path. A refusal here is corrective, not terminal: the
+# child keeps `run_batch` and is told to use it.
+_RUN_CODE_STAGING = 4
+_RUN_CODE_AFTER_BATCH = 6
+
+
+def _run_code_budget(payload: Mapping[str, Any], names: Mapping[str, str]) -> dict[str, str] | None:
+    """Hold a code-generator to staging and diagnosis, not serial execution."""
+
+    session_id = str(payload.get('session_id') or '')
+    if not session_id:
+        # Nothing to attribute the budget to. Counting every code-generator's
+        # calls together would let one child spend another's allowance, which is
+        # worse than not holding the budget at all.
+        return None
+    counts = tool_audit.session_tool_counts(payload, session_id)
+    used = counts.get(names.get('run_code', ''), 0)
+    batches = counts.get(names.get('run_batch', ''), 0)
+    limit = _RUN_CODE_STAGING + (_RUN_CODE_AFTER_BATCH if batches else 0)
+    if used < limit:
+        return None
+    if not batches:
+        return _block(
+            f'code-generator has used its {limit} staging `run_code` calls for this '
+            'job and has submitted no batch. `run_code` is for writing your script '
+            'and inputs file and for diagnosing a failed row -- the science runs in '
+            '`run_batch`, one row per job, in parallel across the whole allocation. '
+            'Submit the batch now (a one-row batch is fine), then poll `batch_status`. '
+            'If a file is missing, write it in the same call that writes your script.'
+        )
+    return _block(
+        f'code-generator has used its {limit} `run_code` calls for this job '
+        f'({batches} batch(es) submitted). Further serial calls will not be allowed: '
+        'read results through `batch_status` and the batch output files, resubmit '
+        '`run_batch` (pass only `batch_id` to resume and skip finished rows), or '
+        'report what you have.'
+    )
+
+
 def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     """Block tool use that breaks a campaign tier's boundary.
 
@@ -1401,9 +1542,21 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
         skill_tools = ('skills_list', 'skill_view')
         if tool_name in skill_tools or execution.get('mode') != 'remote_mcp':
             return None
-        allowed = sorted(set(hpc_tool_names(execution).values()))
+        names = hpc_tool_names(execution)
+        allowed = sorted(set(names.values()))
         if tool_name not in allowed:
             return _block(f'code-generator may use only the HPC MCP tools {allowed} and the read-only skill tools {sorted(skill_tools)}')
+        # A child can inherit an invented root from its parent's context, so
+        # refuse it here too rather than letting it burn its run_code budget
+        # writing into a project directory that does not exist.
+        foreign = _foreign_path_block(
+            payload.get('arguments'), execution,
+            _workdir(execution, start['plan_id'], start['hypothesis_id']),
+        )
+        if foreign is not None:
+            return foreign
+        if tool_name == names.get('run_code'):
+            return _run_code_budget(payload, names)
         return None
 
     if role != 'hypothesis-validator':
@@ -1434,6 +1587,13 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
         for goal in goals
     ):
         return _block('hypothesis-validator may delegate only tagged code-generator children in its plan')
+
+    # The whole delegation is scanned, not just `goal`: the invented root
+    # observed on 2026-11-08 was in `context`, which is where a validator
+    # restates the workspace for its child.
+    foreign = _foreign_path_block(arguments, execution, _workdir(execution, plan_id, start['hypothesis_id']))
+    if foreign is not None:
+        return foreign
 
     used = sum(
         1 for row in rows
