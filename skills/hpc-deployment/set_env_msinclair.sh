@@ -4,7 +4,7 @@
 # LIVE for campaign1, which runs execution.mode: remote_mcp against the EGFR
 # binder-design goal. HPC_ENV_FILE in .hermes/.loam-home/config.yaml points here.
 #
-# Allocation: 10 nodes for one hour on the debug-scaling queue, charged to
+# Allocation: 128 nodes for one hour on the debug-scaling queue, charged to
 # FRAME-IDP. Endpoint, account, queue and paths are all set.
 #
 # Fully populated, and the worker-side import chain is verified: hpc_agent,
@@ -73,7 +73,7 @@ export HPC_INSPECT_ROOTS="/flare/FRAME-IDP/msinclair/hpc-run:/lus/flare/projects
 #
 # This also fixes the agent slot budget at HPC_NNODES x 12 -- see the CEILING
 # note above HPC_POOL_SIZE before changing it. The two must move together.
-export HPC_NNODES=10
+export HPC_NNODES=128
 export ACADEMY_EXCHANGE_URL="https://exchange.academy-agents.org/v1"
 export HPC_MCP_TRANSPORT="http"
 
