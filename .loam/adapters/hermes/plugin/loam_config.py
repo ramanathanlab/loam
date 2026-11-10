@@ -94,11 +94,12 @@ class CampaignConfig:
     goal: str
     rules: tuple[str, ...] = ()
     dir: str = ""
-    # Skills a code-generator should consult before writing code. Names only:
-    # these are resolved by the harness's own skill system, not by Loam, so
-    # unlike `rules` they name nothing this repo or `dir` contains. Named rather
-    # than left open because `skills_list` returns every skill installed in the
-    # Hermes home, and a child with three children of budget should not browse.
+    # The skills a validator plans with and a code-generator follows. Each name
+    # is a task folder, a tool, or `task/tool`; the hooks expand a task to its
+    # tools against the harness's skill library, so unlike `rules` these name
+    # nothing this repo or `dir` contains. Named rather than left open because
+    # `skills_list` returns every skill installed in the Hermes home, and an
+    # agent on a child budget should not browse.
     skills: tuple[str, ...] = ()
 
 
@@ -319,6 +320,26 @@ def _campaign_name(value: Any, field_name: str) -> str:
     return name
 
 
+def _skill_name(value: Any) -> str:
+    """A skill name: a task folder, a tool, or `task/tool`.
+
+    Unlike a goal or rules name this is resolved against the harness's skill
+    library rather than opened as a file under `.loam/`, and the library is two
+    levels deep (`structure-prediction/chai`), so one separator is allowed --
+    needed when a bare tool name is ambiguous across tasks. Each segment is
+    still a bare name, so `..`, an absolute path and any deeper nesting are
+    rejected exactly as before.
+    """
+
+    name = _clean_text(value)
+    segments = name.split("/")
+    if len(segments) > 2 or not all(_NAME_RE.fullmatch(segment) for segment in segments):
+        raise ValueError(
+            f"campaign.skills must be a skill name, optionally `task/tool`: {value!r}"
+        )
+    return name
+
+
 def _campaign_config(value: Any) -> CampaignConfig | None:
     """Parse the optional `campaign:` block.
 
@@ -346,7 +367,7 @@ def _campaign_config(value: Any) -> CampaignConfig | None:
     raw_skills = raw.get("skills", [])
     if not isinstance(raw_skills, list):
         raise ValueError(f"campaign.skills must be a list of names: {raw_skills!r}")
-    skills = tuple(_campaign_name(item, "skills") for item in raw_skills)
+    skills = tuple(_skill_name(item) for item in raw_skills)
     if len(set(skills)) != len(skills):
         raise ValueError(f"campaign.skills must not repeat a name: {list(skills)!r}")
     return CampaignConfig(

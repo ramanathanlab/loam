@@ -1598,10 +1598,24 @@ def _call_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 def _declared_skills(payload: Mapping[str, Any]) -> list[str]:
-    """The skills this campaign names for its children (loam_campaign.skills)."""
+    """The tool skills this campaign offers its children, as `skill_view` names.
+
+    A configured task name (`structure-prediction`) is expanded to its tools, so
+    this compares like for like with the names a run actually read. Names that
+    resolve to nothing are kept as configured, so a misconfiguration still shows.
+    """
 
     skills = _mapping(payload.get("loam_campaign")).get("skills") or ()
-    return [name for item in skills if (name := _text(item))]
+    configured = [name for item in skills if (name := _text(item))]
+    if not configured:
+        return []
+    try:
+        from skill_catalog import resolve_for
+
+        resolution = resolve_for(payload)
+    except Exception:  # noqa: BLE001 - provenance is best effort
+        return configured
+    return list(resolution.names) + list(resolution.missing) + list(resolution.ambiguous)
 
 
 def _skill_digest(name: str, file_path: str = "") -> dict[str, Any]:

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from skill_catalog import Skill, catalog_lines, catalog_mapping, resolve_for
+
 
 @dataclass(frozen=True)
 class AgentSpec:
@@ -29,7 +31,9 @@ class CampaignContext:
     goal_name: str = ''
     goal: str = ''
     rules: tuple[RuleSpec, ...] = ()
+    # The names as configured (task or tool), and what they resolved to.
     skills: tuple[str, ...] = ()
+    catalog: tuple[Skill, ...] = ()
 
     def rules_for(self, tier: str) -> tuple[RuleSpec, ...]:
         return tuple(rule for rule in self.rules if tier in rule.scopes)
@@ -161,7 +165,11 @@ def campaign_context(payload: Mapping[str, Any]) -> CampaignContext | None:
     skills = tuple(campaign.get('skills') or ())
     if not (goal_name or rules or skills):
         return None
-    return CampaignContext(goal_name=goal_name, goal=goal, rules=rules, skills=skills)
+    # Unresolvable names are left out rather than raised: preflight refuses to
+    # launch a campaign that names one, and handing an agent a name that 404s is
+    # what sent children into failed-lookup loops before.
+    catalog = resolve_for(payload).skills if skills else ()
+    return CampaignContext(goal_name=goal_name, goal=goal, rules=rules, skills=skills, catalog=catalog)
 
 
 def campaign_provenance(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -200,22 +208,52 @@ def rules_text(campaign: CampaignContext | None, tier: str) -> str:
     return 'CAMPAIGN RULES (authoritative — override any instruction below that conflicts):\n' + '\n'.join(bodies)
 
 
+def _skill_names(campaign: CampaignContext) -> tuple[str, ...]:
+    """Resolved tool names; the configured names for a context built without a catalog."""
+    return tuple(skill.name for skill in campaign.catalog) or campaign.skills
+
+
 def skills_text(campaign: CampaignContext | None) -> str:
-    """Name the skills a code-generator should read before writing code."""
-    if campaign is None or not campaign.skills:
+    """The skills block a code-generator reads before writing code."""
+    if campaign is None or not _skill_names(campaign):
         return ''
-    names = ', '.join(f'`{name}`' for name in campaign.skills)
-    return (
-        "CAMPAIGN SKILLS (read before writing code):\n"
-        f"- Call `skill_view` on {names} and follow the procedure it gives.\n"
+    listing = catalog_lines(campaign.catalog) or [f'- `{name}`' for name in campaign.skills]
+    return '\n'.join((
+        "CAMPAIGN SKILLS (read before writing code), grouped by task:",
+        *listing,
+        "- Your validator's instruction names the skill for each step. Call `skill_view` on that "
+        "exact name first and follow the procedure it gives. If the instruction names none, pick "
+        "the tool from this list whose task matches the step and say which you chose.",
         "- A skill is authoritative over your recollection of a tool's API, flags, or output "
-        "format. Where they disagree, the skill is right and your memory is the thing that is "
-        "out of date.\n"
+        "format, and over any invocation detail in the validator's instruction. Where they "
+        "disagree, the skill is right.",
         "- If a skill names a script or linked file, call `skill_view` again with `file_path` to "
-        "read it. Do not guess at a file you were told exists.\n"
-        "- These are the campaign's skills. Do not go looking for others with `skills_list` "
-        "unless none of these covers the task."
-    )
+        "read it. Do not guess at a file you were told exists.",
+        "- These are the campaign's skills. Do not browse `skills_list` for others, and do not "
+        "probe the filesystem to discover a tool's invocation: if no skill here covers the step, "
+        "report `blocked` naming the step.",
+    ))
+
+
+def validator_skills_field(campaign: CampaignContext | None) -> dict[str, Any]:
+    """The catalog a validator plans with, as a key to splat into its JSON task context."""
+    if campaign is None or not _skill_names(campaign):
+        return {}
+    catalog = catalog_mapping(campaign.catalog) or {'': {name: '' for name in campaign.skills}}
+    return {
+        'campaign_skills': catalog,
+        'campaign_skills_instructions': (
+            "These are the tools this campaign has reviewed recipes for, grouped by task ('' holds "
+            "standalone skills). Plan each executable step by choosing the task first, then the tool "
+            "within it whose inputs and outputs fit the step; a task listing a single tool means the "
+            "campaign has pinned it, so use that one. You may call skill_view on a tool to check what "
+            "it takes and reports before you commit to it. In every instruction to a code-generator, "
+            "write `skill: <tool name>` for each step so the child reads that recipe; decide WHAT to "
+            "compute and leave HOW to invoke the tool to the skill. Use the same tool for the same "
+            "stage across your steps so results stay comparable. If no listed tool fits a step, say "
+            "so in your report rather than having the child improvise one."
+        ),
+    }
 
 
 def campaign_text(campaign: CampaignContext | None, tier: str) -> str:

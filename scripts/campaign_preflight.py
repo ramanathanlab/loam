@@ -212,6 +212,35 @@ def check_role_endpoint_capability(hermes_home: Path, repo: Path) -> dict[str, A
     return info
 
 
+def check_skills(repo: Path, hermes_home: Path, loam_config: Path) -> dict[str, Any]:
+    """Refuse to launch with a `campaign.skills` name the skill library cannot resolve.
+
+    A name may be a task directory (`structure-prediction`, expanded to every tool
+    in it) or a tool (`chai`, or `structure-prediction/chai`). One that resolves
+    to nothing otherwise surfaces only inside a leaf agent, as a `skill_view` 404
+    mid-round; checked here it costs the operator one edit.
+    """
+
+    loam = _load_yaml(loam_config)
+    profile_name = str(os.environ.get("LOAM_PROFILE") or loam.get("active_profile") or "")
+    profile = (loam.get("profiles") or {}).get(profile_name) or {}
+    names = list(((profile.get("campaign") or {}).get("skills")) or [])
+    if not names:
+        return {"configured": [], "resolved": []}
+    sys.path.insert(0, str(repo / ".loam" / "hooks"))
+    from skill_catalog import resolve
+
+    library = hermes_home / "skills"
+    resolution = resolve(names, [library])
+    if resolution.errors():
+        raise RuntimeError(
+            "; ".join(resolution.errors())
+            + f" (library {library}; name a task folder or a tool under it, and run"
+            " scripts/install_skills.py if the library is missing this checkout's skills)"
+        )
+    return {"configured": names, "resolved": list(resolution.names)}
+
+
 def check_inference(hermes_home: Path, loam_config: Path, timeout: float) -> dict[str, Any]:
     """Smoke every configured role, skipping duplicate endpoint/key/model triples."""
 
@@ -434,6 +463,8 @@ def main() -> int:
 
     report: dict[str, Any] = {"ready": False}
     try:
+        # First: it is the cheapest check and needs nothing started.
+        report["skills"] = check_skills(args.repo, args.hermes_home, args.loam_config)
         # Before the inference check, which is what depends on it.
         if not args.no_auto_start:
             report["proxy_start"] = ensure_proxy_started(

@@ -81,12 +81,15 @@ profiles:
       dir: /ABS/PATH/TO/your/campaign      # absolute; `~` is expanded
       goal: my-campaign                    # <dir>/campaigns/my-campaign.md
       rules: [my-protocol]                 # <dir>/rules/my-protocol.md
-      # Skills a code-generator must consult before writing code. Names from
-      # the Hermes skill library, NOT files under `dir` -- the harness resolves
-      # these, Loam only names them. Omit and children write from recollection,
-      # which is what this exists to stop. `skills_list` returns the whole
-      # library, so name the campaign's own rather than letting a child browse.
-      skills: [chai, proteinmpnn]
+      # Skills the validator plans with and the code-generator follows. Names
+      # from the Hermes skill library, NOT files under `dir`. Each entry is a
+      # task folder (`structure-prediction` -- every tool in it, so the
+      # validator chooses per step) or one tool (`chai`, or
+      # `structure-prediction/chai` when a bare name is ambiguous). Loam expands
+      # a task to its tools and shows both agents the result grouped by task;
+      # preflight refuses a name that resolves to nothing. Omit the key and
+      # children write from recollection, which is what this exists to stop.
+      skills: [structure-prediction/chai, proteinmpnn]
     # Pando-style folder per hypothesis, enforced by the hooks
     # (.loam/README.md, "Hypothesis workspace"). Off unless enabled.
     workspace:

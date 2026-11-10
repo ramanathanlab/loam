@@ -100,16 +100,22 @@ profiles:
       goal: binder-design
       rules: [binder-protocol, binder-constraint]
 
-      # Skills a code-generator must consult before writing code. These must be
-      # the LEAF names `hermes skills list` prints in its first column, not the
-      # category in its second: install_skills.py links the top-level tree, but
-      # Hermes exposes the leaves. `structure-prediction` is a category and
-      # resolves to nothing; `chai` is the skill. A bad name is only
-      # shape-checked here and fails inside a leaf agent mid-round.
+      # Skills the validator plans with and the code-generator follows. Each
+      # entry is a task folder or a tool inside one:
+      #   structure-prediction        -> every tool in it (chai, boltz, ...);
+      #                                  the validator picks one per step
+      #   chai                        -> pins that single tool
+      #   structure-prediction/chai   -> the same, spelled unambiguously
+      # A task folder has no SKILL.md of its own, so `skill_view` resolves only
+      # the tool names; Loam expands a task to its tools against
+      # $HERMES_HOME/skills and shows both agents the result grouped by task.
+      # Preflight refuses to launch on a name that resolves to nothing, so a
+      # typo costs one edit instead of a round of 404s inside a leaf agent.
       #
-      # One per funnel stage, and naming exactly one folding tool is deliberate:
-      # left to pick among chai/boltz/esmfold2/protenix, 150 validators will not
-      # all choose the same one and their results stop being comparable.
+      # Naming exactly one folding tool is deliberate: left to pick among
+      # chai/boltz/esmfold2/protenix, 150 validators will not all choose the
+      # same one and their results stop being comparable. Name the task instead
+      # where choosing per step is the point.
       skills: [rfdiffusion3, proteinmpnn, chai, openmm, pyrosetta]
 
     execution:

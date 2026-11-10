@@ -687,7 +687,9 @@ class HypothesisOrchestrationTests(unittest.TestCase):
         self.assertIn("[loam-agent-role=code-generator]", task["goal"])
         self.assertIn("[loam-plan-id=plan-1] [loam-hypothesis-id=h-1]", task["goal"])
         self.assertIn("Use 500 points; report the peak.", task["context"])
-        self.assertIn("mcp_hpc_list_tools", task["context"])
+        # The registry is not advertised: it competed with the campaign skills.
+        self.assertNotIn("mcp_hpc_list_tools", task["context"])
+        self.assertIn("mcp_hpc_write_files", task["context"])
         self.assertIn("mcp_hpc_run_batch", task["context"])
         self.assertIn("/lus/campaign/work/plan-1/h-1", task["context"])
         self.assertIn("never /tmp", task["context"])

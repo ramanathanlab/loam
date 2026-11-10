@@ -20,7 +20,10 @@ import hypothesis_review
 import hypothesis_workspace
 import ledger
 import tool_audit
-from campaign import CampaignContext, agent_registry, campaign_context, campaign_field, campaign_text, skills_text
+from campaign import (
+    CampaignContext, agent_registry, campaign_context, campaign_field, campaign_text, skills_text,
+    validator_skills_field,
+)
 from hypothesis_tournament import Tournament
 from parser import REVIEWS_FILE, Parser
 
@@ -766,6 +769,7 @@ def _validator_tasks(plan_id: str, selected: list[dict[str, Any]], payload: Mapp
                     'loam_validator_contract': 'v1',
                     'selected_hypothesis': item,
                     **campaign_field(campaign, 'hypothesis-validator'),
+                    **validator_skills_field(campaign),
                     'execution_contract': execution,
                     'child_template': {
                         'role': 'leaf',
@@ -791,8 +795,9 @@ def _validator_tasks(plan_id: str, selected: list[dict[str, Any]], payload: Mapp
                         "falsify a claim about a design strategy. "
                         "Delegate each executable step to a code-generator child: role=leaf, goal = what to compute "
                         "and the acceptance condition, ending with child_template.goal_suffix; context = exact "
-                        "inputs, parameter ranges and expected outputs. Children write their own code, can reuse "
-                        "registered HPC tools, and run large sweeps as batches. At most max_children children in "
+                        "inputs, parameter ranges and expected outputs, and `skill: <tool name>` from campaign_skills "
+                        "for each step. Children write their own code from that skill and run large sweeps "
+                        "as batches. At most max_children children in "
                         "total -- a LIFETIME budget, not a concurrency limit, so a finished child does not free "
                         "a slot. With max_children=1 you get ONE child: give it the complete sweep in its first "
                         "instruction, because there is no second child to widen later. A replacement is granted "
@@ -1125,11 +1130,12 @@ def _child_context(instruction: str, execution: Mapping[str, Any], workdir: str,
         "batch's script and JSONL input files, harvest its results, and emit the required output manifest.",
     ]
     if 'run_batch' in names:
+        # list_tools/register_tool are deliberately not advertised: "call list_tools
+        # FIRST" outranked the campaign skills, and reusing a registered script
+        # skipped the reviewed recipe. The skill is how a child gets the invocation.
         lines += [
-            f"- `{names['list_tools']}`: call this FIRST; reuse a registered tool whose params fit.",
-            f"- `{names['register_tool']}`: save a script you will run many times as a named tool "
-            "(name, script_path, params as {name: int|float|str|bool|list|dict}, description, example "
-            "row). It is smoke-tested on the example; pass skip_smoke only if it needs a GPU to start.",
+            f"- `{names['write_files']}`: write several files in one call ({{absolute_path: contents}}); "
+            "stage the batch's script and JSONL inputs with it. It executes nothing.",
             f"- `{names['run_batch']}`: many runs at once: tool=<name> (or script_path) and inputs_path, "
             "a JSONL file with one row of params per line. Returns a batch_id at once. gpus is tiles "
             "PER ROW: rows run side by side on all free tiles, so a script using one device (xpu:0) "
@@ -1596,11 +1602,13 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     if tool_name != 'delegate_task':
         observation = ('batch_status', 'inspect_filesystem', 'list_batches')
         names = hpc_tool_names(execution)
-        if tool_name in {names[key] for key in observation if key in names}:
+        # Reading a skill is how the validator chooses a tool for a step; like
+        # polling, it only looks.
+        if tool_name in {names[key] for key in observation if key in names} or tool_name in ('skills_list', 'skill_view'):
             return None
         return _block(
             "hypothesis-validator must delegate executable work to code-generator; "
-            f"it may call only the read-only tools {sorted(observation)} itself"
+            f"it may call only the read-only tools {sorted(observation)}, skill_view and skills_list itself"
         )
 
     arguments = payload.get('arguments')
