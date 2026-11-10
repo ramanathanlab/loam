@@ -41,6 +41,11 @@ Keep canonical reconstruction narrowly scoped to opted-in campaign workflows. Re
 ## Evidence and provenance rules
 
 - Rankings and agent summaries are advisory, never empirical evidence by themselves.
+- Treat every asynchronous child report as unvalidated orchestration input until the independent review phase has completed. A reported `run_batch` ID, completion count, artifact path, timeout, or scheduler explanation is not itself a reconciled observation.
+- Preserve the distinction between three states: completed scientific observation, blocked/unfinished execution, and refutation. A zero-success or incomplete batch supports only a completion-gate failure unless a finished experiment contains a result that contradicts the hypothesis. Report an evidence score of `0.00` for an untested or operationally blocked hypothesis; do not convert it into a biological negative.
+- Do not call a batch scientifically broad merely because it has hundreds of rows. Before accepting submission, ensure rows vary in executable scientific parameters (for example seed, round, receptor state, epitope, geometry, and counter-screen), not only candidate IDs or output paths. A scheduler rejection for invariant jobs is a manifest defect.
+- Keep prerequisite/reference retrieval separate from hypothesis evidence. Successful retrieval of EGFR or paralog inputs, or a verified structure identifier, establishes inputs only; it does not support affinity, selectivity, state stabilization, or epitope superiority.
+- A campaign success gate requiring a complete funnel remains unmet when rows are queued, running, unfinished, or only at reference verification/backbone generation. Do not report a shortlist until generated backbone, designed sequence, co-fold, required paralog counter-screens, and independent scoring artifacts have all been inspected.
 - Require concrete execution evidence from the mandated local/remote runtime.
 - Persist append-only lifecycle and campaign records.
 - Treat missing lifecycle, missing output, invalid score, duplicate reasoner, or missing steering as a non-crediting failure.
@@ -51,7 +56,7 @@ Keep canonical reconstruction narrowly scoped to opted-in campaign workflows. Re
 
 ## Loam round sequencing
 
-Use the canonical `loam_dispatch_round` for a pending plan rather than hand-composing validator or reviewer batches. After validators finish, dispatch the independent evidence-reviewer phase when the dispatcher requires it; after all review threads are terminal, dispatch exactly one reasoner. Do not dispatch a reasoner early, duplicate it, or report the round as synthesized before its returned brief is available.
+Use the canonical `loam_dispatch_round` for a pending plan rather than hand-composing validator or reviewer batches. After validators finish, dispatch the independent evidence-reviewer phase when the dispatcher requires it; after all review threads are terminal, dispatch exactly one reasoner. Do not dispatch a reasoner early, duplicate it, or report the round as synthesized before its returned brief is available. When the reasoner returns a terminal synthesis, treat that round as closed: do not dispatch another reasoner in response to a repeated "continue" or an asynchronous completion notice. Launch a new round only when persisted campaign state exposes a new pending plan/tournament; use the canonical round dispatcher for that new plan. If the dispatcher reports no pending work, stop and report the exact state rather than retrying.
 
 Each round's report should state: what was actually executed, which artifacts were independently verified, the evidence score, the first unmet acceptance criterion, and the single next discriminating action. A successful prerequisite phase is not a successful campaign round when the campaign's acceptance bar requires a complete funnel.
 

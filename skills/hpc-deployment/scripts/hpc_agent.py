@@ -1027,8 +1027,24 @@ _MAX_RESUME_AGE_SECONDS = max(
 _ROW_IDENTITY_KEYS = frozenset({
     "id", "name", "label", "tag", "index", "idx", "row", "run", "run_id",
     "out", "outdir", "out_dir", "output", "output_dir", "outpath", "out_path",
-    "dir", "workdir", "work_dir", "path", "prefix",
+    "dir", "workdir", "work_dir", "path", "prefix", "key", "slug", "uid",
+    "candidate", "candidate_id", "sample", "sample_id", "item", "item_id",
 })
+
+# Any key ENDING in one of these is an identifier too. A fixed set of names was
+# not enough: on 2026-11-10 a batch of 384 rows shaped {"candidate_id": "..."}
+# passed the distinctness check with 384 "distinct" payloads and every row then
+# fetched the same UniProt record and the same PDB structure -- 384 identical
+# jobs, because `candidate_id` was not in the set above. A guard that trusts an
+# allowlist of label names is bypassable by renaming the label.
+_IDENTITY_SUFFIXES = ("_id", "_name", "_label", "_tag", "_idx", "_index",
+                      "_key", "_slug", "_uid", "_no", "_num")
+
+
+def _is_identity_key(key: object) -> bool:
+    """True when a key only NAMES or PLACES a row rather than parameterising it."""
+    text = str(key).lower()
+    return text in _ROW_IDENTITY_KEYS or text.endswith(_IDENTITY_SUFFIXES)
 
 
 def _row_signature(row: object) -> str:
@@ -1037,7 +1053,7 @@ def _row_signature(row: object) -> str:
 
     if not isinstance(row, dict):
         return repr(row)
-    payload = {k: v for k, v in row.items() if str(k).lower() not in _ROW_IDENTITY_KEYS}
+    payload = {k: v for k, v in row.items() if not _is_identity_key(k)}
     return _json.dumps(payload, sort_keys=True, default=str)
 
 

@@ -17,6 +17,8 @@ Use this for end-to-end campaigns where a coordinator must repeatedly delegate s
 6. For each round, inspect lifecycle artifacts before proceeding: selected validators, code-generator starts/stops, validator terminal reports and scores, exactly one reasoner, then round synthesis.
 7. Only start the next coordinator turn after the reasoner has completed. Confirm the previous reasoner brief appears in the next coordinator prompt or persisted steering material.
 8. Stop at the first unmet criterion. Preserve the isolated state for diagnosis; never fabricate lifecycle events, evidence, scores, or synthesis.
+9. Use the campaign's canonical round-dispatch operation when one is provided; do not reconstruct a validator/reviewer/reasoner batch from summaries. This preserves the persisted plan, exact hypothesis set, role markers, and dependency ordering.
+10. If dispatch fails before child creation, classify the round as infrastructure-blocked and stop retrying that same round until the prerequisite is repaired. A repeated identical path/configuration error is not a scientific replicate and must not trigger a new reviewer or reasoner cycle.
 
 ## Enforce contracts in code, not prose alone
 
