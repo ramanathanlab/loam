@@ -521,3 +521,24 @@ all audit attempts and distinguish successful workflows from authorization or
 licensed-software blockers. Refresh a report with
 `scripts/summarize_jupiter_smoke.py --runs <audit-dir> [<repair-dir> ...]`.
 This also updates each skill's own `references/smoke-test.md` with its status.
+
+### Develop integration: batched science and tournament options
+
+See [the integration inventory](ports/jupiter/develop-integration.md) for the four incoming commits, compatibility decisions and remaining operational requirements. The Jupiter runtime now uses Jnana commit `4c4cdfb42bf042a462eaf091dfbdf24a2ce34598`, which implements `batch_size` generation and `scheme`, `rounds`, `workers` tournament options. Reproduce the source update with `bash scripts/update_jupiter_jnana.sh` after the base Jnana environment is installed. Its dependencies are unchanged; Hermes remains stock 0.20.6. This is not a campaign preflight check.
+
+Optional profile settings under `hypothesis_tournament`:
+
+```yaml
+scheme: swiss
+rounds: 2
+workers: 2
+batch_size: 2
+```
+
+Omitted fields retain `random`, 1, 1, 1 respectively. Parallel match workers require Swiss pairings; random tournaments remain single-worker. These options do not change the selected Argo endpoint/model.
+
+Fresh delegated campaigns stage scripts/JSONL with `write_files` and execute every scientific job through `run_batch`, including one-row jobs. Review inherited `execution.setup` text before reusing an old campaign; instructions to run science inside `run_code` conflict with the new policy. Keep Jupiter-specific skill names and their direct CUDA/native RFD4 recipe, `num_workers=0`, 6000-second row timeouts and the existing driver/allocation limits. Manual operator installation smoke tests remain separate.
+
+Existing MCP servers and workers retain their loaded Python classes and tool schemas. Before a new campaign using `write_files`, restart/recreate the MCP server and pool together so the writer action and latest batch behavior are available on both ends. This repository integration did not restart live services or cancel allocations. Additional software inspection roots remain read-only for `write_files`; only the campaign tree is writable through that staging tool.
+
+Allocation recovery inherits the launch's `HPC_ENV_FILE` (export the campaign's `hpc_env.sh` path before launch); Jupiter defaults preserve an existing value. The controller permits the agreed two-hour test walltime while retaining the one-node cap. Source the Jupiter environment before invoking Hermes so its `${HPC_ENV_FILE}` reference resolves.

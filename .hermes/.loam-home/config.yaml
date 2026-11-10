@@ -29,10 +29,10 @@ mcp_servers:
     args:
     - /e/project1/deepwing/meigooni1/agent/loam/skills/hpc-deployment/scripts/hpc_control.py
     env:
-      HPC_ENV_FILE: /e/project1/deepwing/meigooni1/agent/loam/skills/hpc-deployment/set_env_jupiter.sh
+      HPC_ENV_FILE: ${HPC_ENV_FILE}
       HPC_ALLOWED_QUEUES: booster,largebooster
       HPC_MAX_NODES: '1'
-      HPC_MAX_WALLTIME: 00:30:00
+      HPC_MAX_WALLTIME: 02:00:00
       GLOBUS_COMPUTE_USER_DIR: /e/project1/deepwing/meigooni1/agent/software/globus-compute/endpoints
     timeout: 300
 approvals:

@@ -1,0 +1,39 @@
+{
+  "develop": "416228d",
+  "pre_rebase_checkpoint": "a05745d",
+  "jnana_commit": "4c4cdfb42bf042a462eaf091dfbdf24a2ce34598",
+  "python": "3.12.11",
+  "tests": {
+    "jupiter_baseline": {
+      "passed": 43
+    },
+    "focused_integration": {
+      "passed": 174,
+      "subtests_passed": 35
+    },
+    "repository": {
+      "passed": 576,
+      "skipped": 3,
+      "subtests_passed": 101,
+      "excluded_files": [
+        "tests/test_mcp_dispatch_hermes.py",
+        "tests/test_jupiter_internet_proxy.py"
+      ],
+      "includes_actual_jnana_runtime_tests": true
+    },
+    "final_runtime_and_recovery": {
+      "passed": 9
+    },
+    "jnana_upstream": {
+      "passed": 14,
+      "deselected": 1,
+      "reason": "Unbounded fake pool never records a match; bounded equivalent covered in Loam integration test"
+    }
+  },
+  "inference_configuration_preserved": true,
+  "hermes_source_patched": false,
+  "services_restarted": false,
+  "jobs_cancelled": false,
+  "live_campaign_started": false,
+  "test_environment": "Temporary local-disk Python with matching primary dependency versions; production dependencies unchanged"
+}

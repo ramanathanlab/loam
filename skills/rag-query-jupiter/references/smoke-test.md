@@ -15,7 +15,7 @@ Results are persisted in `<audit-directory>/summary.json` and `rag-query/`, outs
 
 ## Latest recorded manual validation
 
-Status: **passed**. Workload: FAISS retrieval followed by login-node Argo answer. 
+Status: **passed**. Workload: FAISS retrieval followed by login-node Argo answer.
 
 Evidence directory: `/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/rag-query`. Preserve failed attempts; the root `summary.json` records this run.
 

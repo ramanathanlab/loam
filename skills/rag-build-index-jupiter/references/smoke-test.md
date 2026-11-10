@@ -15,7 +15,7 @@ Results are persisted in `<audit-directory>/summary.json` and `rag-build-index/`
 
 ## Latest recorded manual validation
 
-Status: **passed**. Workload: Pretrained embeddings, FAISS/Arrow persistence and reload. 
+Status: **passed**. Workload: Pretrained embeddings, FAISS/Arrow persistence and reload.
 
 Evidence directory: `/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/rag-build-index`. Preserve failed attempts; the root `summary.json` records this run.
 

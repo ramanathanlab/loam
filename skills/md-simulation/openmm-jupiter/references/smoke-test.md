@@ -15,7 +15,7 @@ Results are persisted in `<audit-directory>/summary.json` and `openmm/`, outside
 
 ## Latest recorded manual validation
 
-Status: **passed**. Workload: Real protein CUDA minimization and 10 MD steps. 
+Status: **passed**. Workload: Real protein CUDA minimization and 10 MD steps.
 
 Evidence directory: `/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110/openmm`. Preserve failed attempts; the root `summary.json` records this run.
 

@@ -24,7 +24,7 @@ stopped endpoint is under `$LOAM_SOFTWARE_ROOT/globus-compute/endpoints/loam-jul
 Source `scripts/globus_compute_jupiter_env.sh` before starting the endpoint yourself.
 After registration, the Jupiter env file discovers its verified manager UUID as
 `HPC_GLOBUS_ENDPOINT_ID`. Its default allocation is one `deepwing` / `booster` node
-for 15 minutes, with operator caps of one node and 30 minutes. The live Slurm
+for 15 minutes, with operator caps of one node and two hours. The live Slurm
 partition/QOS policies still apply. The template uses `ib0`, observed on this login
 node; worker-to-interchange reachability must pass the real endpoint smoke test.
 Register/authenticate the endpoint before starting the server. Read `JUPITER.md`.
@@ -33,11 +33,20 @@ Pool capacity is `nodes * 4` GPUs on Jupiter. Query `pool_status` before sizing
 batches; all campaign code-generators share the pool. The Aurora tile counts and
 PBS commands below do not apply to Jupiter.
 
+
+## Campaign batch execution after the develop integration
+
+For a delegated campaign code-generator, stage the script and input JSONL together with `mcp__hpc__write_files`, then run all science through `mcp__hpc__run_batch` (a one-row batch is valid). Poll `batch_status` until `unfinished == 0` and inspect actual recorded outputs before reporting success. Use `gpus=1` for GPU work, preserve assigned `CUDA_VISIBLE_DEVICES`, and activate this tool's own venv inside each row.
+
+Use `timeout_each=6000` and a subprocess deadline no larger than 6000 seconds per scientific row. Keep the 6300-second MCP and 14400-second Hermes outer deadlines; allocation walltime still limits completion. `run_code` is for bounded staging fallback, harvesting/manifests and post-error diagnosis. Loam counts its calls (four before a batch, ten total after submitting one), so it is not a serial scientific execution path.
+
+`write_files` may stage only under the campaign's `HPC_BASE_DIR`; additional read-only inspection roots do not grant write access to installed software. The operator's manual installation smoke suite is separate from delegated campaign execution and may still use `run_code`; no software tests were added to campaign preflight.
+
 ## Sole responsibility
 
 This skill does exactly this, and nothing else:
 
-1. Start a **local FastMCP server** with two public tools: `run_code` and bounded, read-only `inspect_filesystem`. The second tool exists solely to provide `ls`/`cat`/`tail`-equivalent worker visibility without SSH.
+1. Start a **local FastMCP server** with `run_code`, bounded campaign text staging via `write_files`, read-only `inspect_filesystem`, batch/status tools and pool status (batch execution requires cluster mode). The second tool exists solely to provide `ls`/`cat`/`tail`-equivalent worker visibility without SSH.
 2. The server uses a **Globus Compute `Executor`** targeting the **endpoint UUID supplied by the user**.
 3. The submitted endpoint job uses its **Parsl `PBSProProvider`** to request the **user-supplied allocation** (`account`, `queue`, `walltime`, `nodes_per_block`, block count, filesystem/place settings, and worker environment).
 4. Within that allocation, start Academy agents in one of two modes. **Direct mode** starts one `HpcAgent` per pinned GPU/tile, and the agent runs the payload itself. **Cluster mode** (`create_server(cluster=True)`, what `set_env.sh` configures) starts one `HpcClusterAgent` that runs an Ensemble Launcher cluster, plus `HPC_POOL_SIZE` `HpcClientAgent`s that submit into it; EL owns GPU placement, so the client agents are deliberately unpinned. Every agent exposes `run_code` plus one constrained, read-only `inspect_filesystem` action. `run_code` executes submitted Python in a subprocess and returns `{stdout, stderr, returncode}`; `inspect_filesystem` supports `ls`, `cat`, and `tail` without giving the harness SSH.
@@ -356,3 +365,5 @@ when running the payload. Inspection stays read-only and never creates paths.
 Path restrictions, symlink-escape rejection, binary-file rejection and size
 limits remain enforced. Pool lookup and unexpected worker failures remain MCP
 errors. Do not classify an explicit refusal as a successful scientific result.
+
+Allocation recovery inherits the launch's `HPC_ENV_FILE` (export the campaign's `hpc_env.sh` path before launch); Jupiter defaults preserve an existing value. The controller permits the agreed two-hour test walltime while retaining the one-node cap. Source the Jupiter environment before invoking Hermes so its `${HPC_ENV_FILE}` reference resolves.

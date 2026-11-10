@@ -10,8 +10,9 @@ Public actions are deliberately narrow:
 - register_tool / list_tools: a library of frozen, versioned, smoke-tested
   scripts with typed params that run_batch(tool=...) can run by name.
 
-Scheduler operations, generic shell execution, environment dumps, and file
-mutation are intentionally absent. The endpoint/Parsl provider owns allocation
+Text staging through write_files is confined to the campaign tree; extra
+inspection roots remain read-only. Scheduler operations, generic shell execution,
+environment dumps, and general file mutation are intentionally absent. The endpoint/Parsl provider owns allocation
 and accelerator pinning before this process starts.
 """
 from __future__ import annotations
@@ -254,7 +255,7 @@ class HpcAgent(Agent):
     async def write_files(self, files: dict) -> dict:
         """Write text files into the campaign tree, creating parent directories."""
         return await asyncio.to_thread(
-            _write_files, files, self.base_dir, self.inspect_roots
+            _write_files, files, self.base_dir, []
         )
 
     @action

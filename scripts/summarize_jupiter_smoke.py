@@ -109,7 +109,7 @@ for name, case in cases.items():
     reference = skill.parent / "references/smoke-test.md"
     marker = "\n## Latest recorded manual validation\n"
     text = reference.read_text().split(marker)[0]
-    text += marker + f"\nStatus: **{case['status']}**. Workload: {case['workload']}. {case['note']}\n"
+    text += marker + f"\nStatus: **{case['status']}**. Workload: {case['workload']}. {case['note']}".rstrip() + "\n"
     current = case["latest_attempt"]
     if current.get("audit_directory"):
         text += f"\nEvidence directory: `{current['audit_directory']}/{name}`. Preserve failed attempts; the root `summary.json` records this run.\n"

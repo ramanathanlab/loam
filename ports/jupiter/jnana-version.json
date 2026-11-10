@@ -1,0 +1,29 @@
+{
+  "source_url": "https://github.com/acadev/Jnana.git",
+  "branch": "feature/periodic-hypothesis-tournament",
+  "commit": "4c4cdfb42bf042a462eaf091dfbdf24a2ce34598",
+  "previous_commit": "aa70a1ba",
+  "source_path": "software/jnana-engine",
+  "environment": "software/jnana-engine/.venv",
+  "dependency_changes": false,
+  "tournament_keywords": [
+    "scheme",
+    "rounds",
+    "workers"
+  ],
+  "generation_keywords": [
+    "batch_size"
+  ],
+  "defaults": {
+    "scheme": "random",
+    "rounds": 1,
+    "workers": 1,
+    "batch_size": 1
+  },
+  "verification": {
+    "generation_batch_count_and_remainder": "passed",
+    "deadline_bounded_tournament": "passed",
+    "upstream_tests_passed": 14,
+    "upstream_unbounded_fixture_deselected": 1
+  }
+}

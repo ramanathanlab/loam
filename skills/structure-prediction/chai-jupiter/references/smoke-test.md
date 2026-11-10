@@ -15,7 +15,7 @@ Results are persisted in `<audit-directory>/summary.json` and `chai/`, outside c
 
 ## Latest recorded manual validation
 
-Status: **passed**. Workload: Single-sequence trained-model folding and confidence output. 
+Status: **passed**. Workload: Single-sequence trained-model folding and confidence output.
 
 Evidence directory: `/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/chai`. Preserve failed attempts; the root `summary.json` records this run.
 

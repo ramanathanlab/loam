@@ -15,7 +15,7 @@ Results are persisted in `<audit-directory>/summary.json` and `boltz/`, outside 
 
 ## Latest recorded manual validation
 
-Status: **passed**. Workload: Single-sequence CUDA folding with native PyTorch kernels. 
+Status: **passed**. Workload: Single-sequence CUDA folding with native PyTorch kernels.
 
 Evidence directory: `/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-boltz-final-20261110/boltz`. Preserve failed attempts; the root `summary.json` records this run.
 

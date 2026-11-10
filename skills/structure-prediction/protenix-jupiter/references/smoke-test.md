@@ -15,7 +15,7 @@ Results are persisted in `<audit-directory>/summary.json` and `protenix/`, outsi
 
 ## Latest recorded manual validation
 
-Status: **passed**. Workload: Mini ESM CUDA folding, real checkpoint/embedding path. 
+Status: **passed**. Workload: Mini ESM CUDA folding, real checkpoint/embedding path.
 
 Evidence directory: `/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/protenix`. Preserve failed attempts; the root `summary.json` records this run.
 

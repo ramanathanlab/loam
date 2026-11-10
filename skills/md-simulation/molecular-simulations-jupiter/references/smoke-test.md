@@ -15,7 +15,7 @@ Results are persisted in `<audit-directory>/summary.json` and `molecular-simulat
 
 ## Latest recorded manual validation
 
-Status: **passed**. Workload: AmberTools explicit-solvent build and CUDA minimization. 
+Status: **passed**. Workload: AmberTools explicit-solvent build and CUDA minimization.
 
 Evidence directory: `/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110/molecular-simulations`. Preserve failed attempts; the root `summary.json` records this run.
 

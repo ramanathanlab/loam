@@ -15,7 +15,7 @@ Results are persisted in `<audit-directory>/summary.json` and `esmfold2/`, outsi
 
 ## Latest recorded manual validation
 
-Status: **passed**. Workload: Native ESMFold2 trained-model folding. 
+Status: **passed**. Workload: Native ESMFold2 trained-model folding.
 
 Evidence directory: `/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/esmfold2`. Preserve failed attempts; the root `summary.json` records this run.
 

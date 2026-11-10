@@ -16,7 +16,7 @@ PY="$REPO/.venv/bin/python"
 
 Model weights download on first use. Specify MSA inputs or explicitly select the MSA service. Use the GPU accelerator, with one visible device.
 
-Run GPU workloads through `mcp__hpc__run_code` or `run_batch(gpus=1)`. Jupiter has four GH200 GPUs per node. Keep the CUDA_VISIBLE_DEVICES assigned by Ensemble Launcher; inside a one-GPU task use cuda:0. Write outputs to the campaign workspace. Do not use Aurora modules, ZE_AFFINITY_MASK, XPU launchers, ALCF proxies, or PBS submissions.
+Run campaign scientific workloads through `run_batch(gpus=1)` after staging with `write_files`. Jupiter has four GH200 GPUs per node. Keep the CUDA_VISIBLE_DEVICES assigned by Ensemble Launcher; inside a one-GPU task use cuda:0. Write outputs to the campaign workspace. Do not use Aurora modules, ZE_AFFINITY_MASK, XPU launchers, ALCF proxies, or PBS submissions.
 
 ## Packaged references through skill_view
 
@@ -39,3 +39,11 @@ Check `$HPC_LOAM_HOME/JUPITER.md` and `$HPC_LOAM_HOME/ports/jupiter/software-smo
 Jupiter's installed Boltz lacks the optional `cuequivariance_torch` triangle kernels. Its default prediction path fails at inference with `ModuleNotFoundError`, despite successful input preparation and CUDA detection. Use the supported `--no_kernels` flag to run the native PyTorch implementation on CUDA, and `--num_workers 0` for the single-case loader. This preserves the trained model; it does not replace inference with a mock. The manual smoke suite uses these flags.
 
 [Exact smoke recipe](references/smoke-workload.py): `skill_view(name="boltz-jupiter", file_path="references/smoke-workload.py")`. This is a self-contained snapshot of this tool's manual recipe, with public-input provenance and output assertions. Run it through MCP with this tool's own Python, `--out <fresh-workdir> --software <software-root>`; the suite additionally checks the login-side Argo answer for rag-query.
+
+## Campaign batch execution after the develop integration
+
+For a delegated campaign code-generator, stage the script and input JSONL together with `mcp__hpc__write_files`, then run all science through `mcp__hpc__run_batch` (a one-row batch is valid). Poll `batch_status` until `unfinished == 0` and inspect actual recorded outputs before reporting success. Use `gpus=1` for GPU work, preserve assigned `CUDA_VISIBLE_DEVICES`, and activate this tool's own venv inside each row.
+
+Use `timeout_each=6000` and a subprocess deadline no larger than 6000 seconds per scientific row. Keep the 6300-second MCP and 14400-second Hermes outer deadlines; allocation walltime still limits completion. `run_code` is for bounded staging fallback, harvesting/manifests and post-error diagnosis. Loam counts its calls (four before a batch, ten total after submitting one), so it is not a serial scientific execution path.
+
+`write_files` may stage only under the campaign's `HPC_BASE_DIR`; additional read-only inspection roots do not grant write access to installed software. The operator's manual installation smoke suite is separate from delegated campaign execution and may still use `run_code`; no software tests were added to campaign preflight.

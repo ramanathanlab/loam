@@ -136,14 +136,14 @@ profiles:
       # the node must not be referenced here.
       setup: |
         Run every scientific tool by activating its venv in a bash command
-        inside run_code (subprocess.run(["bash","-lc", CMD])), never by
+        inside a run_batch row (subprocess.run(["bash","-lc", CMD])), never by
         importing it as a Python library. Use absolute paths only; the working
         directory is not the project root.
 
         Before writing any code, read the recipe for the tool you need with
         skill_view. The campaign's skills carry the exact activation and CLI
         invocation for each stage, and they are the authority over your
-        recollection: Use 900-second (15-minute) timeouts for setup/scientific subprocesses and run_code(timeout=900). Read named software documentation directly rather than recursively scanning environments. rfd4-proteina (de novo backbone generation), proteinmpnn
+        recollection: Stage script and JSONL files with write_files, then use run_batch(timeout_each=6000) for every scientific job, including a one-row job. Use 6000-second subprocess deadlines; reserve run_code for staging fallback, harvesting and bounded post-error diagnostics. Read named software documentation directly rather than recursively scanning environments. rfd4-proteina (de novo backbone generation), proteinmpnn
         (sequence design on a fixed backbone), chai (co-folding and interface
         metrics), openmm (simulation and MMPBSA free energy), pyrosetta
         (structural metrics).

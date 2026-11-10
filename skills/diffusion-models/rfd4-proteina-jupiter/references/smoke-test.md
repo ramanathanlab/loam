@@ -15,7 +15,7 @@ Results are persisted in `<audit-directory>/summary.json` and `rfd4-proteina/`, 
 
 ## Latest recorded manual validation
 
-Status: **passed**. Workload: Trained-model monomer backbone generation with zero loader workers. 
+Status: **passed**. Workload: Trained-model monomer backbone generation with zero loader workers.
 
 Evidence directory: `/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/rfd4-proteina`. Preserve failed attempts; the root `summary.json` records this run.
 
