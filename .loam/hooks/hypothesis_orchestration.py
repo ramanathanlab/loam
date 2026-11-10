@@ -806,7 +806,7 @@ def _validator_tasks(plan_id: str, selected: list[dict[str, Any]], payload: Mapp
                         "Never compute or run code yourself. Do poll and read a child's run yourself with "
                         f"{observation} rather than spending a child on it, and verify a "
                         "child's reported numbers against the files it actually wrote. Then return exactly these headings: "
-                        "### Hypothesis; ### Outcome; ### Evidence Ledger; ### Credit Assignment; "
+                        "### Hypothesis; ### Outcome; ### Evidence Ledger; "
                         "### Evidence Score; ### Next Step. The Evidence Score must be a bare decimal "
                         "in [-1.00, 1.00], for example +0.75, immediately after its heading."
                     ),
