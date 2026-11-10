@@ -434,11 +434,12 @@ def runbatch_nudge_for(payload: Mapping[str, Any]) -> str:
         f"RUN_BATCH REMINDER: this run has {run_code} serial run_code calls and no run_batch. "
         "ALL real execution -- generating, folding, or scoring candidates, one or many -- MUST go "
         "through run_batch: one JSONL row per job, one submit, then poll batch_status until "
-        "unfinished == 0, and read results from the recorded batch outputs. run_code is for a SHORT "
-        "diagnostic AFTER a batch job errors -- NOT for real work, smoke tests, or probe folds. "
-        "Each serial run_code resends your whole growing context and is the main cause of the model "
-        "token-rate-limit failures that abort runs; run_batch executes the rows on HPC tiles without "
-        "that per-call cost. Go straight to run_batch, even for a single candidate."
+        "unfinished == 0, and read results from the recorded batch outputs. Stage the script and "
+        "inputs with write_files; run_code is for a SHORT diagnostic AFTER a batch row errors -- NOT "
+        "for real work, smoke tests, or probe folds. Each serial run_code resends your whole growing "
+        "context and is the main cause of the model token-rate-limit failures that abort runs; "
+        "run_batch executes the rows on HPC tiles without that per-call cost. Go straight to "
+        "run_batch, with every candidate the instruction implies as its own row."
     )
 
 
@@ -1022,15 +1023,15 @@ def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
         lines.append('Summary: ' + summary[:4_000])
     lines.append(
         "HOW TO TEST THIS (authoritative — overrides any instruction below that conflicts):\n"
-        "- This block is your complete assignment. Do NOT inspect campaign files, outputs, or the "
-        "batch registry to 'recover' the hypothesis or 'find inputs': everything needed is here. If "
-        "the validator's instruction below tells you to search the filesystem or reuse existing "
-        "data/code, ignore that part.\n"
+        "- This block is your complete assignment. Do NOT go looking through campaign files or "
+        "outputs to 'recover' the hypothesis: everything needed to state it is here.\n"
         "- If the candidate design is given explicitly, use it verbatim.\n"
-        "- NEVER run, score, or reuse an input you discovered on the filesystem — a sequence, "
-        "structure, parameter set, or dataset found in prior outputs, a tool's test fixtures, or "
-        "another campaign's directory. That is the wrong system under test and makes the result "
-        "scientifically meaningless. A run on the wrong input is a failed validation, not evidence."
+        "- Take your inputs only from the three places your role definition allows: this contract "
+        "and the directories the workspace layout names, an authoritative source fetched by "
+        "identifier, or your own manifest-recorded output whose hash still matches. A sequence, "
+        "structure, parameter set or dataset found by browsing prior outputs, a tool's test "
+        "fixtures, or another campaign's directory is none of those: it is the wrong system under "
+        "test, and a run on the wrong input is a failed validation rather than evidence."
     )
     return '\n'.join(lines)
 
@@ -1045,9 +1046,9 @@ def _layout_block(base: str, run_id: str, remote: bool = False, batch_root: str 
         f"- code and scripts you write: {base}/src/",
         f"- result files: {base}/outputs/{run_id}/",
         f"- temporary files: {base}/scratch/{run_id}/",
-        f"- inputs: read from {base}/data/ and never write there. The campaign's inputs are already "
-        "there; nothing outside this workspace is reachable, so do not hunt the filesystem for a "
-        "file named in your instructions and never report BLOCKED because one is absent",
+        f"- inputs: read from {base}/data/ and never write there. This directory IS part of your "
+        "contract, so what is in it is yours to use; nothing outside this workspace is reachable, so "
+        "do not hunt the filesystem for a file named in your instructions",
     ]
     if shared_inputs:
         lines.append(
@@ -1126,8 +1127,9 @@ def _child_context(instruction: str, execution: Mapping[str, Any], workdir: str,
     run_code = names.get(execution.get('function_name') or 'run_code', '')
     place = f"under {workdir}" if workdir else "under the HPC base directory (HPC_BASE_DIR)"
     lines = [
-        f"- `{run_code}`: run one Python program (`payload`) on a GPU worker; also used to write the "
-        "batch's script and JSONL input files, harvest its results, and emit the required output manifest.",
+        f"- `{run_code}`: run one Python program (`payload`) on a GPU worker. Use it to harvest a "
+        "batch's results, emit the required output manifest, and diagnose a row that failed -- not to "
+        "run science and not to stage files.",
     ]
     if 'run_batch' in names:
         # list_tools/register_tool are deliberately not advertised: "call list_tools
@@ -1136,7 +1138,7 @@ def _child_context(instruction: str, execution: Mapping[str, Any], workdir: str,
         lines += [
             f"- `{names['write_files']}`: write several files in one call ({{absolute_path: contents}}); "
             "stage the batch's script and JSONL inputs with it. It executes nothing.",
-            f"- `{names['run_batch']}`: many runs at once: tool=<name> (or script_path) and inputs_path, "
+            f"- `{names['run_batch']}`: many runs at once: script_path and inputs_path, "
             "a JSONL file with one row of params per line. Returns a batch_id at once. gpus is tiles "
             "PER ROW: rows run side by side on all free tiles, so a script using one device (xpu:0) "
             "takes gpus=1; raise it only if one row itself spans several devices.",
@@ -1145,9 +1147,10 @@ def _child_context(instruction: str, execution: Mapping[str, Any], workdir: str,
             f"- `{names['inspect_filesystem']}`: read result files (ls/cat/tail).",
             f"- `{names['list_batches']}`: earlier batches for this plan or hypothesis.",
             "ALL science -- generating, folding, or scoring candidates, one or many -- goes through "
-            "run_batch, NEVER run_code. run_code only marshals the batch (writes its script/JSONL input "
-            "files, harvests its results, emits the required output manifest) and runs short post-error "
-            "diagnostics; it never runs a science tool itself.",
+            "run_batch, NEVER run_code. Stage with write_files, submit one batch holding every "
+            "candidate the instruction implies, then poll; run_code only harvests the results, emits "
+            "the required output manifest, and runs short post-error diagnostics. The server refuses "
+            "a batch that is too narrow or whose rows are not distinct.",
         ]
     # Said out loud: a child told to use no other tool will not try skill_view otherwise.
     others = (
@@ -1502,11 +1505,13 @@ def _run_code_budget(payload: Mapping[str, Any], names: Mapping[str, str]) -> di
     if not batches:
         return _block(
             f'code-generator has used its {limit} staging `run_code` calls for this '
-            'job and has submitted no batch. `run_code` is for writing your script '
-            'and inputs file and for diagnosing a failed row -- the science runs in '
-            '`run_batch`, one row per job, in parallel across the whole allocation. '
-            'Submit the batch now (a one-row batch is fine), then poll `batch_status`. '
-            'If a file is missing, write it in the same call that writes your script.'
+            'job and has submitted no batch. Stage with `write_files` and use '
+            '`run_code` to diagnose a failed row -- the science runs in `run_batch`, '
+            'one row per job, in parallel across the whole allocation. Submit the '
+            'batch now, with every candidate the instruction implies as its own row, '
+            'then poll `batch_status`. The server refuses a batch that is too narrow '
+            'or whose rows are not distinct, so submit the real sweep rather than a '
+            'probe. If a file is missing, write it with `write_files` beside your script.'
         )
     return _block(
         f'code-generator has used its {limit} `run_code` calls for this job '

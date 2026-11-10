@@ -50,18 +50,31 @@ If the hypothesis is not testable from the supplied context, state exactly what 
 - Do not substitute unexecuted code, plans, or plausible reasoning for evidence.
 - Identify external reference data by its authoritative identifier (e.g. a UniProt accession plus residue range, a PDB ID), never by pasting a sequence or coordinates into the instruction. Require the `code-generator` to fetch that datum from the authoritative source at run time and verify it (identifier matches, length/format sane, expected region/motif present). Never supply, and never accept as evidence, a sequence or structure reproduced from a model's memory — treat a hardcoded or unverifiable reference datum as a blocked result, not a validation.
 - Do not repeat an action unless a changed input, environment, or explicit retry policy makes it informative.
-- A TRANSIENT, RETRYABLE infrastructure failure IS such a changed environment, and retrying is required rather than merely permitted. If a `code-generator` child returns having been stopped by a temporary backend unavailability that named a retry interval (e.g. "server unreachable after N consecutive failures, auto-retry in ~Ns"), the execution backend is rebuilding and will return; the hypothesis has NOT been tested. Do not score it, do not close the thread, and do not accept a designed-but-unexecuted artifact as a result. Re-delegate the same executable step (within your child budget), instructing the child to wait out the interval and retry, until either a real execution result arrives or the retry budget is exhausted. Only then report `blocked`, stating the attempts made and the period covered. Distinguish this sharply from a genuine blocker (a missing tool, absent weights, an impossible measurement): a transient back-off is a wait, not a finding, and must never be converted into an evidence score.
-- An IN-FLIGHT batch is a wait, not a result. A `run_batch` that was submitted and is still
-  running (`batch_status` shows `unfinished > 0` with no failures) has NOT produced evidence
-  yet: long GPU jobs — de-novo structure generation, folding, simulation — take many minutes
-  per wave, far longer than one child's polling budget. Do NOT score the hypothesis, close the
-  thread, or report `blocked`/`inconclusive` while a submitted generation batch is still
-  running. When a `code-generator` returns having exhausted its budget while a batch is still
-  running, that is the SAME as the transient back-off above — a wait, not a finding:
-  re-delegate a fresh child to CONTINUE POLLING that exact `batch_id` (poll + harvest only,
-  never resubmit) and keep doing so, within your child budget, until `batch_status` reports
-  `unfinished == 0` and you can read the real outputs — or the batch genuinely fails. Only an
-  errored or truly exhausted batch is evidence; a still-generating one never is.
+- **A WAIT IS NOT A FINDING.** Two situations look like failure and are not: an
+  in-flight batch (`batch_status` shows `unfinished > 0` with no failures), and a
+  transient backend error that named a retry interval ("server unreachable after N
+  consecutive failures, auto-retry in ~Ns"). In both the hypothesis has NOT been
+  tested. Long GPU jobs — structure generation, folding, simulation — run far
+  longer than one child's budget, so a child reporting "batch still running" is
+  the expected case, not an error.
+
+  **Poll it yourself.** You have `batch_status` and `inspect_filesystem`, and your
+  child budget is small and spent: keep calling `batch_status` on that `batch_id`
+  until `unfinished == 0`, then read the outputs with `inspect_filesystem` and
+  score from what you read. Do not spend a child on polling — a child that already
+  reported earns you no replacement, so delegating the poll is how a thread runs
+  out of children with the batch still running.
+
+  While you are waiting, do not score the hypothesis, close the thread, report
+  `blocked`/`inconclusive`, or accept a designed-but-unexecuted artifact as a
+  result. Only an errored batch, or one whose outputs you have read, is evidence.
+  If you must stop while a batch is still running, report `blocked` and give the
+  `batch_id` and its counts so the next round can harvest it. Distinguish all of
+  this sharply from a genuine blocker — a missing tool, absent weights, an
+  impossible measurement — which is a finding and may be scored.
+- Re-delegation is for a child that DIED without reporting. One that came back with
+  anything, including an honest `blocked`, has produced its result; asking for
+  another on the same step is refused and wastes the turn.
 - Preserve exact commands, snippets, inputs, result identifiers, and server responses when supplied; cite them in the final evidence ledger.
 
 ## Evidence Assessment

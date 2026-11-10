@@ -113,7 +113,12 @@ class RunCodeBudgetTests(unittest.TestCase):
         self.assertEqual(verdict["action"], "block")
         # The refusal has to say what to do instead, or it just stalls the round.
         self.assertIn("run_batch", verdict["message"])
-        self.assertIn("one-row batch", verdict["message"])
+        self.assertIn("write_files", verdict["message"])
+        # And it must not contradict the floor the server enforces. This message
+        # used to end "a one-row batch is fine", which is what an agent read at
+        # the moment it was deciding -- then the cluster refused the batch.
+        self.assertNotIn("one-row batch is fine", verdict["message"])
+        self.assertIn("too narrow", verdict["message"])
 
     def test_submitting_a_batch_reopens_an_allowance_for_diagnosis(self) -> None:
         self._already_called(RUN_CODE, self.orchestration._RUN_CODE_STAGING)
@@ -178,7 +183,21 @@ class CodeGeneratorInstructionTests(unittest.TestCase):
 
     def test_a_single_job_is_not_an_excuse_to_skip_the_batch(self) -> None:
         # The commonest rationalisation, answered in the prompt itself.
-        self.assertIn("a one-row batch is correct", self.body)
+        self.assertIn('because it is "only one job" is still wrong', self.body)
+
+    def test_the_prompt_does_not_bless_a_degenerate_batch(self) -> None:
+        """It must not promise what the server refuses.
+
+        This assertion used to be `assertIn("a one-row batch is correct")`, and
+        it passed only because that sentence survived as a QUOTE inside a note
+        explaining it was wrong -- so the test was pinning the retracted wording
+        rather than the rule. The server enforces a floor on rows and on
+        distinct rows, so the prompt states the floor exists.
+        """
+
+        self.assertNotIn("a one-row batch is correct", self.body)
+        self.assertIn("DISTINCT", self.body)
+        self.assertIn("refuses a degenerate submission", self.body)
 
     def test_the_prompt_warns_that_the_budget_is_enforced(self) -> None:
         # A child that is refused should recognise the refusal, not fight it.

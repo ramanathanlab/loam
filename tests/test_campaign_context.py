@@ -481,8 +481,12 @@ class HypothesisBlockExtractionTests(unittest.TestCase):
         block = orchestration._hypothesis_block({"hypothesis_id": "h-1", "content": "A claim."})
 
         self.assertIn("A claim.", block)
-        # Kept: campaign-independent.
-        self.assertIn("NEVER run, score, or reuse", block)
+        # Kept: campaign-independent. The wrong-input rule is phrased to agree
+        # with the three allowed input sources in code-generator.md rather than
+        # as a blanket ban on reading anything on disk -- the blanket version
+        # contradicted both the workspace's own data/ and manifest-backed resume.
+        self.assertIn("wrong system under test", block)
+        self.assertIn("failed validation", block)
         self.assertIn("complete assignment", block)
         # Moved to the assay rules under .loam/rules/.
         self.assertNotIn("smallest action", block)
