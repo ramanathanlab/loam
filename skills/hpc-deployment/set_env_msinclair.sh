@@ -16,13 +16,15 @@
 # Two things follow, and both are already applied below:
 #   * 1024 of 1028 nodes leaves four spare rather than asking for every node a
 #     reservation that also has to schedule its own owner's work.
-#   * HPC_WALLTIME is 05:30:00, NOT the 11:00:00 the reservation now allows.
+#   * HPC_WALLTIME is 04:00:00, NOT the 11:00:00 the reservation now allows.
 #     THE CEILING IS reserve_end, NOT THE DURATION: a block that starts at
 #     20:45 and asks for 11:00:00 would run to 07:45, long past 03:00, and be
-#     killed with the campaign still in it. 05:30:00 from a ~20:55 start lands
-#     at ~02:25, leaving ~35 min of margin. (05:45:00 was right for a 20:45
-#     start and left only 20 min by 20:55 -- this is why the rule below is a
-#     clock calculation, not a constant.)
+#     killed with the campaign still in it. 04:00:00 from a ~22:21 start lands
+#     at ~02:21, leaving ~39 min of margin.
+#     This value has been 05:45 -> 05:30 -> 04:00 in one evening, for the SAME
+#     reservation, purely because the launch clock moved: 05:30 from 22:21 would
+#     end 03:51, an hour past reserve_end. The constant is always wrong; the
+#     calculation is the setting.
 #     RECOMPUTE THIS BEFORE EVERY LAUNCH -- it is a function of the clock, not
 #     a setting. Launch an hour later and 05:45:00 becomes an overrun; the rule
 #     is (reserve_end - expected start - ~30 min margin). 07:30:00 was correct
@@ -112,7 +114,7 @@ export HPC_MCP_TRANSPORT="http"
 # at their short walltime -> ManagerLost.
 export HPC_ACCOUNT="FRAME-IDP"
 export HPC_QUEUE="R9046423"
-export HPC_WALLTIME="05:30:00"
+export HPC_WALLTIME="04:00:00"
 
 # Guardrail caps hpc_control.validate() checks every allocation against. Its
 # defaults (debug,debug-scaling,capacity; 4 nodes) reject the reservation above.

@@ -112,11 +112,13 @@ profiles:
       # Preflight refuses to launch on a name that resolves to nothing, so a
       # typo costs one edit instead of a round of 404s inside a leaf agent.
       #
-      # Naming exactly one folding tool is deliberate: left to pick among
-      # chai/boltz/esmfold2/protenix, 150 validators will not all choose the
-      # same one and their results stop being comparable. Name the task instead
-      # where choosing per step is the point.
-      skills: [rfdiffusion3, proteinmpnn, chai, openmm, pyrosetta]
+      # Naming the task lists every tool under it and leaves the choice to the
+      # validator, which is the tier that knows the step. That is the usual
+      # shape. Pin a tool (`structure-prediction/chai`) only to take the choice
+      # away; the comparability rule -- rank candidates only against numbers
+      # from the same tool -- is carried in the validator's instructions, so it
+      # does not need a narrowed list here.
+      skills: [diffusion-models, inverse-folding, structure-prediction, md-simulation, analysis]
 
     execution:
       # All four of tool_name/function_name/endpoint/input_schema are REQUIRED

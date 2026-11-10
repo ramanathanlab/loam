@@ -245,13 +245,20 @@ def validator_skills_field(campaign: CampaignContext | None) -> dict[str, Any]:
         'campaign_skills_instructions': (
             "These are the tools this campaign has reviewed recipes for, grouped by task ('' holds "
             "standalone skills). Plan each executable step by choosing the task first, then the tool "
-            "within it whose inputs and outputs fit the step; a task listing a single tool means the "
-            "campaign has pinned it, so use that one. You may call skill_view on a tool to check what "
-            "it takes and reports before you commit to it. In every instruction to a code-generator, "
-            "write `skill: <tool name>` for each step so the child reads that recipe; decide WHAT to "
-            "compute and leave HOW to invoke the tool to the skill. Use the same tool for the same "
-            "stage across your steps so results stay comparable. If no listed tool fits a step, say "
-            "so in your report rather than having the child improvise one."
+            "within it whose inputs and outputs fit the step. The choice is yours -- several tools "
+            "under one task are often substitutes, and you are the tier that knows the step. A task "
+            "listing a single tool means the campaign has pinned it, so use that one. Read the "
+            "description before relying on a secondary number a tool reports: the task it is grouped "
+            "under is what it is good for. You may call skill_view on a "
+            "tool to check what it takes and reports before you commit to it. In every instruction "
+            "to a code-generator, write `skill: <tool name>` for each step so the child reads that "
+            "recipe; decide WHAT to compute and leave HOW to invoke the tool to the skill. "
+            "ONE CONSTRAINT on the choice: every candidate whose numbers you intend to RANK against "
+            "each other must come from the same tool, because a metric from one model is not "
+            "comparable to the same metric from another. Choose per stage, not per candidate, and "
+            "name the tool beside the metric in your report so the reasoner knows what produced it. "
+            "If no listed tool fits a step, say so in your report rather than having the child "
+            "improvise one."
         ),
     }
 

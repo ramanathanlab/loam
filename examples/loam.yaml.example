@@ -89,7 +89,7 @@ profiles:
       # a task to its tools and shows both agents the result grouped by task;
       # preflight refuses a name that resolves to nothing. Omit the key and
       # children write from recollection, which is what this exists to stop.
-      skills: [structure-prediction/chai, proteinmpnn]
+      skills: [structure-prediction, inverse-folding]
     # Pando-style folder per hypothesis, enforced by the hooks
     # (.loam/README.md, "Hypothesis workspace"). Off unless enabled.
     workspace:
