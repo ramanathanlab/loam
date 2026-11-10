@@ -1,0 +1,32 @@
+{
+  "status": "passed",
+  "test": "manual RFD4 installation validation, not campaign preflight",
+  "hostname": "jpbo-016-46.jupiter.internal",
+  "slurm_job": "2799516",
+  "source_commit": "68058693cb88762a8aaf806571e13b291ce6318a",
+  "checks": {
+    "openbabel-import": 0,
+    "rfd4-help": 0,
+    "generation": 0,
+    "inspect-structure": 0
+  },
+  "input": {
+    "path": "software/RFD4-Proteina/data/benchmarks/monomer/monomer-short.cif.zst",
+    "sha256": "5e66073220a3314d3426ca5d7828c02492e61d24321966d4d73dff08481cfa37"
+  },
+  "generation": {
+    "num_replicates": 1,
+    "batch_size": 1,
+    "compile_lengths": null,
+    "seed": 20261109,
+    "schedule": "repository default medium/front_loaded",
+    "metrics_tags": []
+  },
+  "output": {
+    "path": "rfd4-runtime-validation-20261109/work-final/generation/inference_samples/monomer-short/monomer-short_generated.cif",
+    "bytes": 165049,
+    "sha256": "0e71304b194f2060fa8f14d3c2f5e8811e69cf282d3f85d5780ea96d5678f0f1"
+  },
+  "structure_inspection": "ATOMS 813 RESIDUES 100",
+  "limitations": "Unconditional monomer runtime test; no EGFR binder or binding-affinity validation."
+}

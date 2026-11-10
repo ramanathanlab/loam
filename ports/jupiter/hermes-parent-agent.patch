@@ -1,0 +1,258 @@
+diff --git a/agent/agent_runtime_helpers.py b/agent/agent_runtime_helpers.py
+index d628c1221a..5af43f5498 100644
+--- a/agent/agent_runtime_helpers.py
++++ b/agent/agent_runtime_helpers.py
+@@ -2540,8 +2540,8 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
+             )
+             if skip_tool_execution_middleware:
+                 dispatch_kwargs["skip_tool_execution_middleware"] = True
+-            import model_tools
+-            return model_tools.handle_function_call(function_name, next_args, effective_task_id, **dispatch_kwargs)
++            from agent.tool_call_context import dispatch_agent_tool
++            return dispatch_agent_tool(agent, function_name, next_args, effective_task_id, **dispatch_kwargs)
+     if skip_tool_execution_middleware:
+         return _execute(function_args)
+     from hermes_cli.middleware import run_tool_execution_middleware
+diff --git a/agent/tool_executor.py b/agent/tool_executor.py
+index 962ce4df09..ad431e147d 100644
+--- a/agent/tool_executor.py
++++ b/agent/tool_executor.py
+@@ -1709,9 +1709,10 @@ def _resolve_sequential_dispatch(agent, ref: _ToolCallRef, messages: list) -> _S
+     def _execute(next_args: dict) -> Any:
+         import model_tools
+ 
++        from agent.tool_call_context import dispatch_agent_tool
+         with model_tools.suppress_post_tool_call_hook():
+-            return model_tools.handle_function_call(
+-                function_name,
++            return dispatch_agent_tool(
++                agent, function_name,
+                 next_args,
+                 effective_task_id,
+                 tool_call_id=tool_call_id,
+diff --git a/hermes_cli/plugins.py b/hermes_cli/plugins.py
+index eda71a0ee4..305f4c7ab6 100644
+--- a/hermes_cli/plugins.py
++++ b/hermes_cli/plugins.py
+@@ -676,13 +676,8 @@ class PluginContext(PluginCapabilityCtxMixin):
+     def dispatch_tool(self, tool_name: str, args: dict, **kwargs) -> str:
+         """Dispatch a tool call through the registry with the parent agent (when available)
+         resolved automatically; returns the handler's JSON string. ``kwargs`` forward to dispatch."""
+-        from tools.registry import registry
+-        # In gateway mode _cli_ref is None — tools degrade gracefully (no spinner, TERMINAL_CWD).
+-        if "parent_agent" not in kwargs:
+-            agent = getattr(self._manager._cli_ref, "agent", None)
+-            if agent is not None:
+-                kwargs["parent_agent"] = agent
+-        return registry.dispatch(tool_name, args, scope=self._manager.scope_key, **kwargs)
++        from hermes_cli.plugins_tool_dispatch import dispatch_plugin_tool
++        return dispatch_plugin_tool(self, tool_name, args, **kwargs)
+ 
+     @_serialized_replacement
+     def register_context_engine(self, engine) -> Optional[PluginRegistration]:
+diff --git a/website/docs/developer-guide/plugins/index.md b/website/docs/developer-guide/plugins/index.md
+index 744df7b219..a56653bc28 100644
+--- a/website/docs/developer-guide/plugins/index.md
++++ b/website/docs/developer-guide/plugins/index.md
+@@ -1889,12 +1889,12 @@ def register(ctx):
+ |-----------|------|-------------|
+ | `name` | `str` | Tool name as registered in the tool registry (e.g. `"delegate_task"`, `"file_edit"`) |
+ | `args` | `dict` | Tool arguments, same shape the model would send |
+-| `parent_agent` | `Agent \| None` | Optional override. When omitted, resolves from the current CLI agent (or degrades gracefully in gateway mode) |
++| `parent_agent` | `Agent \| None` | Optional override. When omitted, resolves from the executing tool's session agent, then the current CLI agent |
+ 
+ **Runtime behavior:**
+ 
+ - **CLI mode:** `parent_agent` is resolved from the active CLI agent so workspace hints, spinner, and model selection inherit as expected.
+-- **Gateway mode:** There is no CLI agent, so tools degrade gracefully — workspace is read from the configured terminal working directory and no spinner is shown.
++- **Gateway mode:** Inside a plugin tool handler, the executing session agent is bound for sequential and concurrent tool calls. Nested dispatch inherits that parent, including delegation and its normal background policy. The binding is restored after return or failure and isolated across threads and async tasks. Outside a tool call, no parent is inferred; callers needing one must pass it explicitly.
+ - **Explicit override:** If the caller passes `parent_agent=` explicitly, it is respected and not overwritten.
+ 
+ This is the public, stable interface for tool dispatch from plugin commands. Plugins should not reach into `ctx._cli_ref.agent` or similar private state.
+diff --git a/agent/tool_call_context.py b/agent/tool_call_context.py
+new file mode 100644
+index 0000000000..dc1bd31fc2
+--- /dev/null
++++ b/agent/tool_call_context.py
+@@ -0,0 +1,29 @@
++"""The agent owning a plugin tool dispatch, isolated across threads and tasks."""
++from __future__ import annotations
++
++from contextlib import contextmanager
++from contextvars import ContextVar
++from typing import Any, Iterator
++
++_CURRENT_TOOL_AGENT: ContextVar[Any] = ContextVar('current_tool_agent', default=None)
++
++
++def current_tool_agent() -> Any:
++    return _CURRENT_TOOL_AGENT.get()
++
++
++@contextmanager
++def tool_agent_scope(agent: Any) -> Iterator[None]:
++    token = _CURRENT_TOOL_AGENT.set(agent)
++    try:
++        yield
++    finally:
++        _CURRENT_TOOL_AGENT.reset(token)
++
++
++def dispatch_agent_tool(agent: Any, *args: Any, **kwargs: Any) -> Any:
++    """Keep nested plugin dispatch on the agent owning this registry call."""
++    import model_tools
++
++    with tool_agent_scope(agent):
++        return model_tools.handle_function_call(*args, **kwargs)
+diff --git a/hermes_cli/plugins_tool_dispatch.py b/hermes_cli/plugins_tool_dispatch.py
+new file mode 100644
+index 0000000000..5818121dc7
+--- /dev/null
++++ b/hermes_cli/plugins_tool_dispatch.py
+@@ -0,0 +1,18 @@
++"""Resolve plugin dispatch parents from the executing session before the legacy CLI."""
++from __future__ import annotations
++
++from typing import Any
++
++from agent.tool_call_context import current_tool_agent
++
++
++def dispatch_plugin_tool(context: Any, tool_name: str, args: dict, **kwargs: Any) -> Any:
++    from tools.registry import registry
++
++    if "parent_agent" not in kwargs:
++        agent = current_tool_agent()
++        if agent is None:
++            agent = getattr(context._manager._cli_ref, "agent", None)
++        if agent is not None:
++            kwargs["parent_agent"] = agent
++    return registry.dispatch(tool_name, args, scope=context._manager.scope_key, **kwargs)
+diff --git a/tests/agent/test_plugin_tool_parent_context.py b/tests/agent/test_plugin_tool_parent_context.py
+new file mode 100644
+index 0000000000..bf5adfaf78
+--- /dev/null
++++ b/tests/agent/test_plugin_tool_parent_context.py
+@@ -0,0 +1,122 @@
++"""Gateway plugin delegation uses the calling agent rather than a shared CLI slot."""
++from concurrent.futures import ThreadPoolExecutor
++import json
++from threading import Barrier
++from types import SimpleNamespace
++
++import pytest
++
++from agent.agent_runtime_helpers import invoke_tool
++from agent.tool_call_context import current_tool_agent, tool_agent_scope
++from agent.tool_executor import _resolve_sequential_dispatch
++from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
++from tools.registry import registry
++
++
++@pytest.fixture
++def plugin_dispatch(monkeypatch):
++    import tools.delegate_tool as delegation
++
++    manager = PluginManager()
++    manager._cli_ref = SimpleNamespace(agent=SimpleNamespace(session_id='unrelated-cli'))
++    context = PluginContext(PluginManifest(name='parent-context-probe', source='user'), manager)
++    barrier = Barrier(2)
++
++    def delegate(**kwargs):
++        parent = kwargs['parent_agent']
++        return json.dumps({'parent': parent.session_id, 'background': kwargs['background']})
++
++    def dispatch(args, **kwargs):
++        barrier.wait(timeout=10)
++        return context.dispatch_tool('delegate_task', {'goal': 'probe'})
++
++    monkeypatch.setattr(delegation, 'delegate_task', delegate)
++    registry.register(name='parent_context_probe', toolset='debugging',
++                      schema={'name': 'parent_context_probe', 'parameters': {'type': 'object'}},
++                      handler=dispatch)
++    yield context
++    registry.deregister('parent_context_probe')
++
++
++def _agent(session_id, depth):
++    return SimpleNamespace(session_id=session_id, _delegate_depth=depth,
++                           valid_tool_names=['parent_context_probe'], enabled_toolsets=None,
++                           disabled_toolsets=None, _context_engine_tool_names=set(),
++                           _memory_manager=None, quiet_mode=False)
++
++
++@pytest.mark.parametrize('path', ['concurrent', 'sequential'])
++def test_overlapping_gateway_plugin_calls_keep_their_own_parent(plugin_dispatch, path):
++    def call(index):
++        agent = _agent(f'conversation-{index}', index)
++        if path == 'concurrent':
++            result = invoke_tool(agent, 'parent_context_probe', {}, agent.session_id,
++                                 pre_tool_block_checked=True,
++                                 skip_tool_request_middleware=True,
++                                 skip_tool_execution_middleware=True)
++        else:
++            ref = SimpleNamespace(name='parent_context_probe', args={}, task_id=agent.session_id,
++                                  call_id=None, trace=[])
++            result = _resolve_sequential_dispatch(agent, ref, []).execute({})
++        assert current_tool_agent() is None
++        return json.loads(result)
++
++    with ThreadPoolExecutor(max_workers=2) as pool:
++        results = list(pool.map(call, [0, 1]))
++    assert results == [{'parent': 'conversation-0', 'background': True},
++                       {'parent': 'conversation-1', 'background': False}]
++
++
++def test_nested_agent_scope_restores_parent_after_failure():
++    parent, child = object(), object()
++    assert current_tool_agent() is None
++    with tool_agent_scope(parent):
++        with pytest.raises(RuntimeError), tool_agent_scope(child):
++            assert current_tool_agent() is child
++            raise RuntimeError('child tool failed')
++        assert current_tool_agent() is parent
++    assert current_tool_agent() is None
++
++
++def test_explicit_parent_overrides_ambient_agent(monkeypatch):
++    manager = PluginManager()
++    context = PluginContext(PluginManifest(name='explicit-parent-probe', source='user'), manager)
++    calls = []
++    monkeypatch.setattr(registry, 'dispatch', lambda name, args, **kwargs: calls.append(kwargs) or '{}')
++    explicit = object()
++    with tool_agent_scope(object()):
++        context.dispatch_tool('delegate_task', {}, parent_agent=explicit)
++    assert calls[0]['parent_agent'] is explicit
++
++
++def test_discovered_gateway_plugin_can_use_native_delegation(tmp_path, monkeypatch):
++    from hermes_cli import plugins
++    from hermes_cli.config import atomic_config_write
++
++    home = tmp_path / 'home'
++    plugin = home / 'plugins' / 'gateway-parent-probe'
++    plugin.mkdir(parents=True)
++    (plugin / 'plugin.yaml').write_text('name: gateway-parent-probe\nversion: "0.1.0"\n')
++    (plugin / '__init__.py').write_text(
++        'def register(ctx):\n'
++        '    ctx.register_tool(name="gateway_parent_list", toolset="debugging",\n'
++        '        schema={"name":"gateway_parent_list","parameters":{"type":"object"}},\n'
++        '        handler=lambda args, **kw: ctx.dispatch_tool("delegate_task", {"action":"list"}))\n'
++    )
++    monkeypatch.setenv('HERMES_HOME', str(home))
++    monkeypatch.setattr(plugins, 'get_bundled_plugins_dir', lambda: tmp_path / 'no-bundled')
++    atomic_config_write(home / 'config.yaml', {'plugins': {'enabled': ['gateway-parent-probe']}})
++    manager = PluginManager()
++    try:
++        manager.discover_and_load()
++        assert manager._cli_ref is None
++        parent = _agent('native-gateway-parent', 0)
++        result = invoke_tool(parent, 'gateway_parent_list', {}, parent.session_id,
++                             pre_tool_block_checked=True, skip_tool_request_middleware=True,
++                             skip_tool_execution_middleware=True)
++        payload = json.loads(result)
++        assert payload['action'] == 'list'
++        assert isinstance(payload['subagents'], list)
++        assert current_tool_agent() is None
++    finally:
++        manager.unload()

@@ -7,6 +7,7 @@ _config_version: 33
 plugins:
   enabled:
   - loam-hooks
+  hook_callback_timeout: 600
 onboarding:
   seen:
     tool_progress_prompt: true
@@ -21,7 +22,7 @@ delegation:
 mcp_servers:
   hpc:
     url: http://127.0.0.1:8000/mcp
-    timeout: 900
+    timeout: 6300
     connect_timeout: 120
   hpcctl:
     command: /e/project1/deepwing/meigooni1/agent/software/globus-compute/.venv/bin/python
@@ -41,3 +42,7 @@ custom_providers:
   base_url: http://localhost:50856/v1
   api_key: local-no-auth
   model: argo:gpt-5.6-sol
+timeouts:
+  tools:
+    sequential_call: 14400
+    concurrent_batch: 14400

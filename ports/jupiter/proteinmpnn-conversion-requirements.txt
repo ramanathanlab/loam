@@ -1,0 +1,2 @@
+# mmCIF (RFD4/Chai) -> PDB conversion in ProteinMPNN's isolated environment.
+gemmi==0.7.5

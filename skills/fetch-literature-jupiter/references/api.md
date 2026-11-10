@@ -1,0 +1,144 @@
+# Original platform-independent API recipe
+
+Use the dedicated Jupiter environment and runtime notes in [workflow.md](workflow.md). Installation commands here are reference material; campaign agents must not modify shared environments.
+
+
+# Fetch literature (requests → PubMed E-utilities + Europe PMC)
+
+Given a protein/target name or a search query, pull relevant literature from
+public biomedical APIs and assemble it into JSONL records suitable for the
+rag-build-index skill. Two complementary sources: **PubMed E-utilities**
+(abstracts + metadata for almost everything) and **Europe PMC** (adds
+open-access full text where available). No API key is required for basic use.
+Cost/fidelity: plain remote HTTP — seconds to a couple of minutes depending on
+result count; no GPU.
+
+This is a **self-contained, instruction-only skill**. There is no wrapper script
+and no project dependency — you (the agent) make the HTTP calls yourself with
+`requests`. NEVER import bindify. (A `fetch_pubmed` helper existed in the repo,
+but this skill stands alone on `requests`.)
+
+## When to use it
+
+- You want a corpus of papers/abstracts about a target before building a RAG
+  store to mine hotspots / PTM sites / known interactions.
+- You need JSONL literature records to feed the rag-build-index skill.
+
+Do **not** use it to answer questions — this only collects text; querying is the
+rag-build-index → rag-query pair.
+
+## Setup (gate before installing)
+
+Only dependency is `requests`. Check first; install only if missing.
+
+```bash
+python -c "import requests" 2>/dev/null && echo ready || pip install requests
+```
+
+## Procedure
+
+For the query, get IDs then fetch content, and emit one JSON record per line:
+
+- **PubMed (a).** `esearch` for PMIDs:
+  `GET https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=<query>&retmax=N&retmode=json`.
+  Then `efetch` (`db=pubmed&id=<csv pmids>&rettype=abstract&retmode=xml`) or
+  `esummary` for abstracts + metadata (title, year, journal).
+- **Europe PMC (b).** For open-access full text:
+  `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=<query>&format=json&pageSize=N`.
+- **Assemble** each result into a record with at least a `text` field (abstract
+  or full text) plus metadata (`pmid`, `title`, `year`, `source`). Write JSONL —
+  exactly the shape rag-build-index expects.
+
+**Be polite to NCBI:** rate-limit your requests (≈3/sec without a key), and
+include `tool=` and `email=` params on E-utilities calls.
+
+Inputs: protein/target name or search query, max results `N`. Output: a JSONL
+file of literature records.
+
+```python
+import json, time, requests
+
+QUERY   = "MDM2 p53 binding hotspot"
+MAX     = 30
+OUT     = "/path/to/corpus.jsonl"
+EMAIL   = "you@example.org"          # your email — be a polite NCBI citizen
+TOOL    = "bindify-fetch-literature"
+
+EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+records = []
+
+# (a) PubMed: esearch -> PMIDs -> esummary metadata.
+ids = requests.get(f"{EUTILS}/esearch.fcgi", params={
+    "db": "pubmed", "term": QUERY, "retmax": MAX, "retmode": "json",
+    "tool": TOOL, "email": EMAIL}, timeout=60).json()["esearchresult"]["idlist"]
+if ids:
+    import xml.etree.ElementTree as ET
+    summ = requests.get(f"{EUTILS}/esummary.fcgi", params={
+        "db": "pubmed", "id": ",".join(ids), "retmode": "json",
+        "tool": TOOL, "email": EMAIL}, timeout=60).json()["result"]
+    # Pull the ACTUAL abstracts with efetch -- title-only records are near-useless
+    # downstream. Verified: real AbstractText, up to ~3k chars each.
+    xml = requests.get(f"{EUTILS}/efetch.fcgi", params={
+        "db": "pubmed", "id": ",".join(ids), "rettype": "abstract",
+        "retmode": "xml", "tool": TOOL, "email": EMAIL}, timeout=90).text
+    abstr = {}
+    for art in ET.fromstring(xml).iter("PubmedArticle"):
+        pid = art.findtext(".//PMID")
+        parts = [" ".join(a.itertext()).strip() for a in art.iter("AbstractText")]
+        if pid: abstr[pid] = " ".join(x for x in parts if x).strip()
+    for pmid in ids:
+        d = summ.get(pmid, {}); abstract = abstr.get(pmid, "")
+        records.append({"pmid": pmid, "title": d.get("title", ""),
+                        "year": (d.get("pubdate", "") or "")[:4], "source": "pubmed",
+                        "text": abstract or d.get("title", "")})
+
+# (b) Europe PMC: metadata + abstracts, PLUS open-access FULL TEXT.
+epmc = requests.get(
+    "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+    params={"query": QUERY, "format": "json", "pageSize": MAX, "resultType": "core"},
+    timeout=60).json().get("resultList", {}).get("result", [])
+
+def pmc_fulltext(pmcid):
+    """OA full text (JATS <body>) for a PMCID via NCBI efetch(db=pmc); '' if not OA.
+    Use NCBI, not EPMC's /PMC/<id>/fullTextXML (that endpoint 404'd in testing)."""
+    import xml.etree.ElementTree as ET
+    r = requests.get(f"{EUTILS}/efetch.fcgi", params={
+        "db": "pmc", "id": pmcid.replace("PMC", ""), "retmode": "xml",
+        "tool": TOOL, "email": EMAIL}, timeout=90)
+    if r.status_code != 200 or not r.text.lstrip().startswith("<"):
+        return ""
+    body = ET.fromstring(r.text).find(".//body")
+    return " ".join(" ".join(body.itertext()).split()) if body is not None else ""
+
+for r in epmc:
+    pmcid = r.get("pmcid", ""); is_oa = r.get("isOpenAccess") == "Y"
+    ft = pmc_fulltext(pmcid) if (pmcid and is_oa) else ""   # ~4k-11k words when OA
+    records.append({"pmid": r.get("pmid", ""), "pmcid": pmcid,
+                    "title": r.get("title", ""), "year": str(r.get("pubYear", "")),
+                    "source": "europepmc", "is_oa": is_oa,
+                    "text": r.get("abstractText") or r.get("title", ""),
+                    "fulltext": ft})
+    time.sleep(0.34)
+
+with open(OUT, "w") as fh:
+    for rec in records:
+        fh.write(json.dumps(rec) + "\n")
+print(f"wrote {len(records)} records -> {OUT}")
+```
+
+## Interpreting the result
+
+- Success = a JSONL file where each line has a non-empty `text` plus metadata.
+  Records with empty `text` (title-only) contribute little to a RAG store —
+  follow up with `efetch` for the actual abstract when you need substance.
+- PubMed covers breadth (abstracts); Europe PMC adds open-access full text.
+  De-duplicate on `pmid` if you merge both sources.
+
+## Notes
+
+- Rate-limit and include `tool`/`email` on E-utilities calls; register for an
+  NCBI API key if you need higher throughput.
+- Deciding the query terms, how many results to pull, and which sources to merge
+  is your job as the agent. This skill only fetches and formats the corpus.
+- Downstream: feed the JSONL to rag-build-index, then ask questions with
+  rag-query.

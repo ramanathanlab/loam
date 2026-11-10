@@ -1,0 +1,23 @@
+{
+  "hostname": "jpbo-003-01.jupiter.internal",
+  "job": "2728598",
+  "proxy_host": "10.128.1.8",
+  "proxy_port": 50858,
+  "direct_internet": "URLError",
+  "urllib_status": 200,
+  "accession": "P00533",
+  "sequence_length": 1210,
+  "sequence_sha256": "dbb4583267ad40a7dfd854ee3c44ce4be38e137d0570e3eb76cf1854a74e7246",
+  "requests_rcsb_status": 200,
+  "curl_uniprot_ok": true,
+  "local_services_bypass": true,
+  "status": "passed",
+  "software": "proxy.py",
+  "version": "2.4.10",
+  "authentication_required": true,
+  "environment": "software/internet-proxy/.venv",
+  "tests": {
+    "passed": 488,
+    "skipped": 3
+  }
+}

@@ -2,7 +2,7 @@
 
 Required environment:
   HPC_GLOBUS_ENDPOINT_ID, HPC_POOL_SIZE, HPC_ENDPOINT_CONFIG_JSON,
-  HPC_BASE_DIR, HPC_CAMPAIGN_ID, ACADEMY_EXCHANGE_URL
+  HPC_BASE_DIR, HPC_CAMPAIGN_ID; see exchange_config.py for exchange settings
 
 Run locally with the directory containing this file on PYTHONPATH. The endpoint
 must make this directory/module importable on workers, or use an endpoint-
@@ -16,12 +16,12 @@ import os
 import signal
 from contextlib import asynccontextmanager
 
-from academy.exchange import HttpExchangeFactory
 from academy.handle import Handle
 from academy.manager import Manager
 from fastmcp import FastMCP
-from fastmcp.exceptions import ToolError
 from globus_compute_sdk import Executor
+from exchange_config import create_exchange_factory
+from mcp_dispatch import dispatch_action
 from hpc_agent import HpcAgent, HpcClientAgent, HpcClusterAgent
 from pool_manager import CampaignPool, ClusterPool
 
@@ -37,7 +37,6 @@ ENDPOINT_ID = required("HPC_GLOBUS_ENDPOINT_ID")
 POOL_SIZE = int(required("HPC_POOL_SIZE"))
 BASE_DIR = required("HPC_BASE_DIR")
 CAMPAIGN_ID = required("HPC_CAMPAIGN_ID")
-EXCHANGE_URL = required("ACADEMY_EXCHANGE_URL")
 ENDPOINT_CONFIG = json.loads(required("HPC_ENDPOINT_CONFIG_JSON"))
 if not isinstance(ENDPOINT_CONFIG, dict):
     raise RuntimeError("HPC_ENDPOINT_CONFIG_JSON must encode an object")
@@ -51,15 +50,6 @@ INSPECT_ROOTS = [item for item in os.environ.get("HPC_INSPECT_ROOTS", "").split(
 SYSTEM = os.environ.get("HPC_SYSTEM", "polaris")
 if SYSTEM not in ("aurora", "polaris", "alps", "cscs", "jupiter"):
     raise RuntimeError("HPC_SYSTEM must be 'aurora', 'polaris' or 'alps' ('cscs' alias) or 'jupiter'")
-# Longest a listen stream stays open before a clean reconnect. The exchange
-# server blocks in a destructive pop for this long on each listen; when the
-# ALCF proxy severs our side, that stale reader lingers and can take (and
-# lose) the next message while our reconnected stream waits beside it. A
-# shorter window clears stale readers sooner; the cost is a few extra listen
-# requests per agent per minute. Academy's default is 60s.
-EXCHANGE_REQUEST_TIMEOUT_S = float(os.environ.get("HPC_EXCHANGE_REQUEST_TIMEOUT", "20"))
-if EXCHANGE_REQUEST_TIMEOUT_S <= 0:
-    raise RuntimeError("HPC_EXCHANGE_REQUEST_TIMEOUT must be positive")
 
 
 # The GC executor is the only allocation launcher. Passing the user endpoint
@@ -81,8 +71,7 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
         # Values are serialized into every agent constructor; worker-side setup
         # must make BASE_DIR available. Do not mkdir it locally: it may be a
         # remote-only HPC filesystem path.
-        factory = HttpExchangeFactory(EXCHANGE_URL, auth_method="globus", retries=3,
-                                      request_timeout_s=EXCHANGE_REQUEST_TIMEOUT_S)
+        factory = create_exchange_factory()
         gc_executor = make_executor()
         served = False
         try:
@@ -132,15 +121,11 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
             async def launch_cluster(generation_ckpt_dir: str) -> Handle:
                 return await launch(HpcClusterAgent(BASE_DIR, generation_ckpt_dir, nnodes, SYSTEM))
 
-            # Every tool forwards to the same-named action on the next pool
-            # agent. Failures come back as ToolError so the harness gets a
-            # readable message rather than an internal server error.
+            # Worker/pool failures remain MCP errors. Expected inspection
+            # refusals return explicit application status so healthy transport
+            # is not misclassified as an outage by the harness.
             async def dispatch(action: str, *args, **kwargs):
-                try:
-                    agent = await pool.next_agent(launch_one)
-                    return await agent.handle.action(action, *args, **kwargs)
-                except Exception as exc:
-                    raise ToolError(f"{action} failed: {type(exc).__name__}: {exc}") from exc
+                return await dispatch_action(pool, launch_one, action, *args, **kwargs)
 
             async def run_code(payload: str, workdir: str | None = None, timeout: float = 300.0, venv_path: str | None = None) -> dict[str, str]:
                 """Run Python on one campaign-owned, GPU/tile-pinned Academy agent."""
@@ -148,7 +133,12 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
                                       timeout=timeout, venv_path=venv_path)
 
             async def inspect_filesystem(operation: str, path: str, offset: int = 1, limit: int = 100) -> dict:
-                """Bounded read-only ls/cat/tail inspection on a pinned campaign worker."""
+                """Bounded read-only ls/cat/tail inspection on a pinned worker.
+
+                Expected refusals return status not_found, denied, or invalid_request;
+                they do not mean the server is unreachable. Inspection never creates
+                directories. run_code creates its assigned workdir when executing.
+                """
                 return await dispatch("inspect_filesystem", operation, path, offset=offset, limit=limit)
 
             async def write_files(files: dict) -> dict:

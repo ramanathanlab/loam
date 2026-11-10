@@ -1,0 +1,14 @@
+[
+  {
+    "source": "skills/qm/uma/SKILL.md",
+    "source_sha256": "8906f8d990f7af350ca5695b9ac845b591c2a5069a1a5fcd135854f3dff2333e",
+    "packaged_path": "references/aurora-notes.md",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/qm/uma/scripts/uma_xpu_test.py",
+    "source_sha256": "2fbfe558f8d01753778823420328d9c0cf82664daa6ca152db817fabecd4f67e",
+    "packaged_path": "references/aurora-resources/scripts/uma_xpu_test.py",
+    "kind": "historical-reference"
+  }
+]

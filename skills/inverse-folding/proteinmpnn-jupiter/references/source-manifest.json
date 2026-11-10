@@ -1,0 +1,20 @@
+[
+  {
+    "source": "skills/inverse-folding/proteinmpnn/SKILL.md",
+    "source_sha256": "8a7aa2e1d8ef7001ca7be3d98b48cb54395dac12907d83e73b450f47962c3972",
+    "packaged_path": "references/aurora-notes.md",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/inverse-folding/proteinmpnn/scripts/ipex_shim/intel_extension_for_pytorch/__init__.py",
+    "source_sha256": "94e964c6efc16bab71b3d570978c79ab33ce65c4fb1cf278b5352180c591029e",
+    "packaged_path": "references/aurora-resources/scripts/ipex_shim/intel_extension_for_pytorch/__init__.py",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/inverse-folding/proteinmpnn/scripts/run_tests.sh",
+    "source_sha256": "e6f183c6dbad3e04300a5ae5b322d2072b17355b1a35f5295c4e0d4065360420",
+    "packaged_path": "references/aurora-resources/scripts/run_tests.sh",
+    "kind": "historical-reference"
+  }
+]

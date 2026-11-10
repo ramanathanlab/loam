@@ -1,0 +1,21 @@
+{
+  "version": "0.20.6",
+  "tag": "v2026.8.27",
+  "commit": "5fc308a70719a83cccdbba4c0e39c23f5a8239d5",
+  "python": "3.12.11",
+  "extras": [
+    "mcp"
+  ],
+  "canonical_path": "/e/project1/deepwing/meigooni1/agent/software/hermes-agent",
+  "source_path": "/e/project1/deepwing/meigooni1/agent/software/hermes-agent-0.20.6",
+  "previous_checkout": "/e/project1/deepwing/meigooni1/agent/software/hermes-agent-newer-backup",
+  "previous_gateway_patch_applied": false,
+  "installed_at": 1794000539.0599947,
+  "verification": {
+    "cli_version": "Hermes Agent v0.20.6 (2026.8.27)",
+    "package_version": "0.20.6",
+    "mcp_version": "2.0.0",
+    "loam_adapter_import": "passed",
+    "argo_cli_response": "HERMES_0206_OK"
+  }
+}

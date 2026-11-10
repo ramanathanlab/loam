@@ -1,0 +1,11 @@
+{
+  "max_rounds": 20,
+  "max_hours": 12,
+  "max_turns": 100,
+  "hpc_wait_seconds": 6000,
+  "execution_timeout_seconds": 6000,
+  "mcp_timeout_seconds": 6300,
+  "hermes_tool_timeout_seconds": 14400,
+  "allocation_walltime": "02:00:00",
+  "rfd4_num_workers": 0
+}

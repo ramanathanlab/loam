@@ -14,8 +14,26 @@ PY="$REPO/.venv/bin/python"
 "$PY" -c "from esm.models.esmfold2 import EsmFold2Model"
 ```
 
-The installed esm 3.4.2 provides EsmFold2Model directly; the Aurora transformers fork is no longer required. Download biohub/ESMFold2 and biohub/ESMC-6B weights before offline use. ARM64 uses native PyTorch attention when the upstream x86-only flash-attention wheel is unavailable. Inference still requires GPU verification. Do not substitute ESMFold v1.
+The installed esm 3.4.2 provides EsmFold2Model directly; the Aurora transformers fork is no longer required. Download biohub/ESMFold2 and biohub/ESMC-6B weights before offline use. ARM64 uses native PyTorch attention when the upstream x86-only flash-attention wheel is unavailable. The manual native CUDA fold passed on a real 20-residue fixture; larger complexes and production settings still require validation. Do not substitute ESMFold v1.
 
 Run GPU workloads through `mcp__hpc__run_code` or `run_batch(gpus=1)`. Jupiter has four GH200 GPUs per node. Keep the CUDA_VISIBLE_DEVICES assigned by Ensemble Launcher; inside a one-GPU task use cuda:0. Write outputs to the campaign workspace. Do not use Aurora modules, ZE_AFFINITY_MASK, XPU launchers, ALCF proxies, or PBS submissions.
 
-The original [esmfold2](../esmfold2/SKILL.md) skill describes input/output semantics. Use this Jupiter environment and native CUDA invocation; Aurora installation paths and measured timings do not apply. Check `JUPITER.md` and `ports/jupiter/status.json` for verified readiness. CLI/import examples alone do not establish successful inference.
+## Packaged references through skill_view
+
+These files are inside this skill and work without access to a sibling skill or installed documentation tree:
+
+- [Jupiter workflow](references/workflow.md): `skill_view(name="esmfold2-jupiter", file_path="references/workflow.md")`.
+- [Original API/provenance notes](references/aurora-notes.md): `skill_view(name="esmfold2-jupiter", file_path="references/aurora-notes.md")`. This is historical Aurora material; use the Jupiter workflow for execution.
+- [Supporting-file index](references/resource-index.md): `skill_view(name="esmfold2-jupiter", file_path="references/resource-index.md")`. It lists exact paths for every packaged helper and input example.
+
+`file_path` is relative to this skill directory. Do not use `../`, invent an unlisted path, or assume files in the installed checkout are skill references. Original helper sources and examples are packaged under `references/aurora-resources/` for reading, not as Jupiter launchers. Platform-specific instructions in this SKILL.md and `references/workflow.md` take precedence over historical references.
+
+Explicitly activate this tool's venv before invoking upstream shell wrappers. Preserve assigned GPU visibility, run one scientific task per remote call, and stream logs immediately. Current extended test limits are 6000-second payloads, 6300-second MCP requests and 14400-second outer Hermes tool deadlines; check remaining Slurm walltime before starting long work.
+
+Check `$HPC_LOAM_HOME/JUPITER.md` and `$HPC_LOAM_HOME/ports/jupiter/software-smoke-status.json` for manual workflow readiness. The older `ports/jupiter/status.json` is an import/package inventory. Those are checkout files, not paths within this skill. Import/CLI success and readable references alone do not establish successful scientific execution.
+
+## Manual smoke workload
+
+[Loam-style smoke test](references/smoke-test.md): `skill_view(name="esmfold2-jupiter", file_path="references/smoke-test.md")`. Run it manually after installation or changes; do not count import/CLI checks as a workflow pass.
+
+[Exact smoke recipe](references/smoke-workload.py): `skill_view(name="esmfold2-jupiter", file_path="references/smoke-workload.py")`. This is a self-contained snapshot of this tool's manual recipe, with public-input provenance and output assertions. Run it through MCP with this tool's own Python, `--out <fresh-workdir> --software <software-root>`; the suite additionally checks the login-side Argo answer for rag-query.

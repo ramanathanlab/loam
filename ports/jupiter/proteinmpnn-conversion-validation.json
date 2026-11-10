@@ -1,0 +1,25 @@
+{
+  "status": "passed",
+  "host": "jpbo-021-30",
+  "package": "gemmi==0.7.5",
+  "environment": "software/proteinmpnn/.venv",
+  "source_sha256": "707689b01ec0efe5081cc298e7dcd3da0e4991914178095c824b462dd672fa1f",
+  "converted_sha256": "a88793b57a0840855dc79ac9d64bcd723b3a9e426047c298668a98255cada8d1",
+  "chains": [
+    {
+      "chain": "B",
+      "residues": 80,
+      "atoms": 630
+    },
+    {
+      "chain": "A",
+      "residues": 598,
+      "atoms": 4588
+    }
+  ],
+  "mapping_preserved": true,
+  "finite_coordinates": true,
+  "report_path": "campaign-test11/control/proteinmpnn-conversion-check/report.json",
+  "scope": "mmCIF-to-PDB conversion only, not ProteinMPNN model inference",
+  "dependency_audit": "uv pip check flags the pre-existing py3-none-manylinux2014_sbsa wheel tag on nvidia-cusparselt-cu12==0.7.1; file inspection confirms libcusparseLt.so.0 is ARM aarch64. No CUDA package changes were made."
+}

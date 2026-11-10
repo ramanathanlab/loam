@@ -170,7 +170,7 @@ def canonicalize_campaign_delegation(tool_name: str, args: dict[str, Any], **kwa
     if canonical is None:
         return None
     return {
-        "args": canonical,
+        "args": _hermes_delegation_args(canonical),
         "source": "loam-campaign",
         "reason": "canonical persisted campaign delegation",
     }
@@ -265,6 +265,14 @@ def record_decision(args: dict[str, Any], **kwargs: Any) -> str:
     return json.dumps({"status": "recorded", "what": what[:200]})
 
 
+def _hermes_delegation_args(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Hermes 0.20.6 requires goal/context mode for a single planned child."""
+    tasks = arguments.get("tasks")
+    if isinstance(tasks, list) and len(tasks) == 1:
+        return {**{key: value for key, value in arguments.items() if key != "tasks"}, **tasks[0]}
+    return arguments
+
+
 def dispatch_round(args: dict[str, Any], **kwargs: Any) -> str:
     """Dispatch the round's planned delegation without the model transcribing it.
 
@@ -315,7 +323,7 @@ def dispatch_round(args: dict[str, Any], **kwargs: Any) -> str:
                 ),
             }
         )
-    return context.dispatch_tool("delegate_task", canonical)
+    return context.dispatch_tool("delegate_task", _hermes_delegation_args(canonical))
 
 
 def post_api_request(**kwargs: Any) -> None:
@@ -409,17 +417,13 @@ def pre_llm_call(session_id: str = "", **kwargs: Any) -> dict[str, Any] | None:
         knowledge = tournament.knowledge or {}
         timeout_seconds = max(timeout_seconds,
                               tournament.timeout_seconds + int(knowledge.get("timeout_seconds") or 0))
+    values = dict(kwargs)
+    values.update(payload_values(profile))
+    values.update(session_id=session_id, loam_turn=turn, loam_interval=interval)
+    values["parent_session_id"] = values.get("parent_session_id") or session_id
     return _invoke(
         "pre-llm.py",
-        _payload(
-            "pre_llm_call",
-            session_id=session_id,
-            parent_session_id=session_id,
-            loam_turn=turn,
-            loam_interval=interval,
-            **payload_values(profile),
-            **kwargs,
-        ),
+        _payload("pre_llm_call", **values),
         timeout_seconds=timeout_seconds,
     )
 

@@ -69,6 +69,10 @@ Cluster-mode health checking (see "Self-healing" below) reads `HPC_POOL_PROBE_IN
 `HPC_CLUSTER_STARTUP_TIMEOUT` (3000s), `HPC_AGENT_STARTUP_TIMEOUT` (600s), and
 `HPC_POOL_WAIT_TIMEOUT` (unset).
 
+Set `HPC_CLUSTER_STARTUP_TIMEOUT=0` to wait without a deadline for the initial
+cluster agent to clear the scheduler queue. This does not extend allocation
+walltime or change the bounded probes used after workers start.
+
 `HPC_EXCHANGE_REQUEST_TIMEOUT` (20s; Academy's default is 60s) caps how long each
 exchange listen stream stays open before a clean reconnect. When the ALCF proxy
 severs a stream, the server's reader for it lingers up to this long and can take
@@ -273,7 +277,7 @@ The action resolves paths and restricts them to the explicit allowed roots: `HPC
 
 ## How much compute you have — size your batch to it (code-generators)
 
-<!-- LOAM_LIVE_ALLOC --> **Live pool for this run: 2 nodes x 12 = 24 tiles.** Your fair share is ~2 tiles (the pool divided 10 ways by top_k; all code-generators draw on the same tiles). A run_batch row = 1 tile (gpus=1): size each batch to ~2 rows per wave, poll batch_status to unfinished==0, then submit the next wave. More rows just queue and will not finish in the hour.
+<!-- LOAM_LIVE_ALLOC --> **Live pool for this run: 1 nodes x 4 = 4 tiles.** Your fair share is ~4 tiles (the pool divided 1 ways by top_k; all code-generators draw on the same tiles). A run_batch row = 1 tile (gpus=1): size each batch to ~4 rows per wave, poll batch_status to unfinished==0, then submit the next wave. More rows just queue and will not finish in the hour.
 
 A `run_batch` row gets `gpus=1` = one Aurora **tile**, and a node has **12 tiles**
 (6 GPUs x 2). The pool is therefore `nodes x 12` tiles. **Do not assume the node
@@ -303,3 +307,52 @@ resume the same batch_id).
 - One agent is pinned to one addressable accelerator; subprocesses inherit its pinning environment.
 - Preserve endpoint UUID, endpoint config, campaign ID, agent IDs, pins, seeds, commands and outputs.
 - This skill contains no molecular-design logic and exposes no additional MCP capabilities.
+
+#### Jupiter Academy exchange
+
+Jupiter defaults to `RedisExchangeFactory`. Before starting the campaign MCP
+server, start the authenticated login-node Redis service with
+`scripts/start_jupiter_redis.py --bind <internal-login-IP>` using the Globus Python
+environment. Source `software/redis/env.sh` (also loaded by `set_env_jupiter.sh`).
+The serialized exchange factory carries connection settings to compute agents.
+Keep this service alive for the entire allocation; no Academy cloud login is
+needed for Redis. Do not print the password file. See `JUPITER.md` for setup and
+the real Academy messaging smoke test. Redis does not proxy external databases.
+
+#### Jupiter Argo authentication and tunnel recovery
+
+If `SSH_AUTH_SOCK` is empty and the homes jump host rejects public-key
+authentication, use the documented laptop bridge: laptop `-L` from homes:50856
+to laptop:50855, then laptop `-R` to the campaign login node's loopback:50856.
+See [Jupiter tunnel troubleshooting](../../JUPITER.md#argo-tunnel-when-ssh-agent-forwarding-is-unavailable)
+for exact commands. Both SSH clients run on the laptop; no agent forwarding or
+private-key copy to Jupiter is needed. Confirm the final SSH host matches the
+campaign host, keep both sessions open, verify `/v1/models`, then run inference
+and MCP preflight. Do not diagnose `UNKNOWN port 65535` as the Argo backend port.
+
+#### Jupiter compute-node database access
+
+An optional authenticated HTTP/HTTPS proxy on the campaign login node provides
+internet access to proxy-aware worker tools. Start it with the dedicated
+`software/internet-proxy/.venv/bin/python` and `scripts/start_jupiter_proxy.py
+--bind <internal-login-IP>`. Workers source `software/internet-proxy/env.sh`
+through Jupiter's worker initialization and scientific environment helper.
+Use a fresh MCP server after changing proxy configuration. Never print proxy
+URLs or the private env file; they contain authentication. Keep internal
+services in `NO_PROXY`, retain TLS certificate verification, and verify real
+UniProt/RCSB requests with `scripts/internet_proxy_smoke.py` through `run_code`.
+See [Jupiter internet proxy](../../JUPITER.md#compute-node-internet-through-the-login-proxy)
+for installation, startup, limits and test evidence paths. This supports
+HTTP/HTTPS clients honoring proxy settings, not arbitrary sockets or UDP.
+
+#### Inspection failures and server health
+
+`inspect_filesystem` returns normal structured results with `status: not_found`
+(and `exists: false`), `denied`, or `invalid_request` for expected missing-path,
+permission, and input failures. These results are failures of the requested
+operation, not evidence that MCP is disconnected. Read `message` and correct
+the request. For a new assigned workdir, use `run_code`; it creates that workdir
+when running the payload. Inspection stays read-only and never creates paths.
+Path restrictions, symlink-escape rejection, binary-file rejection and size
+limits remain enforced. Pool lookup and unexpected worker failures remain MCP
+errors. Do not classify an explicit refusal as a successful scientific result.

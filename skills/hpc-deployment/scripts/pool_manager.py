@@ -152,6 +152,10 @@ class ClusterPool:
         # The cluster agent's first probe waits out the PBS queue, not just
         # process startup, so it gets a much larger budget than anything else.
         self.cluster_timeout_s = _setting(cluster_timeout_s, "HPC_CLUSTER_STARTUP_TIMEOUT", "3000")
+        # Queue residence is unbounded when the operator explicitly requests 0.
+        # Keep bounded health probes once the cluster has started.
+        if self.cluster_timeout_s == 0:
+            self.cluster_timeout_s = None
         self.probe_interval_s = _setting(probe_interval_s, "HPC_POOL_PROBE_INTERVAL", "60")
         # Liveness probes must fail fast; only a cold launch gets the long one.
         self.probe_timeout_s = _setting(probe_timeout_s, "HPC_POOL_PROBE_TIMEOUT", "30")

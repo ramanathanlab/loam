@@ -67,6 +67,10 @@ Jnana generation/ranking (pre-LLM hook)
 
 ## Step 1 — Inference endpoints
 
+**Jupiter:** use the [Jupiter deployment guide](JUPITER.md#llm-tunnel), including
+the laptop bridge for Argo when SSH agent forwarding is unavailable. That guide
+also covers the login-node Redis exchange required by offline compute nodes.
+
 Two OpenAI-compatible bases the campaign talks to:
 
 - **Argo tunnel on `:51900`** — the Hermes reasoner and every delegated subagent

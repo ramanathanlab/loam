@@ -161,5 +161,23 @@ class CoordinatorBoundaryTests(unittest.TestCase):
         self.assertIsNone(verdict)
 
 
+class SingleValidatorDelegationTests(unittest.TestCase):
+    def test_single_child_tags_belong_to_goal_not_supporting_context(self):
+        orchestration = _load("loam_single_child_policy")
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = {**_payload(Path(temporary)), "loam_hypothesis_orchestration": True}
+            orchestration.context_for(dict(payload))
+            plan_id = orchestration._plan_id(orchestration.Tournament(payload).latest_report()[0], payload)
+            orchestration.record_start({**payload, "child_session_id": "validator-single",
+                "child_subagent_id": "sa-single", "child_goal":
+                f"Validate [loam-agent-role=hypothesis-validator] [loam-plan-id={plan_id}] [loam-hypothesis-id=h-1]"})
+            tagged = f"Compute [loam-agent-role=code-generator] [loam-plan-id={plan_id}] [loam-hypothesis-id=h-1]"
+            common = {**payload, "session_id": "validator-single", "tool_name": "delegate_task"}
+            self.assertIsNone(orchestration.tool_policy({**common, "arguments": {
+                "goal": tagged, "context": "Full scientific hypothesis and instructions without identity tags.", "role": "leaf"}}))
+            self.assertIsNotNone(orchestration.tool_policy({**common, "arguments": {
+                "goal": "Untagged work", "context": tagged, "role": "leaf"}}))
+
+
 if __name__ == "__main__":
     unittest.main()

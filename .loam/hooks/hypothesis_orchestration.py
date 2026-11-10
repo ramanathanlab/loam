@@ -1579,7 +1579,8 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
     if tasks:
         goals = [task.get('goal') for task in tasks if isinstance(task, Mapping)]
     else:
-        goals = [arguments.get(key) for key in ('goal', 'context', 'task') if arguments.get(key)]
+        # Context is supporting material, not a second task requiring role tags.
+        goals = [arguments.get('goal') or arguments.get('task') or arguments.get('context')]
     goals = [goal for goal in goals if isinstance(goal, str) and goal.strip()]
     plan_id = start['plan_id']
     if not goals or any(

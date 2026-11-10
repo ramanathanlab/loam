@@ -16,6 +16,15 @@ PY="$REPO/.venv/bin/python"
 
 Use the original index-building API with this environment. Download the selected embedding model before offline execution; retain model identity and document metadata.
 
-Run GPU workloads through `mcp__hpc__run_code` or `run_batch(gpus=1)`. Jupiter has four GH200 GPUs per node. Keep the CUDA_VISIBLE_DEVICES assigned by Ensemble Launcher; inside a one-GPU task use cuda:0. Write outputs to the campaign workspace. Do not use Aurora modules, ZE_AFFINITY_MASK, XPU launchers, ALCF proxies, or PBS submissions.
+## Packaged references
 
-The original [rag-build-index](../rag-build-index/SKILL.md) skill describes input/output semantics. Use this Jupiter environment and native CUDA invocation; Aurora installation paths and measured timings do not apply. Check `JUPITER.md` and `ports/jupiter/status.json` for verified readiness. CLI/import examples alone do not establish successful inference.
+- [Jupiter execution and readiness](references/workflow.md): `skill_view(name="rag-build-index-jupiter", file_path="references/workflow.md")`.
+- [Concrete API recipe](references/api.md): `skill_view(name="rag-build-index-jupiter", file_path="references/api.md")`.
+
+All reference paths are inside this skill. Do not request `../` sibling paths. Use MCP for scientific execution, preserve assigned workspace paths and report real outputs. These retrieval/RAG recipes do not require a GPU for their small CPU tests.
+
+## Manual smoke workload
+
+[Loam-style smoke test](references/smoke-test.md): `skill_view(name="rag-build-index-jupiter", file_path="references/smoke-test.md")`. Run it manually after installation or changes; do not count import/CLI checks as a workflow pass.
+
+[Exact smoke recipe](references/smoke-workload.py): `skill_view(name="rag-build-index-jupiter", file_path="references/smoke-workload.py")`. This is a self-contained snapshot of this tool's manual recipe, with public-input provenance and output assertions. Run it through MCP with this tool's own Python, `--out <fresh-workdir> --software <software-root>`; the suite additionally checks the login-side Argo answer for rag-query.

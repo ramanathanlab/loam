@@ -1,0 +1,26 @@
+[
+  {
+    "source": "skills/structure-prediction/chai/SKILL.md",
+    "source_sha256": "f7e813950804cd9f793a3dedeefac5e986a77e22556985aa3e904e18ec60e93a",
+    "packaged_path": "references/aurora-notes.md",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/structure-prediction/chai/scripts/chai_xpu.py",
+    "source_sha256": "764882f0132e65456b401b11b6f35b95f480fa8afdfc2cd50eeb5c61d21d59a1",
+    "packaged_path": "references/aurora-resources/scripts/chai_xpu.py",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/structure-prediction/chai/scripts/ubq.fasta",
+    "source_sha256": "b18c7b0c33ffb4f25682385ea8a16b4677bc7c9a87823e64cd61048d29bb38bd",
+    "packaged_path": "references/aurora-resources/scripts/ubq.fasta",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/structure-prediction/chai/scripts/ubq_lig.fasta",
+    "source_sha256": "01f8f1b30c91001bf60c60bdb24915b90e8505d819d4835ceac520f515a10bcd",
+    "packaged_path": "references/aurora-resources/scripts/ubq_lig.fasta",
+    "kind": "historical-reference"
+  }
+]

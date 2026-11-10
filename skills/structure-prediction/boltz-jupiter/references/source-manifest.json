@@ -1,0 +1,32 @@
+[
+  {
+    "source": "skills/structure-prediction/boltz/SKILL.md",
+    "source_sha256": "2ff806a13aa6b2143b526caf7db3277e2260ca4978c96ad6014c62c010f5c39c",
+    "packaged_path": "references/aurora-notes.md",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/structure-prediction/boltz/scripts/lig_aff.yaml",
+    "source_sha256": "9a0b1e9ab663aa2772f4f5fb55e684ebc569f5823b60f69ca0e2b7e82c1e842f",
+    "packaged_path": "references/aurora-resources/scripts/lig_aff.yaml",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/structure-prediction/boltz/scripts/prot_no_msa.yaml",
+    "source_sha256": "62408930acfda3491b51709c5b155f834bd4c8bee8d63bcd19aabc40597968bb",
+    "packaged_path": "references/aurora-resources/scripts/prot_no_msa.yaml",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/structure-prediction/boltz/scripts/run_boltz_xpu.sh",
+    "source_sha256": "7543595ad47655f59e25902fdd099ab86f62afb91407cf470108a68f2e3e2874",
+    "packaged_path": "references/aurora-resources/scripts/run_boltz_xpu.sh",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/structure-prediction/boltz/scripts/ubq_msa.fasta",
+    "source_sha256": "aced6e2f3e35c805fa8fd124edc5995168556b2e3e9bd31fdd791387010fbb89",
+    "packaged_path": "references/aurora-resources/scripts/ubq_msa.fasta",
+    "kind": "historical-reference"
+  }
+]

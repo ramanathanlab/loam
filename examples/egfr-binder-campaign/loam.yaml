@@ -110,7 +110,7 @@ profiles:
       # One per funnel stage, and naming exactly one folding tool is deliberate:
       # left to pick among chai/boltz/esmfold2/protenix, 150 validators will not
       # all choose the same one and their results stop being comparable.
-      skills: [rfdiffusion3, proteinmpnn, chai, openmm, pyrosetta]
+      skills: [rfd4-proteina, proteinmpnn, chai, openmm, pyrosetta]
 
     execution:
       # All four of tool_name/function_name/endpoint/input_schema are REQUIRED
@@ -143,7 +143,7 @@ profiles:
         Before writing any code, read the recipe for the tool you need with
         skill_view. The campaign's skills carry the exact activation and CLI
         invocation for each stage, and they are the authority over your
-        recollection: rfdiffusion3 (de novo backbone generation), proteinmpnn
+        recollection: Use 900-second (15-minute) timeouts for setup/scientific subprocesses and run_code(timeout=900). Read named software documentation directly rather than recursively scanning environments. rfd4-proteina (de novo backbone generation), proteinmpnn
         (sequence design on a fixed backbone), chai (co-folding and interface
         metrics), openmm (simulation and MMPBSA free energy), pyrosetta
         (structural metrics).

@@ -593,12 +593,12 @@ def main() -> int:
     parser.add_argument("--campaign", default=".", help="the campaign directory (default: cwd)")
     parser.add_argument("--repo", default="", help="the loam checkout; defaults to $LOAM_REPO")
     parser.add_argument("--launcher", default="", help="what to run in the pty (default: ./launch.sh, else ./run-campaign)")
-    parser.add_argument("--max-rounds", type=int, default=4,
-                        help="stop after this many completed reasoner syntheses (default 4)")
-    parser.add_argument("--max-hours", type=float, default=8.0,
-                        help="wall-clock budget for the whole drive (default 8)")
-    parser.add_argument("--max-turns", type=int, default=24,
-                        help="hard cap on nudges sent, whatever the phase says (default 24)")
+    parser.add_argument("--max-rounds", type=int, default=20,
+                        help="stop after this many completed reasoner syntheses (default 20)")
+    parser.add_argument("--max-hours", type=float, default=12.0,
+                        help="wall-clock budget for the whole drive (default 12)")
+    parser.add_argument("--max-turns", type=int, default=100,
+                        help="hard cap on nudges sent, whatever the phase says (default 100)")
     parser.add_argument("--barren-rounds", type=int, default=2,
                         help="stop after this many consecutive rounds that accept no new evidence (default 2)")
     parser.add_argument("--stuck-turns", type=int, default=3,
@@ -615,8 +615,8 @@ def main() -> int:
                         help="how long to wait for the launch to write a run manifest (default 2400)")
     parser.add_argument("--probe-timeout", type=float, default=300.0,
                         help="seconds for one HPC placement probe (default 300)")
-    parser.add_argument("--hpc-wait-seconds", type=int, default=1500,
-                        help="seconds to wait for a restarted allocation to listen (default 1500)")
+    parser.add_argument("--hpc-wait-seconds", type=int, default=6000,
+                        help="seconds to wait for a restarted allocation to listen (default 6000)")
     parser.add_argument("--first-prompt", default="Begin the campaign.",
                         help="the opening turn (default 'Begin the campaign.')")
     parser.add_argument("--prompt", default="continue", help="each later turn (default 'continue')")

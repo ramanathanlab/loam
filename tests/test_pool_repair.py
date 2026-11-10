@@ -25,6 +25,42 @@ class ClusterRepairOrderingTests(unittest.TestCase):
     def tearDown(self) -> None:
         sys.path.remove(str(SCRIPTS))
 
+    def test_zero_cluster_startup_timeout_waits_for_queued_agent(self) -> None:
+        pool = self.pm.ClusterPool("queued", want=1, cluster_timeout_s=0)
+
+        class QueuedHandle:
+            agent_id = "queued-cluster"
+
+            async def action(self, action):
+                await asyncio.sleep(0.02)
+                return {"device_pin": "", "pid": "123"}
+
+        async def launch(ckpt_dir):
+            return QueuedHandle()
+
+        pool._launch_cluster = launch
+        async def start():
+            await asyncio.wait_for(pool._start_cluster(), timeout=1)
+        asyncio.run(start())
+        self.assertEqual(pool._cluster.handle.agent_id, "queued-cluster")
+
+    def test_finite_cluster_startup_timeout_still_expires(self) -> None:
+        pool = self.pm.ClusterPool("bounded", want=1, cluster_timeout_s=0.001)
+
+        class QueuedHandle:
+            agent_id = "queued-cluster"
+
+            async def action(self, action):
+                await asyncio.sleep(1)
+                return {"device_pin": "", "pid": "123"}
+
+        async def launch(ckpt_dir):
+            return QueuedHandle()
+
+        pool._launch_cluster = launch
+        with self.assertRaises(TimeoutError):
+            asyncio.run(pool._start_cluster())
+
     def test_dropped_client_is_shut_down_before_relaunch(self) -> None:
         pm = self.pm
 

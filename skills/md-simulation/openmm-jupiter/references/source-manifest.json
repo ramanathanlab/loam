@@ -1,0 +1,14 @@
+[
+  {
+    "source": "skills/md-simulation/openmm/SKILL.md",
+    "source_sha256": "a6b1fa67838c281158f23d22f6eb3362382c8f454b39c9daa8b558577518220e",
+    "packaged_path": "references/aurora-notes.md",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/md-simulation/openmm/scripts/openmm_xpu_smoke.py",
+    "source_sha256": "7261563c61c881cca3b0a46969fd86f502fa074d3ba7ec72f4679c7746474d55",
+    "packaged_path": "references/aurora-resources/scripts/openmm_xpu_smoke.py",
+    "kind": "historical-reference"
+  }
+]

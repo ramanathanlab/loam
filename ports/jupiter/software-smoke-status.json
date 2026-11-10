@@ -1,0 +1,805 @@
+{
+  "checked_at": "2026-11-10T19:49:07.855211+00:00",
+  "scope": "Manual small workflows through MCP, isolated venvs; not campaign preflight or production qualification",
+  "execution": "Initially sequential; repair reruns overlapped asset staging on a second GPU, leaving two GPUs free",
+  "required_count": 14,
+  "all_required_passed": false,
+  "cases": {
+    "fetch-literature": {
+      "status": "passed",
+      "workload": "Real PubMed abstracts and Europe PMC retrieval",
+      "note": "",
+      "latest_attempt": {
+        "status": "passed",
+        "started_at": 1794337088.8265347,
+        "remote": {
+          "returncode": 0,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/fetch-literature/process.log"
+        },
+        "result": {
+          "records": 2,
+          "europe_pmc": true,
+          "status": "passed",
+          "case": "fetch-literature",
+          "elapsed_seconds": 3.0803089141845703,
+          "python": "/e/project1/deepwing/meigooni1/agent/software/fetch-literature/.venv/bin/python"
+        },
+        "finished_at": 1794337095.137747,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+      },
+      "attempts": [
+        {
+          "status": "passed",
+          "started_at": 1794337088.8265347,
+          "remote": {
+            "returncode": 0,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/fetch-literature/process.log"
+          },
+          "result": {
+            "records": 2,
+            "europe_pmc": true,
+            "status": "passed",
+            "case": "fetch-literature",
+            "elapsed_seconds": 3.0803089141845703,
+            "python": "/e/project1/deepwing/meigooni1/agent/software/fetch-literature/.venv/bin/python"
+          },
+          "finished_at": 1794337095.137747,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        }
+      ]
+    },
+    "rag-build-index": {
+      "status": "passed",
+      "workload": "Pretrained embeddings, FAISS/Arrow persistence and reload",
+      "note": "",
+      "latest_attempt": {
+        "status": "passed",
+        "started_at": 1794337095.1389384,
+        "remote": {
+          "returncode": 0,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/rag-build-index/process.log"
+        },
+        "result": {
+          "vectors": 3,
+          "dimension": 384,
+          "top_hit": "target",
+          "retrieval_passed": true,
+          "status": "passed",
+          "case": "rag-build-index",
+          "elapsed_seconds": 186.68568205833435,
+          "python": "/e/project1/deepwing/meigooni1/agent/software/rag-build-index/.venv/bin/python"
+        },
+        "finished_at": 1794337289.844192,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+      },
+      "attempts": [
+        {
+          "status": "passed",
+          "started_at": 1794337095.1389384,
+          "remote": {
+            "returncode": 0,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/rag-build-index/process.log"
+          },
+          "result": {
+            "vectors": 3,
+            "dimension": 384,
+            "top_hit": "target",
+            "retrieval_passed": true,
+            "status": "passed",
+            "case": "rag-build-index",
+            "elapsed_seconds": 186.68568205833435,
+            "python": "/e/project1/deepwing/meigooni1/agent/software/rag-build-index/.venv/bin/python"
+          },
+          "finished_at": 1794337289.844192,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        }
+      ]
+    },
+    "rag-query": {
+      "status": "passed",
+      "workload": "FAISS retrieval followed by login-node Argo answer",
+      "note": "",
+      "latest_attempt": {
+        "status": "passed",
+        "started_at": 1794337289.8608325,
+        "remote": {
+          "returncode": 0,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/rag-query/process.log"
+        },
+        "result": {
+          "vectors": 3,
+          "dimension": 384,
+          "top_hit": "target",
+          "retrieval_passed": true,
+          "status": "passed",
+          "case": "rag-query",
+          "elapsed_seconds": 83.30896186828613,
+          "python": "/e/project1/deepwing/meigooni1/agent/software/rag-query/.venv/bin/python"
+        },
+        "llm_answer": "EGFR",
+        "execution_note": "MCP retrieval followed by login-node Argo completion, matching Loam orchestration",
+        "finished_at": 1794337378.083456,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+      },
+      "attempts": [
+        {
+          "status": "passed",
+          "started_at": 1794337289.8608325,
+          "remote": {
+            "returncode": 0,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/rag-query/process.log"
+          },
+          "result": {
+            "vectors": 3,
+            "dimension": 384,
+            "top_hit": "target",
+            "retrieval_passed": true,
+            "status": "passed",
+            "case": "rag-query",
+            "elapsed_seconds": 83.30896186828613,
+            "python": "/e/project1/deepwing/meigooni1/agent/software/rag-query/.venv/bin/python"
+          },
+          "llm_answer": "EGFR",
+          "execution_note": "MCP retrieval followed by login-node Argo completion, matching Loam orchestration",
+          "finished_at": 1794337378.083456,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        }
+      ]
+    },
+    "openmm": {
+      "status": "passed",
+      "workload": "Real protein CUDA minimization and 10 MD steps",
+      "note": "",
+      "latest_attempt": {
+        "status": "passed",
+        "started_at": 1794338623.974938,
+        "remote": {
+          "returncode": 0,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110/openmm/process.log"
+        },
+        "result": {
+          "energy_kj_mol": -2106.86153460886,
+          "platform": "CUDA",
+          "steps": 10,
+          "status": "passed",
+          "case": "openmm",
+          "elapsed_seconds": 11.916771173477173,
+          "python": "/e/project1/deepwing/meigooni1/agent/software/openmm/.venv/bin/python"
+        },
+        "finished_at": 1794338643.9331903,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110"
+      },
+      "attempts": [
+        {
+          "status": "failed",
+          "started_at": 1794337378.0948284,
+          "remote": {
+            "returncode": 1,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/openmm/process.log"
+          },
+          "result": {},
+          "finished_at": 1794337389.092706,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        },
+        {
+          "status": "passed",
+          "started_at": 1794338623.974938,
+          "remote": {
+            "returncode": 0,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110/openmm/process.log"
+          },
+          "result": {
+            "energy_kj_mol": -2106.86153460886,
+            "platform": "CUDA",
+            "steps": 10,
+            "status": "passed",
+            "case": "openmm",
+            "elapsed_seconds": 11.916771173477173,
+            "python": "/e/project1/deepwing/meigooni1/agent/software/openmm/.venv/bin/python"
+          },
+          "finished_at": 1794338643.9331903,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110"
+        }
+      ]
+    },
+    "molecular-simulations": {
+      "status": "passed",
+      "workload": "AmberTools explicit-solvent build and CUDA minimization",
+      "note": "",
+      "latest_attempt": {
+        "status": "passed",
+        "started_at": 1794338643.9349337,
+        "remote": {
+          "returncode": 0,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110/molecular-simulations/process.log"
+        },
+        "result": {
+          "topology_bytes": 1084702,
+          "minimized_structure": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110/molecular-simulations/system/min.pdb",
+          "atoms": 5715,
+          "coordinates_finite": true,
+          "status": "passed",
+          "case": "molecular-simulations",
+          "elapsed_seconds": 47.13679599761963,
+          "python": "/e/project1/deepwing/meigooni1/agent/software/molecular-simulations/.venv/bin/python"
+        },
+        "finished_at": 1794338694.11395,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110"
+      },
+      "attempts": [
+        {
+          "status": "failed",
+          "started_at": 1794337389.0939684,
+          "remote": {
+            "returncode": 1,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/molecular-simulations/process.log"
+          },
+          "result": {},
+          "finished_at": 1794337431.1290414,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        },
+        {
+          "status": "passed",
+          "started_at": 1794338643.9349337,
+          "remote": {
+            "returncode": 0,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110/molecular-simulations/process.log"
+          },
+          "result": {
+            "topology_bytes": 1084702,
+            "minimized_structure": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110/molecular-simulations/system/min.pdb",
+            "atoms": 5715,
+            "coordinates_finite": true,
+            "status": "passed",
+            "case": "molecular-simulations",
+            "elapsed_seconds": 47.13679599761963,
+            "python": "/e/project1/deepwing/meigooni1/agent/software/molecular-simulations/.venv/bin/python"
+          },
+          "finished_at": 1794338694.11395,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110"
+        }
+      ]
+    },
+    "proteinmpnn": {
+      "status": "passed",
+      "workload": "mmCIF/PDB conversion and one trained-model sequence design",
+      "note": "",
+      "latest_attempt": {
+        "status": "passed",
+        "started_at": 1794337431.1454065,
+        "remote": {
+          "returncode": 0,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/proteinmpnn/process.log"
+        },
+        "result": {
+          "generated_fasta": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/proteinmpnn/design/seqs/input.fa",
+          "records": 2,
+          "conversion_gemmi": "0.7.5",
+          "status": "passed",
+          "case": "proteinmpnn",
+          "elapsed_seconds": 21.300392866134644,
+          "python": "/e/project1/deepwing/meigooni1/agent/software/proteinmpnn/.venv/bin/python"
+        },
+        "finished_at": 1794337454.3124826,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+      },
+      "attempts": [
+        {
+          "status": "passed",
+          "started_at": 1794337431.1454065,
+          "remote": {
+            "returncode": 0,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/proteinmpnn/process.log"
+          },
+          "result": {
+            "generated_fasta": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/proteinmpnn/design/seqs/input.fa",
+            "records": 2,
+            "conversion_gemmi": "0.7.5",
+            "status": "passed",
+            "case": "proteinmpnn",
+            "elapsed_seconds": 21.300392866134644,
+            "python": "/e/project1/deepwing/meigooni1/agent/software/proteinmpnn/.venv/bin/python"
+          },
+          "finished_at": 1794337454.3124826,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        }
+      ],
+      "additional_output_validation": {
+        "evidence": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/additional-output-checks.json",
+        "values": {
+          "residues": 106,
+          "generated_sequences": 1,
+          "canonical_sequence": true,
+          "conversion_identity_preserved": true,
+          "fasta_sha256": "4f723b260c7350266f4c70b3b48972193d21819f960e0f87b30aefff64065703"
+        }
+      }
+    },
+    "rfd4-proteina": {
+      "status": "passed",
+      "workload": "Trained-model monomer backbone generation with zero loader workers",
+      "note": "",
+      "latest_attempt": {
+        "status": "passed",
+        "started_at": 1794337454.3286982,
+        "remote": {
+          "returncode": 0,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/rfd4-proteina/process.log"
+        },
+        "result": {
+          "generated_cif": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/rfd4-proteina/generation/inference_samples/monomer-short/monomer-short_generated.cif",
+          "chains": 1,
+          "status": "passed",
+          "case": "rfd4-proteina",
+          "elapsed_seconds": 62.53594422340393,
+          "python": "/e/project1/deepwing/meigooni1/agent/software/RFD4-Proteina/.venv/bin/python"
+        },
+        "finished_at": 1794337518.6309369,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+      },
+      "attempts": [
+        {
+          "status": "passed",
+          "started_at": 1794337454.3286982,
+          "remote": {
+            "returncode": 0,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/rfd4-proteina/process.log"
+          },
+          "result": {
+            "generated_cif": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/rfd4-proteina/generation/inference_samples/monomer-short/monomer-short_generated.cif",
+            "chains": 1,
+            "status": "passed",
+            "case": "rfd4-proteina",
+            "elapsed_seconds": 62.53594422340393,
+            "python": "/e/project1/deepwing/meigooni1/agent/software/RFD4-Proteina/.venv/bin/python"
+          },
+          "finished_at": 1794337518.6309369,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        }
+      ]
+    },
+    "chai": {
+      "status": "passed",
+      "workload": "Single-sequence trained-model folding and confidence output",
+      "note": "",
+      "latest_attempt": {
+        "status": "passed",
+        "started_at": 1794337518.6458387,
+        "remote": {
+          "returncode": 0,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/chai/process.log"
+        },
+        "result": {
+          "cif": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/chai/fold/pred.model_idx_0.cif",
+          "ptm": 0.40250808000564575,
+          "status": "passed",
+          "case": "chai",
+          "elapsed_seconds": 38.84515333175659,
+          "python": "/e/project1/deepwing/meigooni1/agent/software/chai-lab/.venv/bin/python"
+        },
+        "finished_at": 1794337559.6012695,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+      },
+      "attempts": [
+        {
+          "status": "passed",
+          "started_at": 1794337518.6458387,
+          "remote": {
+            "returncode": 0,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/chai/process.log"
+          },
+          "result": {
+            "cif": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/chai/fold/pred.model_idx_0.cif",
+            "ptm": 0.40250808000564575,
+            "status": "passed",
+            "case": "chai",
+            "elapsed_seconds": 38.84515333175659,
+            "python": "/e/project1/deepwing/meigooni1/agent/software/chai-lab/.venv/bin/python"
+          },
+          "finished_at": 1794337559.6012695,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        }
+      ],
+      "additional_output_validation": {
+        "evidence": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/additional-output-checks.json",
+        "values": {
+          "atoms": 153,
+          "residues": 20,
+          "coordinates_finite": true
+        }
+      }
+    },
+    "boltz": {
+      "status": "passed",
+      "workload": "Single-sequence CUDA folding with native PyTorch kernels",
+      "note": "",
+      "latest_attempt": {
+        "status": "passed",
+        "started_at": 1794338883.4949126,
+        "remote": {
+          "returncode": 0,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-boltz-final-20261110/boltz/process.log"
+        },
+        "result": {
+          "cif": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-boltz-final-20261110/boltz/fold/boltz_results_input/predictions/input/input_model_0.cif",
+          "confidence": {
+            "confidence_score": 0.8629614114761353,
+            "ptm": 0.49276652932167053,
+            "iptm": 0.0,
+            "ligand_iptm": 0.0,
+            "protein_iptm": 0.0,
+            "complex_plddt": 0.955510139465332,
+            "complex_iplddt": 0.955510139465332,
+            "complex_pde": 0.2980668842792511,
+            "complex_ipde": 0.0,
+            "chains_ptm": {
+              "0": 0.49276652932167053
+            },
+            "pair_chains_iptm": {
+              "0": {
+                "0": 0.49276652932167053
+              }
+            }
+          },
+          "atoms": 153,
+          "residues": 20,
+          "coordinates_finite": true,
+          "status": "passed",
+          "case": "boltz",
+          "elapsed_seconds": 44.53260517120361,
+          "python": "/e/project1/deepwing/meigooni1/agent/software/boltz/.venv/bin/python"
+        },
+        "finished_at": 1794338931.3107758,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-boltz-final-20261110"
+      },
+      "attempts": [
+        {
+          "status": "failed",
+          "started_at": 1794337559.6127458,
+          "remote": {
+            "returncode": 1,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/boltz/process.log"
+          },
+          "result": {},
+          "finished_at": 1794337867.4567654,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        },
+        {
+          "status": "failed",
+          "started_at": 1794338694.1308572,
+          "remote": {
+            "returncode": 1,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110/boltz/process.log"
+          },
+          "result": {},
+          "finished_at": 1794338787.7801385,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-repairs-20261110"
+        },
+        {
+          "status": "passed",
+          "started_at": 1794338883.4949126,
+          "remote": {
+            "returncode": 0,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-boltz-final-20261110/boltz/process.log"
+          },
+          "result": {
+            "cif": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-boltz-final-20261110/boltz/fold/boltz_results_input/predictions/input/input_model_0.cif",
+            "confidence": {
+              "confidence_score": 0.8629614114761353,
+              "ptm": 0.49276652932167053,
+              "iptm": 0.0,
+              "ligand_iptm": 0.0,
+              "protein_iptm": 0.0,
+              "complex_plddt": 0.955510139465332,
+              "complex_iplddt": 0.955510139465332,
+              "complex_pde": 0.2980668842792511,
+              "complex_ipde": 0.0,
+              "chains_ptm": {
+                "0": 0.49276652932167053
+              },
+              "pair_chains_iptm": {
+                "0": {
+                  "0": 0.49276652932167053
+                }
+              }
+            },
+            "atoms": 153,
+            "residues": 20,
+            "coordinates_finite": true,
+            "status": "passed",
+            "case": "boltz",
+            "elapsed_seconds": 44.53260517120361,
+            "python": "/e/project1/deepwing/meigooni1/agent/software/boltz/.venv/bin/python"
+          },
+          "finished_at": 1794338931.3107758,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-boltz-final-20261110"
+        }
+      ]
+    },
+    "protenix": {
+      "status": "passed",
+      "workload": "Mini ESM CUDA folding, real checkpoint/embedding path",
+      "note": "",
+      "latest_attempt": {
+        "status": "passed",
+        "started_at": 1794337867.459212,
+        "remote": {
+          "returncode": 0,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/protenix/process.log"
+        },
+        "result": {
+          "cif": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/protenix/fold/trpcage/seed_42/predictions/trpcage_sample_0.cif",
+          "atoms": 154,
+          "residues": 20,
+          "coordinates_finite": true,
+          "status": "passed",
+          "case": "protenix",
+          "elapsed_seconds": 817.0544679164886,
+          "python": "/e/project1/deepwing/meigooni1/agent/software/protenix/.venv/bin/python"
+        },
+        "finished_at": 1794338689.1194994,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+      },
+      "attempts": [
+        {
+          "status": "passed",
+          "started_at": 1794337867.459212,
+          "remote": {
+            "returncode": 0,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/protenix/process.log"
+          },
+          "result": {
+            "cif": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/protenix/fold/trpcage/seed_42/predictions/trpcage_sample_0.cif",
+            "atoms": 154,
+            "residues": 20,
+            "coordinates_finite": true,
+            "status": "passed",
+            "case": "protenix",
+            "elapsed_seconds": 817.0544679164886,
+            "python": "/e/project1/deepwing/meigooni1/agent/software/protenix/.venv/bin/python"
+          },
+          "finished_at": 1794338689.1194994,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        }
+      ]
+    },
+    "uma": {
+      "status": "blocked",
+      "workload": "Neutral singlet water energy and forces using UMA/OMol",
+      "note": "Checkpoint access denied by Hugging Face; authorize and authenticate before retry.",
+      "latest_attempt": {
+        "status": "failed",
+        "started_at": 1794338689.1219785,
+        "remote": {
+          "returncode": 1,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/uma/process.log"
+        },
+        "result": {},
+        "finished_at": 1794338777.8645208,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+      },
+      "attempts": [
+        {
+          "status": "failed",
+          "started_at": 1794338689.1219785,
+          "remote": {
+            "returncode": 1,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/uma/process.log"
+          },
+          "result": {},
+          "finished_at": 1794338777.8645208,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        }
+      ]
+    },
+    "esmfold2": {
+      "status": "passed",
+      "workload": "Native ESMFold2 trained-model folding",
+      "note": "",
+      "latest_attempt": {
+        "status": "passed",
+        "started_at": 1794338777.8877676,
+        "remote": {
+          "returncode": 0,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/esmfold2/process.log"
+        },
+        "result": {
+          "structure": "prediction.cif",
+          "atoms": 153,
+          "residues": 20,
+          "coordinates_finite": true,
+          "status": "passed",
+          "case": "esmfold2",
+          "elapsed_seconds": 229.98316097259521,
+          "python": "/e/project1/deepwing/meigooni1/agent/software/esmfold2/.venv/bin/python"
+        },
+        "finished_at": 1794339016.1642253,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+      },
+      "attempts": [
+        {
+          "status": "passed",
+          "started_at": 1794338777.8877676,
+          "remote": {
+            "returncode": 0,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/esmfold2/process.log"
+          },
+          "result": {
+            "structure": "prediction.cif",
+            "atoms": 153,
+            "residues": 20,
+            "coordinates_finite": true,
+            "status": "passed",
+            "case": "esmfold2",
+            "elapsed_seconds": 229.98316097259521,
+            "python": "/e/project1/deepwing/meigooni1/agent/software/esmfold2/.venv/bin/python"
+          },
+          "finished_at": 1794339016.1642253,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        }
+      ]
+    },
+    "genslm-esm": {
+      "status": "blocked",
+      "workload": "Pretrained codon/amino-acid embedding; excludes unavailable SAE fork",
+      "note": "Documented checkpoint is inaccessible to the current Hugging Face identity.",
+      "latest_attempt": {
+        "status": "failed",
+        "started_at": 1794339016.228737,
+        "remote": {
+          "returncode": 1,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/genslm-esm/process.log"
+        },
+        "result": {},
+        "finished_at": 1794339107.2566338,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+      },
+      "attempts": [
+        {
+          "status": "failed",
+          "started_at": 1794339016.228737,
+          "remote": {
+            "returncode": 1,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/genslm-esm/process.log"
+          },
+          "result": {},
+          "finished_at": 1794339107.2566338,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        }
+      ]
+    },
+    "pyrosetta": {
+      "status": "blocked",
+      "workload": "Real protein ref2015 scoring using licensed runtime",
+      "note": "Only installer present; licensed ARM64 PyRosetta runtime is missing.",
+      "latest_attempt": {
+        "status": "failed",
+        "started_at": 1794339107.2589488,
+        "remote": {
+          "returncode": 1,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/pyrosetta/process.log"
+        },
+        "result": {},
+        "finished_at": 1794339109.850267,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+      },
+      "attempts": [
+        {
+          "status": "failed",
+          "started_at": 1794339107.2589488,
+          "remote": {
+            "returncode": 1,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/pyrosetta/process.log"
+          },
+          "result": {},
+          "finished_at": 1794339109.850267,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        }
+      ]
+    },
+    "reactra": {
+      "status": "excluded",
+      "workload": "Excluded at user's request",
+      "note": "User excluded Reactra; no installation required.",
+      "latest_attempt": {
+        "status": "failed",
+        "started_at": 1794339109.8528209,
+        "remote": {
+          "returncode": 127,
+          "host": "jpbo-021-30.jupiter.internal",
+          "job": "2818072",
+          "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/reactra/process.log"
+        },
+        "result": {},
+        "finished_at": 1794339111.8274162,
+        "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+      },
+      "attempts": [
+        {
+          "status": "failed",
+          "started_at": 1794339109.8528209,
+          "remote": {
+            "returncode": 127,
+            "host": "jpbo-021-30.jupiter.internal",
+            "job": "2818072",
+            "log": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/reactra/process.log"
+          },
+          "result": {},
+          "finished_at": 1794339111.8274162,
+          "audit_directory": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110"
+        }
+      ]
+    }
+  },
+  "reference_reads": [
+    {
+      "evidence": "/e/project1/deepwing/meigooni1/agent/software/verification/jupiter-skills-smoke-20261110/skill-view.json",
+      "successful_reads": 107
+    }
+  ],
+  "reference_verification_limitation": "All 15 packaging tests passed, and all advertised paths and packaged Python recipes were checked. The earlier actual Hermes skill_view audit passed 107 reads. Fresh checks of the 15 newly added recipe files timed out at 90 and 180 seconds amid login-side I/O waits; those final interface reads remain unverified. No Hermes patches or security-boundary workarounds were applied."
+}
