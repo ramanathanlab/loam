@@ -1,9 +1,13 @@
 {
   "name": "genslm_esm",
-  "actions": ["embed"],
+  "actions": [
+    "embed"
+  ],
   "description": "Embed codon (space-separated uppercase codons) or amino-acid sequences with GenSLM-ESM (ESMC-architecture 600M contrastive) on Aurora XPU; returns per-layer hidden states (mean-pooled or per-token) and, optionally, Top-K SAE features for the layer. One row per sequence.",
   "runner": "scripts/genslm_esm_run_row.py",
-  "required": ["sequence"],
+  "required": [
+    "sequence"
+  ],
   "gpus": 1,
   "timeout_each": 1800,
   "row_schema": {
@@ -23,8 +27,15 @@
     "max_length": 2048,
     "sae": false
   },
-  "expects": ["out/results.json"],
-  "site_keys": ["python", "model_id", "sae_default", "env"],
+  "expects": [
+    "out/results.json"
+  ],
+  "site_keys": [
+    "python",
+    "model_id",
+    "sae_default",
+    "env"
+  ],
   "example": {
     "id": "codon-smoke",
     "sequence": "ATG GCT AAA GGT GAA CTG TTC ACC GGT GTT GTG CCC ATC CTG GTC GAG CTG GAC GGC GAC TAA",
@@ -33,5 +44,11 @@
     "pool": "mean",
     "sae": false
   },
-  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). A thin 'skills' MCP tool genslm_esm.embed(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each>=1800 for load/IO contention). The runner resolves the venvs/aurora python + model/SAE paths worker-side (site.<system>.json['genslm_esm'] -> defaults), loads the frameworks module in a login shell, and subprocesses an embedded driver (the verified embed_and_sae.py API). device MUST be xpu (a CPU fallback is a failure). For a codon row the SAE at the default best/layer32 matches layer=32; a different layer needs a matching sae_dir."
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md \u00a75). A thin 'skills' MCP tool genslm_esm.embed(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each>=1800 for load/IO contention). The runner resolves the venvs/aurora python + model/SAE paths worker-side (site.<system>.json['genslm_esm'] -> defaults), loads the frameworks module in a login shell, and subprocesses an embedded driver (the verified embed_and_sae.py API). device MUST be xpu (a CPU fallback is a failure). For a codon row the SAE at the default best/layer32 matches layer=32; a different layer needs a matching sae_dir.",
+  "io": {
+    "embed": {
+      "consumes": "sequence",
+      "produces": "embedding"
+    }
+  }
 }

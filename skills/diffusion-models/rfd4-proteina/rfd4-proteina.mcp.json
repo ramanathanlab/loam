@@ -1,6 +1,8 @@
 {
   "name": "rfd4_proteina",
-  "actions": ["generate"],
+  "actions": [
+    "generate"
+  ],
   "description": "Generate protein/binder backbones with RFD4-Proteina (flow-matching all-atom) on Aurora XPU via the pinned resident-worker route; one row per design (one tile). The tool ANNOTATES the target itself: give a folded 'target' + hotspots/binder_len and it builds the annotated condition-spec CIF (RFD4's write_condition_spec_cif) before generating, or pass a ready 'input' annotated CIF. Returns a generated CIF + receipt.",
   "runner": "scripts/rfd4_run_row.py",
   "required": [],
@@ -31,7 +33,12 @@
     "rfd4_run/predictions/**/*_generated.cif",
     "rfd4_run/predictions/**/receipt.json"
   ],
-  "site_keys": ["python", "launcher", "share", "env"],
+  "site_keys": [
+    "python",
+    "launcher",
+    "share",
+    "env"
+  ],
   "example": {
     "id": "binder_00",
     "target": "/abs/folded_target.cif",
@@ -42,5 +49,11 @@
     "seed": 101,
     "seconds": 900
   },
-  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). A thin 'skills' MCP tool rfd4_proteina.generate(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=scripts/rfd4_run_row.py, inputs_path=jsonl, gpus=1, timeout_each). 'input' is an absolute path to an ANNOTATED CIF (SA_* columns + condition spec), built with scripts/make_rfd4_input.py or a ready-made benchmark under $RFD4_ENGINE/data/benchmarks/. Distinct seeds are distinct designs; reusing a seed is a replay. The runner resolves the resident wrapper worker-side via row['wrapper'] -> $RFD4_WRAPPER -> $HPC_LOAM_HOME/skills/diffusion-models/rfd4-proteina/scripts/run_rfd4_resident.sh, and the pinned env/checkpoint come from that wrapper (the read-only dkastner deployment, SKILL.md §1). Output existence alone is NOT completion: require rc=0 + receipt.json with matching input/seed (SKILL.md §6)."
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md \u00a75). A thin 'skills' MCP tool rfd4_proteina.generate(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=scripts/rfd4_run_row.py, inputs_path=jsonl, gpus=1, timeout_each). 'input' is an absolute path to an ANNOTATED CIF (SA_* columns + condition spec), built with scripts/make_rfd4_input.py or a ready-made benchmark under $RFD4_ENGINE/data/benchmarks/. Distinct seeds are distinct designs; reusing a seed is a replay. The runner resolves the resident wrapper worker-side via row['wrapper'] -> $RFD4_WRAPPER -> $HPC_LOAM_HOME/skills/diffusion-models/rfd4-proteina/scripts/run_rfd4_resident.sh, and the pinned env/checkpoint come from that wrapper (the read-only dkastner deployment, SKILL.md \u00a71). Output existence alone is NOT completion: require rc=0 + receipt.json with matching input/seed (SKILL.md \u00a76).",
+  "io": {
+    "generate": {
+      "consumes": "structure",
+      "produces": "backbone"
+    }
+  }
 }

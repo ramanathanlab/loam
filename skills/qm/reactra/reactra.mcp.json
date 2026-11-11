@@ -1,9 +1,14 @@
 {
   "name": "reactra",
-  "actions": ["plan", "run"],
+  "actions": [
+    "plan",
+    "run"
+  ],
   "description": "Author/validate/plan and (TODO: run) Reactra enzyme-reaction simulations on Aurora from one YAML + a MECH file via scripts/reactra_cli.sh; one row per experiment. stage='plan' is the cheap verified path (validate + plan, <25 s, no GPU); stage='run' is the full NNP/MM + OPES pipeline (~1h, UNVERIFIED on Aurora).",
   "runner": "scripts/reactra_run_row.py",
-  "required": ["run_yaml"],
+  "required": [
+    "run_yaml"
+  ],
   "gpus": 1,
   "timeout_each": 60,
   "row_schema": {
@@ -17,13 +22,28 @@
   "defaults": {
     "stage": "plan"
   },
-  "expects": ["plan.txt"],
-  "site_keys": ["wrapper", "env"],
+  "expects": [
+    "plan.txt"
+  ],
+  "site_keys": [
+    "wrapper",
+    "env"
+  ],
   "example": {
     "id": "cm-flooding-plan",
     "stage": "plan",
     "run_yaml": "/lus/flare/projects/FRAME-IDP/avasan/reactra-campaign/cm/run.yaml",
     "mech_overlay": "/lus/flare/projects/FRAME-IDP/avasan/reactra-campaign/mech_overlay"
   },
-  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md s5). A thin 'skills' MCP tool reactra.plan(inputs, defaults) (or reactra.run) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls the loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). The runner resolves reactra_cli.sh + $REACTRA_MECH_OVERLAY worker-side from site.<system>.json and invokes the CLI via bash -lc. timeout_each 60s fits the plan path (verified <25 s); for stage='run' set timeout_each to the full allocation (e.g. >=7200 s -- the CM reference ran ~54 min) -- NOT validated here (# TODO(verify)). REACTRA_MECH_OVERLAY has NO shared copy: build the one-time mech-format overlay per campaign (SKILL 'One-time setup'). reactra CLI exit 4 is a terminal scientific outcome, not a transient failure; do not auto-resubmit it. Keep run.yaml's native_device_slots within the row's one-tile reservation."
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md s5). A thin 'skills' MCP tool reactra.plan(inputs, defaults) (or reactra.run) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls the loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). The runner resolves reactra_cli.sh + $REACTRA_MECH_OVERLAY worker-side from site.<system>.json and invokes the CLI via bash -lc. timeout_each 60s fits the plan path (verified <25 s); for stage='run' set timeout_each to the full allocation (e.g. >=7200 s -- the CM reference ran ~54 min) -- NOT validated here (# TODO(verify)). REACTRA_MECH_OVERLAY has NO shared copy: build the one-time mech-format overlay per campaign (SKILL 'One-time setup'). reactra CLI exit 4 is a terminal scientific outcome, not a transient failure; do not auto-resubmit it. Keep run.yaml's native_device_slots within the row's one-tile reservation.",
+  "io": {
+    "plan": {
+      "consumes": null,
+      "produces": null
+    },
+    "run": {
+      "consumes": null,
+      "produces": "score"
+    }
+  }
 }

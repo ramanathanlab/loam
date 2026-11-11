@@ -1,9 +1,13 @@
 {
   "name": "protenix",
-  "actions": ["fold"],
+  "actions": [
+    "fold"
+  ],
   "description": "AF3-style prediction (proteins/DNA/RNA/ligands/ions/complexes) with Protenix on Aurora XPU; one row per prediction, returns mmCIF + pLDDT/pTM/ipTM/PAE confidence JSON.",
   "runner": "scripts/protenix_run_row.py",
-  "required": ["input"],
+  "required": [
+    "input"
+  ],
   "gpus": 1,
   "timeout_each": 900,
   "row_schema": {
@@ -26,8 +30,14 @@
     "dtype": "bf16",
     "use_msa": false
   },
-  "expects": ["out/*/seed_*/predictions/*_sample_*.cif"],
-  "site_keys": ["protenix", "root_dir", "env"],
+  "expects": [
+    "out/*/seed_*/predictions/*_sample_*.cif"
+  ],
+  "site_keys": [
+    "protenix",
+    "root_dir",
+    "env"
+  ],
   "example": {
     "id": "gb1-smoke",
     "input": "[{\"name\": \"gb1\", \"sequences\": [{\"proteinChain\": {\"sequence\": \"MTYKLILNGKTLKGETTTEAVDAATAEKVFKQYANDNGVDGEWTYDDATKTFTVTE\", \"count\": 1}}]}]",
@@ -39,5 +49,11 @@
     "dtype": "bf16",
     "use_msa": false
   },
-  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). A thin 'skills' MCP tool protenix.fold(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). Install paths come from site.<system>.json, resolved worker-side. The runner forces --trimul_kernel/--triatt_kernel torch, passes --use_msa explicitly every run, and rejects any non-offline model (would try to download)."
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md \u00a75). A thin 'skills' MCP tool protenix.fold(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). Install paths come from site.<system>.json, resolved worker-side. The runner forces --trimul_kernel/--triatt_kernel torch, passes --use_msa explicitly every run, and rejects any non-offline model (would try to download).",
+  "io": {
+    "fold": {
+      "consumes": "sequence",
+      "produces": "structure"
+    }
+  }
 }

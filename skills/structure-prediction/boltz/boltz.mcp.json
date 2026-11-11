@@ -1,9 +1,13 @@
 {
   "name": "boltz",
-  "actions": ["fold"],
+  "actions": [
+    "fold"
+  ],
   "description": "Fold proteins/complexes/protein-ligand and estimate binding affinity with Boltz-2 on Aurora XPU; one row per prediction, returns pdb/cif + confidence (+ affinity) JSON.",
   "runner": "scripts/boltz_run_row.py",
-  "required": ["input"],
+  "required": [
+    "input"
+  ],
   "gpus": 1,
   "timeout_each": 900,
   "row_schema": {
@@ -29,8 +33,14 @@
     "output_format": "pdb",
     "use_msa": false
   },
-  "expects": ["out/boltz_results_*/predictions/*/*_model_0.*"],
-  "site_keys": ["boltz", "cache", "env"],
+  "expects": [
+    "out/boltz_results_*/predictions/*/*_model_0.*"
+  ],
+  "site_keys": [
+    "boltz",
+    "cache",
+    "env"
+  ],
   "example": {
     "id": "ubq-smoke",
     "input": "version: 1\nsequences:\n  - protein:\n      id: A\n      sequence: MQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTLSDYNIQKESTLHLVLRLRGG\n      msa: empty\n",
@@ -42,5 +52,11 @@
     "output_format": "pdb",
     "use_msa": false
   },
-  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). A thin 'skills' MCP tool boltz.fold(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). Install paths come from site.<system>.json, resolved worker-side."
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md \u00a75). A thin 'skills' MCP tool boltz.fold(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). Install paths come from site.<system>.json, resolved worker-side.",
+  "io": {
+    "fold": {
+      "consumes": "sequence",
+      "produces": "structure"
+    }
+  }
 }

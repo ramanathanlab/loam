@@ -1,12 +1,16 @@
 {
   "name": "molecular_simulations",
-  "actions": ["run"],
+  "actions": [
+    "run"
+  ],
   "description": "Build an AMBER system (tleap, OPC explicit water) and run the OpenMM MD pipeline (minimize/heat/equilibrate/NPT production) with the molecular-simulations package on Aurora XPU via platform='OpenCL'; one row per system, returns prmtop/inpcrd + eq/prod DCDs.",
   "runner": "scripts/molecular_simulations_run_row.py",
-  "required": ["pdb"],
+  "required": [
+    "pdb"
+  ],
   "gpus": 1,
   "timeout_each": 7200,
-  "_timeout_note": "7200s default is a placeholder. Smoke build+sim on 1L2Y (heat/equil 1000, prod 2000) was ~44s; a REAL production run uses the package defaults (heat 100k, equil 1.25M, prod 250M @ ~385 ns/day) and takes many hours — far beyond one EL task. Either set reduced *_steps per row, or rely on Simulator.run() resuming from prod.rst.chk across successive timed tasks.",
+  "_timeout_note": "7200s default is a placeholder. Smoke build+sim on 1L2Y (heat/equil 1000, prod 2000) was ~44s; a REAL production run uses the package defaults (heat 100k, equil 1.25M, prod 250M @ ~385 ns/day) and takes many hours \u2014 far beyond one EL task. Either set reduced *_steps per row, or rely on Simulator.run() resuming from prod.rst.chk across successive timed tasks.",
   "row_schema": {
     "id": "str",
     "pdb": "str",
@@ -34,8 +38,16 @@
     "prod_dt_in_ps": 0.004,
     "ff": "amber"
   },
-  "expects": ["system.prmtop", "prod*.dcd"],
-  "site_keys": ["python", "amberhome", "launcher", "env"],
+  "expects": [
+    "system.prmtop",
+    "prod*.dcd"
+  ],
+  "site_keys": [
+    "python",
+    "amberhome",
+    "launcher",
+    "env"
+  ],
   "example": {
     "id": "trpcage-smoke",
     "pdb": "/flare/FRAME-IDP/msinclair/software/molecular-simulations/tests/data/pdb/1L2Y.pdb",
@@ -48,6 +60,12 @@
     "eq_reporter_frequency": 500,
     "prod_reporter_frequency": 500
   },
-  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). GPU platform is 'OpenCL' (NOT CUDA); device is the single ZE_AFFINITY_MASK-visible tile. AMBERHOME must be set (runner does so worker-side from site['molecular_simulations']['amberhome']). VERIFIED path = pipeline='explicit' (ExplicitSolvent + Simulator). TODO(verify): pipeline='implicit' (documented, not exercised) and pipeline='complex'/'ligand' (needs rdkit+openbabel, which the SKILL.md says are NOT installed -> expect ImportError). The example 1L2Y.pdb path is illustrative (SKILL.md ran a curl'd copy); confirm a worker-visible PDB before use.",
-  "_example_todo_verify": "confirm the tests/data/pdb/1L2Y.pdb path exists on the worker, or point 'pdb' at a PDB you own."
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md \u00a75). GPU platform is 'OpenCL' (NOT CUDA); device is the single ZE_AFFINITY_MASK-visible tile. AMBERHOME must be set (runner does so worker-side from site['molecular_simulations']['amberhome']). VERIFIED path = pipeline='explicit' (ExplicitSolvent + Simulator). TODO(verify): pipeline='implicit' (documented, not exercised) and pipeline='complex'/'ligand' (needs rdkit+openbabel, which the SKILL.md says are NOT installed -> expect ImportError). The example 1L2Y.pdb path is illustrative (SKILL.md ran a curl'd copy); confirm a worker-visible PDB before use.",
+  "_example_todo_verify": "confirm the tests/data/pdb/1L2Y.pdb path exists on the worker, or point 'pdb' at a PDB you own.",
+  "io": {
+    "run": {
+      "consumes": "structure",
+      "produces": "trajectory"
+    }
+  }
 }

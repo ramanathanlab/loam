@@ -1,6 +1,8 @@
 {
   "name": "rfdiffusion3",
-  "actions": ["generate"],
+  "actions": [
+    "generate"
+  ],
   "description": "Generate protein backbones/designs with RFdiffusion3 (RFD3, all-atom diffusion) on Aurora XPU; one row per design (one tile), returns a generated CIF (.cif.gz) + metrics JSON. Unconditional (length) or spec-driven (binder/hotspots, motif/enzyme, symmetry, partial).",
   "runner": "scripts/rfdiffusion3_run_row.py",
   "required": [],
@@ -23,8 +25,17 @@
     "batches": 1,
     "batch_size": 1
   },
-  "expects": ["out/*.cif.gz"],
-  "site_keys": ["foundry", "rfd3", "checkpoints", "module_setup", "launcher", "env"],
+  "expects": [
+    "out/*.cif.gz"
+  ],
+  "site_keys": [
+    "foundry",
+    "rfd3",
+    "checkpoints",
+    "module_setup",
+    "launcher",
+    "env"
+  ],
   "example": {
     "id": "uncond50-smoke",
     "length": "50",
@@ -33,5 +44,11 @@
     "batches": 1,
     "batch_size": 1
   },
-  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). A thin 'skills' MCP tool rfdiffusion3.generate(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=scripts/rfdiffusion3_run_row.py, inputs_path=jsonl, gpus=1, timeout_each). A row is EITHER unconditional (give 'length', spec omitted -> inputs=null +specification.length=<length>) OR spec-driven (give 'spec' = inline JSON text or an absolute path to a JSON/YAML inputs file mapping spec-name -> design config; SKILL.md §4). Install paths (foundry dir, rfd3 entry point, checkpoints) resolve worker-side from site.<system>.json -> built-in defaults. The runner runs generation via bash -lc so `module swap frameworks/2025.3.1` works (SKILL.md §1); it does NOT set ZE_AFFINITY_MASK (the EL pins the tile per row). Total designs = batches*batch_size. Distinct seeds are distinct designs."
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md \u00a75). A thin 'skills' MCP tool rfdiffusion3.generate(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=scripts/rfdiffusion3_run_row.py, inputs_path=jsonl, gpus=1, timeout_each). A row is EITHER unconditional (give 'length', spec omitted -> inputs=null +specification.length=<length>) OR spec-driven (give 'spec' = inline JSON text or an absolute path to a JSON/YAML inputs file mapping spec-name -> design config; SKILL.md \u00a74). Install paths (foundry dir, rfd3 entry point, checkpoints) resolve worker-side from site.<system>.json -> built-in defaults. The runner runs generation via bash -lc so `module swap frameworks/2025.3.1` works (SKILL.md \u00a71); it does NOT set ZE_AFFINITY_MASK (the EL pins the tile per row). Total designs = batches*batch_size. Distinct seeds are distinct designs.",
+  "io": {
+    "generate": {
+      "consumes": null,
+      "produces": "backbone"
+    }
+  }
 }

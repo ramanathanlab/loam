@@ -1,6 +1,8 @@
 {
   "name": "uma",
-  "actions": ["calc"],
+  "actions": [
+    "calc"
+  ],
   "description": "Near-DFT energies, forces and geometry relaxations with Meta FAIR's UMA ML interatomic potential (fairchem-xpu) on Aurora XPU; one row per structure. Defaults to the 'batch' inference path -- 'default'/'high-precision' give WRONG forces on XPU and are refused.",
   "runner": "scripts/uma_run_row.py",
   "required": [],
@@ -32,8 +34,15 @@
     "steps": 200,
     "allow_wrong_xpu_forces": false
   },
-  "expects": ["uma_out.json"],
-  "site_keys": ["python", "cache_dir", "launcher", "env"],
+  "expects": [
+    "uma_out.json"
+  ],
+  "site_keys": [
+    "python",
+    "cache_dir",
+    "launcher",
+    "env"
+  ],
   "example": {
     "id": "ethanol-opt",
     "task_name": "omol",
@@ -46,5 +55,11 @@
     "fmax": 0.02,
     "steps": 200
   },
-  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md s5). A thin 'skills' MCP tool uma.calc(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls the loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). The runner resolves the fairchem-xpu python + FAIRCHEM_CACHE_DIR worker-side from site.<system>.json; one structure per row, energy/forces (+optional LBFGS relax). timeout_each 180s covers batch first-call warmup (~2s) plus short opt; raise it for Nitro-XPU's 25-50s Triton JIT or many-step relaxations. 'omat'/'oc20'/'odac'/'omc' heads and periodic systems are UNVERIFIED on XPU (SKILL): only 'omol' was tested."
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md s5). A thin 'skills' MCP tool uma.calc(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls the loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). The runner resolves the fairchem-xpu python + FAIRCHEM_CACHE_DIR worker-side from site.<system>.json; one structure per row, energy/forces (+optional LBFGS relax). timeout_each 180s covers batch first-call warmup (~2s) plus short opt; raise it for Nitro-XPU's 25-50s Triton JIT or many-step relaxations. 'omat'/'oc20'/'odac'/'omc' heads and periodic systems are UNVERIFIED on XPU (SKILL): only 'omol' was tested.",
+  "io": {
+    "calc": {
+      "consumes": "structure",
+      "produces": "score"
+    }
+  }
 }

@@ -481,3 +481,90 @@ it (block 9076321) and the loam-hpc pool self-healed onto the new one — a brie
 rule held: deploying `annotate_rfd4.sh` needed a `git pull` on the worker clone
 (the tool stages the runner via write_files, but the runner resolves its helper
 scripts from `$HPC_LOAM_HOME`).
+
+---
+
+## 11. Typed artifact registry & dataflow routing (spec)
+
+The in-flight gap (§10, gap 1) is that tools return a `batch_id`, not their
+outputs — so chaining means the agent runs `inspect_filesystem` and guesses a
+glob. This section specs a **typed artifact registry with provenance** that lets
+tools chain by artifact TYPE and gives dedup/idempotence for free. It is the
+dataflow substrate that makes the skill-MCP layer drive an autonomous campaign.
+
+### 11.1 Principle: route by type, not by hardcoded tool→tool edges
+
+Each tool action declares what it `consumes` and `produces` as an artifact TYPE.
+"mpnn reads from folding" is expressed as "mpnn consumes `structure`"; any tool
+that produces `structure` is a valid upstream, so a new folding tool joins the
+pool just by declaring `produces: structure`. The registry **routes; it does not
+force** — an explicit path always overrides a registry pull (needed for ablations
+and hand-seeding).
+
+### 11.2 Type taxonomy (the design core)
+
+| type | what | produced by | consumed by |
+|---|---|---|---|
+| `sequence` | AA (or codon) sequence(s) | mpnn·design, plm-diversify, seed-binders | folding, genslm |
+| `backbone` | coords only, no/placeholder sequence | rfd4, rfdiffusion3 | mpnn·design |
+| `structure` | folded chain w/ sequence+coords | chai, boltz, esmfold2, protenix | mpnn·design, scoring, pyrosetta, uma, md |
+| `complex` | multi-chain structure (binder+target) | folding of a complex | pyrosetta·interface, scoring |
+| `score` | scalar metrics (ΔG, ipTM, energy) — **terminal** | pyrosetta, uma, molsim·mmgbsa, boltz·affinity | ranking/selection |
+| `trajectory` | MD trajectory (dcd+state) | openmm, molecular_simulations | analysis, mmgbsa |
+| `embedding` | vectors — **terminal** | genslm_esm | ML/selection |
+
+The load-bearing distinction: **rfd4/rfdiffusion3 produce `backbone`** (needs mpnn
+to sequence it before folding); **chai produces `structure`/`complex`**. The whole
+binder funnel falls out of the type edges:
+`seqgen → sequence → fold → structure → mpnn → sequence → fold → … → score`, and
+`target+hotspots → rfd4 → backbone → mpnn → sequence → fold → structure → score`.
+
+Per-action IO lives in each manifest as an `io` map, e.g. proteinmpnn:
+`{"design":{"consumes":"structure","produces":"sequence"},
+  "score":{"consumes":"structure","produces":"score"}}`.
+
+### 11.3 Registry store & entry
+
+One append-only, `flock`-guarded JSONL per hypothesis on `/flare`
+(`HPC_BASE_DIR/artifacts/<hypothesis_id>.jsonl`) — the same concurrency discipline
+`experiments-index` uses so the parallel top_k code-generators can't corrupt it.
+Scoping by `hypothesis_id` (already a run_batch label) keeps parallel hypothesis
+tracks from cross-feeding; a shared pool is opt-in. This is the **structural**
+memory; `experiments-index` (faiss) stays the **semantic** memory — separate
+stores. One entry per produced artifact:
+
+```json
+{"artifact_id":"<batch>:<row>", "type":"structure", "paths":["…/run_x/out/pred.cif"],
+ "hypothesis_id":"h1", "producer_tool":"chai", "producer_action":"fold",
+ "producer_batch":"b-…", "row_id":"cand_12", "parents":["<seq artifact id>"],
+ "params":{"seed":42}, "round":1, "status":"ready", "created_at":"…"}
+```
+
+`parents` makes provenance a **DAG across rounds** (mpnn→fold→mpnn→fold), not a
+flat set.
+
+### 11.4 Operations
+
+- **`harvest(batch_id)`** — run when a batch completes. For each `run_<row>` under
+  the batch dir, glob the manifest's `expects`; register one artifact of the
+  action's `produces` type per run, carrying `params` (read from `run_<row>/
+  input.json`) and `parents` (the `artifact_id`s the row consumed, if the row
+  carried them). This replaces "return paths" with "register typed artifacts."
+- **`query(type, hypothesis_id, unused_only=true, limit, producer_tool?)`** — return
+  artifacts of a type for a hypothesis. `unused_only` filters out artifacts already
+  consumed (i.e. that appear in some later artifact's `parents`).
+- **Routing** — a downstream tool with `from_registry=true` auto-queries its
+  `consumes` type and builds its own rows (stamping each row's `parent` =
+  the source artifact_id); or the agent calls `query` explicitly and passes paths.
+- **Dedup / "tool used"** — before producing, check for an artifact with the same
+  `(producer_tool, parents, params)`; if present, skip (idempotent). The
+  `producer_tool` field is the "tool used: chai" marker, and the provenance chain
+  answers "has sequence X already been folded?".
+
+### 11.5 What it plugs into
+
+`expects` (output globs) and `labels={plan_id,hypothesis_id}` already exist — no
+new plumbing for scope or output discovery; harvest just reads them. Registry ops
+touch `/flare`, so they run **worker-side** (a `run_code` payload or a staged
+`registry.py`), never on the laptop — the orchestrator only ever passes
+`artifact_id`/path handles it learned from a tool result.

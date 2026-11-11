@@ -1,9 +1,14 @@
 {
   "name": "proteinmpnn",
-  "actions": ["design", "score"],
+  "actions": [
+    "design",
+    "score"
+  ],
   "description": "ProteinMPNN inverse folding on Aurora XPU; redesign chosen chains of a backbone PDB (others kept as fixed context) or score a native sequence. One row per PDB, returns designed sequences (seqs/*.fa) or score_only/*.npz.",
   "runner": "scripts/proteinmpnn_run_row.py",
-  "required": ["pdb"],
+  "required": [
+    "pdb"
+  ],
   "gpus": 1,
   "timeout_each": 300,
   "row_schema": {
@@ -36,8 +41,15 @@
     "save_score": false,
     "save_probs": false
   },
-  "expects": ["out/seqs/*.fa"],
-  "site_keys": ["path", "python", "ipex_shim", "env"],
+  "expects": [
+    "out/seqs/*.fa"
+  ],
+  "site_keys": [
+    "path",
+    "python",
+    "ipex_shim",
+    "env"
+  ],
   "example": {
     "id": "redesign-binderA",
     "pdb": "/flare/FRAME-IDP/avasan/campaigns/example/complex.pdb",
@@ -48,5 +60,15 @@
     "batch_size": 2,
     "model_name": "v_48_020"
   },
-  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). A thin 'skills' MCP tool proteinmpnn.design(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). The install root resolves worker-side from the EXPORTED $PROTEINMPNN_PATH (then site.<system>.json['proteinmpnn']); the IPEX shim dir must be on PYTHONPATH. --device is ignored; the tile is pinned by ZE_AFFINITY_MASK. NOTE 'expects' names the DESIGN output; for a score_only row the output is out/score_only/*.npz instead."
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md \u00a75). A thin 'skills' MCP tool proteinmpnn.design(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). The install root resolves worker-side from the EXPORTED $PROTEINMPNN_PATH (then site.<system>.json['proteinmpnn']); the IPEX shim dir must be on PYTHONPATH. --device is ignored; the tile is pinned by ZE_AFFINITY_MASK. NOTE 'expects' names the DESIGN output; for a score_only row the output is out/score_only/*.npz instead.",
+  "io": {
+    "design": {
+      "consumes": "structure",
+      "produces": "sequence"
+    },
+    "score": {
+      "consumes": "structure",
+      "produces": "score"
+    }
+  }
 }
