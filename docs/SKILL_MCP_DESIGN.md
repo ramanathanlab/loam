@@ -357,3 +357,55 @@ runner resolved the chai venv/launcher/weights **worker-side** (site manifest +
 defaults) with zero laptop-side paths — **B1/C3 confirmed on live hardware**, and
 **A2 (`write_files` staging) confirmed** once the agent is ≥ #29. The clone-pull +
 block-cycle is a **one-time deploy cost**, not per-run.
+
+---
+
+## 9. Skill roster (2026-11-11) — `loam-skills` MCP
+
+The `loam-skills` MCP server (`skills/skill_mcp/server.py`) discovers every
+`skills/**/*.mcp.json` and registers one typed tool per `(skill, action)`. Each
+tool takes a LIST of rows, validates them against the manifest, stages the
+runner + `site.aurora.json` + `inputs.jsonl` via the loam-hpc `write_files`, and
+submits a `run_batch`. 13 skills, 17 tools:
+
+| Skill | Tool(s) | Live-smoked? |
+|---|---|---|
+| chai | `chai_fold` | ✅ 32/32 folds, twice (direct + via wrapper) |
+| boltz | `boltz_fold` | authored (SKILL verified cmds) |
+| esmfold2 | `esmfold2_fold` | authored — see per-row load caveat |
+| protenix | `protenix_fold` | authored |
+| rfdiffusion3 | `rfdiffusion3_generate` | authored |
+| rfd4-proteina | `rfd4_proteina_generate` | runner pre-existed; manifest authored |
+| proteinmpnn | `proteinmpnn_design`, `proteinmpnn_score` | authored |
+| genslm-esm | `genslm_esm_embed` | authored |
+| uma | `uma_calc` | authored |
+| reactra | `reactra_plan`, `reactra_run` | plan authored; `run` TODO(verify) |
+| molecular-simulations | `molecular_simulations_run` | authored |
+| openmm | `openmm_run` | authored |
+| pyrosetta | `pyrosetta_score`, `_relax`, `_interface` | authored (debug-node verified in SKILL) |
+
+Each runner bakes the documented silent-failure trap into a hard failure (chai
+`Failed to tokenize`; boltz "failed examples"; esmfold2 multi-record FASTA;
+proteinmpnn silent CPU fallback; uma wrong-XPU-forces in `default` mode; protenix
+unknown-model download).
+
+**Known caveats to clear before trusting a skill at scale** (all tagged
+`# TODO(verify)` in the runners):
+- **reactra `run`** — ~1 h, unverified on Aurora; `REACTRA_MECH_OVERLAY` is a
+  per-campaign `FILL_IN` in `site.aurora.json`; needs `timeout_each ≥ 7200`.
+- **molecular-simulations** — only `explicit` pipeline verified; `complex`/`ligand`
+  need rdkit+openbabel (SKILL says not installed); prod step counts exceed one EL
+  task → reduce steps per row or lean on checkpoint-resume.
+- **openmm** — only `amber` input verified; gromacs/charmm/pdb untested.
+- **uma** — only the `omol` head verified on XPU.
+- **esmfold2** — one-process-per-row pays the ~90 s model load **every row**,
+  defeating its in-process batch amortization. If esmfold2 volume is high, add a
+  multi-sequence batch row (one process folds many) rather than one row per seq.
+- **rfdiffusion3** — `timeout_each` margin is from one small run; no committed
+  per-plan launcher (runner emits the `rfd3 design` command inline).
+- **proteinmpnn** — confirm the worker's `$PROTEINMPNN_PATH` checkout has a usable
+  `.venv`, else the `site.aurora.json` `python` (msinclair) stands.
+
+**Recommended next step:** live-smoke one row-set per skill (the manifest
+`example` × ≥32 distinct rows) before any real fan-out, starting with the ones the
+current campaign needs. Only `chai` has cleared this.
