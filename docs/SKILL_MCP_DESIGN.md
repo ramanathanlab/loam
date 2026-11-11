@@ -638,3 +638,39 @@ monomer), `small_molecule→uma` (uma's own external input, already smoke-tested
 pyrosetta score/relax/interface) drive behavior off a ROW field (`score_only`,
 `action`), not the tool's action name. The chain test set those fields explicitly;
 `core.submit_skill` should inject the action so the tool name is authoritative.
+
+---
+
+## 12. Lower-model MCP test — nemotron via Tara (2026-11-11)
+
+Question: can a LOWER model (not a frontier model) actually drive the skill-MCP
+tools? Tested `nemotron-3-ultra` (ALCF Tara inference service, :51912) as a
+stand-in for a loam code-generator: a bounded tool-calling loop over the live
+loam-skills + loam-hpc MCPs on the EGFR binder task (32 EGFR domain-III structures
+seeded into hypothesis `egfr-binders`).
+
+**Result: nemotron pings the right MCPs correctly.** Trajectory:
+1. `skill_query(type=structure, hypothesis_id=egfr-binders)` — checks the registry first.
+2. `rfd4_proteina_generate(from_registry="structure", from_hypothesis="egfr-binders",
+   defaults=…, labels=…)` — right tool, correct from_registry chaining + hypothesis scoping.
+3. Hit a type error (`seconds:"300"`) → **self-corrected to `300`** and resubmitted.
+4. `batch_status` polling; on batch failure, **reacted by changing `hotspots`** and resubmitting.
+
+Single-turn and multi-turn both show correct tool selection, arguments, registry
+chaining, label scoping, and error recovery. The batches FAILED, but not on MCP
+usage — on a **scientific-parameter** mistake: `hotspots="A:300-350"` is
+unparseable (make_rfd4_input wants comma ints), and the retry's `300-350` are in
+EGFR *native* numbering while the folded domain-III structure is renumbered 1-171
+(`range=1-171` auto-derived correctly). A weaker model stumbles on domain
+knowledge while the MCP plumbing stays sound.
+
+**Fixes this surfaced:**
+- `rfd4_proteina_generate` should validate `hotspots` (format + in-range for the
+  target) and return a clear tool error, not a raw `int()` ValueError from the runner.
+- `from_registry` should expose the target's residue range (annotation already
+  derives it) so the model picks valid hotspots; document the hotspots format in
+  the tool schema.
+
+Loam-Hermes proper (nemotron as `delegation.model` + loam-skills in `mcp_servers`
++ campaign rules that call the tools) is the production path; this stand-in loop
+answered the "does the lower model ping the right MCPs" question directly.
