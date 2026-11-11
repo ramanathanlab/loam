@@ -568,3 +568,30 @@ new plumbing for scope or output discovery; harvest just reads them. Registry op
 touch `/flare`, so they run **worker-side** (a `run_code` payload or a staged
 `registry.py`), never on the laptop — the orchestrator only ever passes
 `artifact_id`/path handles it learned from a tool result.
+
+### 11.6 Prototype — fold→mpnn routing validated (2026-11-11)
+
+Built `skill_mcp/registry.py` (harvest + query) and made `parent`/`parents`/
+`round` reserved row keys in `core.validate_rows` (provenance the runner ignores
+but the staged `input.json` carries, so harvest can read it). Then drove the full
+loop on live `/flare`:
+
+1. `harvest(b-5a3c5f444f57, chai, fold, produces=structure, expects=["out/*.cif"])`
+   → **32 `structure` artifacts** registered (paths, producer=chai, seed, ready).
+2. `query(type=structure, hypothesis=routing-demo, unused_only)` → the 32 structures.
+3. route to mpnn: build `proteinmpnn_design` rows from the artifacts (each row
+   stamped `parent=<structure artifact_id>`) and submit **through the loam-skills
+   MCP** → batch `b-0ba36058925d`, **32/32 PASS**.
+4. `harvest(b-0ba36058925d, proteinmpnn, design, produces=sequence,
+   expects=["seqs/*.fa"])` → **32 `sequence` artifacts**, each `parents=[the chai
+   structure]` — a verified provenance DAG (`chai structure → mpnn sequence`).
+
+Registry ended with `{structure: 32, sequence: 32}`, all under
+`HPC_BASE_DIR/artifacts/routing-demo.jsonl`.
+
+**Finding (type representation):** mpnn reads PDB but chai emits CIF, so the route
+needed a CIF→PDB adapter (gemmi, from the protenix venv). A `structure` artifact
+should therefore record its **format** and ideally carry a consumable
+representation (or folding runners emit both CIF+PDB), so each consumer doesn't
+re-implement conversion. That's the one schema addition the registry needs before
+it's production-ready for heterogeneous producers/consumers.

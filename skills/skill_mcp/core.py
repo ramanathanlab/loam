@@ -27,6 +27,11 @@ SITE_MANIFEST = SKILLS_ROOT / "site.aurora.json"
 _TYPES = {"str": str, "int": int, "float": (int, float), "bool": bool,
           "list": list, "dict": dict, "number": (int, float), "any": object}
 
+# Reserved row keys the validator permits and the runner ignores: identity + the
+# provenance fields the artifact registry reads from the staged input.json
+# (docs/SKILL_MCP_DESIGN.md §11). They are not tool parameters.
+_RESERVED = {"id", "parent", "parents", "round"}
+
 
 # --------------------------------------------------------------------------- #
 # loam-hpc MCP client (streamable-HTTP, stdlib only)
@@ -120,14 +125,14 @@ def validate_rows(manifest: dict, inputs: list, defaults: dict | None = None) ->
             raise ValueError(f"row {i} is not an object")
         row = dict(base)
         row.update(raw)
-        unknown = [k for k in row if k not in schema and k != "id"]
+        unknown = [k for k in row if k not in schema and k not in _RESERVED]
         if unknown:
             raise ValueError(f"row {i}: unknown keys {unknown}; allowed: {sorted(schema)}")
         missing = [k for k in required if k not in row]
         if missing:
             raise ValueError(f"row {i}: missing required {missing}")
         for k, v in row.items():
-            if k == "id" or v is None:
+            if k in _RESERVED or v is None:
                 continue
             kind = schema.get(k)
             if kind and not isinstance(v, _TYPES.get(kind, object)):
