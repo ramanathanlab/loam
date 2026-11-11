@@ -145,6 +145,36 @@ def validate_rows(manifest: dict, inputs: list, defaults: dict | None = None) ->
 # --------------------------------------------------------------------------- #
 # submit
 # --------------------------------------------------------------------------- #
+def skill_run(op: str, skill: str | None = None, action: str | None = None,
+              inputs: list | None = None, from_registry: str | None = None,
+              from_hypothesis: str | None = None, defaults: dict | None = None,
+              labels: dict | None = None, batch_id: str | None = None,
+              type: str | None = None, hypothesis_id: str | None = None,
+              limit: int | None = None, hpc_url: str = DEFAULT_HPC_URL) -> dict:
+    """ONE unified entry for a loam code-generator (loam gives each child a single
+    execution tool). `op` selects the funnel step:
+      submit  -> run a skill batch (skill, action; inputs OR from_registry+from_hypothesis)
+      query   -> list registry artifacts (type, hypothesis_id)
+      harvest -> register a completed batch's outputs (skill, action, batch_id, hypothesis_id)
+      status  -> poll a batch (batch_id)
+      pool    -> the tile budget
+    """
+    if op == "submit":
+        return submit_skill(skill, action, inputs, defaults=defaults, labels=labels,
+                            from_registry=from_registry, from_hypothesis=from_hypothesis,
+                            limit=limit, hpc_url=hpc_url)
+    if op == "query":
+        return registry_call("query", hpc_url=hpc_url, hypothesis_id=hypothesis_id,
+                            type=type, limit=limit, unused_only=False)
+    if op == "harvest":
+        return harvest_batch(skill, action, batch_id, hypothesis_id=hypothesis_id, hpc_url=hpc_url)
+    if op in ("status", "pool"):
+        cli = LoamHpcClient(hpc_url).connect()
+        return cli.call("batch_status", {"batch_id": batch_id}) if op == "status" \
+            else cli.call("pool_status", {})
+    raise ValueError(f"unknown op {op!r}; use submit|query|harvest|status|pool")
+
+
 def registry_call(op: str, hpc_url: str = DEFAULT_HPC_URL, **args):
     """Run a registry op WORKER-SIDE: ship registry.py, then run_code it on loam-hpc.
 

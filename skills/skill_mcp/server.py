@@ -65,7 +65,29 @@ def _registry_tools():
         can route from these via from_registry."""
         return core.harvest_batch(skill, action, batch_id, hypothesis_id=hypothesis_id)
 
-    return [skill_query, skill_harvest]
+    def skill_run(op: str, skill: str | None = None, action: str | None = None,
+                  inputs: list | None = None, from_registry: str | None = None,
+                  from_hypothesis: str | None = None, defaults: dict | None = None,
+                  labels: dict | None = None, batch_id: str | None = None,
+                  type: str | None = None, hypothesis_id: str | None = None,
+                  limit: int | None = None) -> dict:
+        """ONE tool for the whole binder funnel (for a single-execution-tool agent
+        like a loam code-generator). op selects the step:
+          op='pool'                                            -> tile budget
+          op='query'  + type, hypothesis_id                    -> list registry artifacts
+          op='submit' + skill, action, (inputs OR from_registry+from_hypothesis), labels
+                       -> run a batch (e.g. skill='rfd4_proteina',action='generate',
+                          from_registry='structure',from_hypothesis='egfr-binders')
+          op='status' + batch_id                               -> poll a batch
+          op='harvest'+ skill, action, batch_id, hypothesis_id -> register its outputs
+        Scope everything with labels/hypothesis_id='<campaign>'. Typed edges:
+        structure->rfd4->backbone->proteinmpnn.design->sequence->chai.fold->structure->pyrosetta.interface."""
+        return core.skill_run(op, skill=skill, action=action, inputs=inputs,
+                              from_registry=from_registry, from_hypothesis=from_hypothesis,
+                              defaults=defaults, labels=labels, batch_id=batch_id,
+                              type=type, hypothesis_id=hypothesis_id, limit=limit)
+
+    return [skill_query, skill_harvest, skill_run]
 
 
 def create_server() -> FastMCP:
