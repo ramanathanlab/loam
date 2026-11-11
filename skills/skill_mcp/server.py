@@ -70,4 +70,10 @@ def create_server() -> FastMCP:
 if __name__ == "__main__":
     srv = create_server()
     print(f"[loam-skills] tools: {getattr(srv, '_loam_registered', [])}", flush=True)
-    srv.run(transport=os.environ.get("LOAM_SKILLS_TRANSPORT", "stdio"))
+    transport = os.environ.get("LOAM_SKILLS_TRANSPORT", "stdio")
+    if transport in ("http", "sse"):
+        srv.run(transport=transport,
+                host=os.environ.get("LOAM_SKILLS_HOST", "127.0.0.1"),
+                port=int(os.environ.get("LOAM_SKILLS_PORT", "8010")))
+    else:
+        srv.run(transport=transport)

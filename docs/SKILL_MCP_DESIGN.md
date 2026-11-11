@@ -409,3 +409,47 @@ unknown-model download).
 **Recommended next step:** live-smoke one row-set per skill (the manifest
 `example` × ≥32 distinct rows) before any real fan-out, starting with the ones the
 current campaign needs. Only `chai` has cleared this.
+
+---
+
+## 10. Live tool test (2026-11-11) — `loam-skills` via a fresh Claude session
+
+Deployed `loam-skills` (HTTP :8010) and had a **fresh headless Claude session**
+call each tool through `--mcp-config` (loam-skills + loam-hpc), submitting 32
+distinct rows per tool and polling `batch_status`. 10 of 13 skills were testable
+immediately (7 inline-input + pyrosetta/openmm/proteinmpnn with existing install
+test data); molecular_simulations / rfd4_proteina / reactra were deferred (need a
+staged PDB+Amber build / annotated CIF / campaign yaml+mech respectively).
+
+**9/10 PASS 32/32 with real outputs** on the first live run:
+
+| tool | result | artifact |
+|---|---|---|
+| chai_fold | ✅ 32/32 | cif + scores |
+| boltz_fold | ✅ 32/32 | model_0.pdb |
+| esmfold2_fold | ✅ 32/32 | pred.cif |
+| protenix_fold | ✅ 32/32 | cif + confidence |
+| genslm_esm_embed | ✅ 32/32 | embedding .pt |
+| uma_calc | ✅ 32/32 | uma_out.json |
+| pyrosetta_score | ✅ 32/32 | scores.json |
+| openmm_run | ✅ 32/32 | traj.dcd + state |
+| proteinmpnn_design | ✅ 32/32 | seqs/*.fa |
+| rfdiffusion3_generate | ❌ 0/32 | env drift (below) |
+
+This validates the manifest-driven framework and 8 previously-untested runners on
+live hardware, via the real agent→MCP tool path.
+
+**rfdiffusion3 — environment drift, not a runner bug.** All 32 rows failed with
+`OSError: libmkl_intel_lp64.so.3: cannot open shared object file`. Aurora upgraded
+26.26.0 → **26.181.0**; the `frameworks/2025.3.1` module (which the `foundry`/rfd3
+venv is pinned to) now resolves MKL 2025.3, which ships `libmkl_intel_lp64.so.2` —
+there is **no `.so.3` anywhere** in the stack, but rfd3's torch build requires it.
+The `rfdiffusion3_run_row.py` module-swap is faithful to the SKILL.md (which
+predates the upgrade); the fix belongs to the install owner (rebuild rfd3's torch
+deps against the current MKL, or ship a matching MKL). Do NOT symlink system libs
+around the ABI mismatch.
+
+**Still to smoke** (need input prep): molecular_simulations (PDB + Amber build),
+rfd4_proteina (annotated CIF via make_rfd4_input.py), reactra (run.yaml + mech
+overlay). All three are plumbing-validated (tool registered, validates, stages,
+submits) but not science-validated.
