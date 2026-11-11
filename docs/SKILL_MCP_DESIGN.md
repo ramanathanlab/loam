@@ -453,3 +453,31 @@ around the ABI mismatch.
 rfd4_proteina (annotated CIF via make_rfd4_input.py), reactra (run.yaml + mech
 overlay). All three are plumbing-validated (tool registered, validates, stages,
 submits) but not science-validated.
+
+### 10.1 rfd4_proteina — annotation moved INTO the tool, now passing (2026-11-11)
+
+`rfd4_proteina_generate` was the main deferred skill because it needed a
+hand-made annotated condition-spec CIF. That annotation is now done **inside the
+tool**: a row gives a folded `target` (+ `target_chain` / `target_range` /
+`hotspots` / `binder_len`) and the runner builds the annotated CIF itself
+(`annotate_rfd4.sh` → RFD4's `write_condition_spec_cif`, in the pinned engine env),
+then generates — all in one tool call. `target_range` auto-derives from the
+target's atom_site when omitted (the engine contig rejects a bare chain id). A
+ready `input` CIF is still accepted (back-compat).
+
+Tested through the MCP **both ways** — direct client (`b-372658cb3575`) and a
+**fresh Claude session** (`b-c86f51f126ec`) — each **32/32 PASS**: all 32 rows
+built an annotated CIF *and* produced a generated backbone + receipt (~77 s/row,
+one concurrent wave). So the live-validated roster is now **10 of 13 skills**
+(the 9 in §10 + rfd4_proteina).
+
+Remaining: **rfdiffusion3** blocked by the MKL drift (§10, install fix);
+**molecular_simulations** and **reactra** still need input prep (PDB+Amber build;
+campaign run.yaml+mech) before a smoke.
+
+Mid-run the debug-scaling block hit its 1 h walltime; the endpoint self-replaced
+it (block 9076321) and the loam-hpc pool self-healed onto the new one — a brief
+`AgentTerminatedError` during the handover, then normal service. The clone-lag
+rule held: deploying `annotate_rfd4.sh` needed a `git pull` on the worker clone
+(the tool stages the runner via write_files, but the runner resolves its helper
+scripts from `$HPC_LOAM_HOME`).
