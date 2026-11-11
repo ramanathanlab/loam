@@ -139,10 +139,11 @@ breaks the moment the install moves or another user runs it.
                "env": {"FAIRCHEM_CACHE_DIR": "/flare/.../hf_cache"}}
   }
   ```
-  The **runner reads this at runtime** (keyed by its skill + `$HPC_SYSTEM`) and
-  resolves #2/#3/#4. The laptop MCP never needs the real paths. Moving an install
-  or onboarding a new user = edit one file. This is the direct generalization of
-  what `rfd4_run_row.py` already does ad hoc with `$HPC_LOAM_HOME`.
+  The **runner reads this at runtime** (keyed by its skill, and by system — see
+  the `HPC_SYSTEM` caveat in §4.D) and resolves #2/#3/#4. The laptop MCP never
+  needs the real paths. Moving an install or onboarding a new user = edit one
+  file. This is the direct generalization of what `rfd4_run_row.py` already does
+  ad hoc with `$HPC_LOAM_HOME`.
 - **B2 — env vars in `worker_init`** (`export CHAI_PY=…`, `CHAI_DOWNLOADS_DIR=…`).
   Fine for the *few shared* values (`HPC_LOAM_HOME` already works this way) but it
   does not scale: `worker_init` becomes a dumping ground and every skill's vars
@@ -154,6 +155,34 @@ breaks the moment the install moves or another user runs it.
 only `HPC_LOAM_HOME` + the deployment venv in `worker_init` as they are now. The
 `SKILL.md` "Environment" blocks (every skill already has one) are the source
 content for this manifest.
+
+### D. Worker-side validation (2026-11-11, live `loam-hpc` pool)
+
+Probed the assumptions with a `run_code` on an Aurora worker (8-node
+debug-scaling block, campaign `akv-egfr-20261110`). Findings:
+
+| Path / var | Worker value | Exists | Implication |
+|---|---|---|---|
+| `HPC_LOAM_HOME` | `/flare/FRAME-IDP/avasan/loam` | ✓ | exported in `worker_init`; **A1 confirmed** |
+| chai launcher (`$HPC_LOAM_HOME/.../chai_xpu.py`) | — | ✓ | `$HPC_LOAM_HOME`-relative launchers resolve |
+| rfd4 wrapper + `rfd4_run_row.py` | — | ✓ | same |
+| chai venv python (`…/msinclair/software/chai-lab/.venv/bin/python`) | — | ✓ | **cross-user install paths ARE worker-visible** — B1 may reference another user's install |
+| chai downloads/weights | — | ✓ | same |
+| `PROTEINMPNN_PATH` | `/flare/FRAME-IDP/avasan/Software/ProteinMPNN` | ✓ | **already an exported env var (B2) for this one skill** — the manifest (B1) should unify this, not fight it |
+| `HPC_SYSTEM` | *empty* | — | **not exported to workers.** A runner keyed on worker-side `$HPC_SYSTEM` fails. |
+
+Two concrete design corrections:
+
+1. **`HPC_SYSTEM` is set on the laptop (`set_env`) but not carried into
+   `worker_init`.** So B1's "key by system" cannot read `$HPC_SYSTEM` worker-side.
+   Fix one of: (a) add `export HPC_SYSTEM=…` to `worker_init` (cheapest, mirrors
+   how `HPC_LOAM_HOME` is handled); (b) detect the system worker-side
+   (`ZE_AFFINITY_MASK` present ⇒ aurora, `CUDA_VISIBLE_DEVICES` ⇒ polaris); or
+   (c) ship a single-system manifest and skip the key. Recommend (a).
+2. **One skill already resolves via an env var (`PROTEINMPNN_PATH`), others via
+   hardcoded `SKILL.md` paths.** The manifest should *absorb* existing env vars
+   (fall back to `$PROTEINMPNN_PATH` if the manifest lacks an entry) rather than
+   introduce a third convention.
 
 ### C. venv selection — "add the venv in the function call / worker_init?"
 
