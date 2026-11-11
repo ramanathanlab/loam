@@ -63,7 +63,10 @@
   "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md \u00a75). A thin 'skills' MCP tool proteinmpnn.design(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). The install root resolves worker-side from the EXPORTED $PROTEINMPNN_PATH (then site.<system>.json['proteinmpnn']); the IPEX shim dir must be on PYTHONPATH. --device is ignored; the tile is pinned by ZE_AFFINITY_MASK. NOTE 'expects' names the DESIGN output; for a score_only row the output is out/score_only/*.npz instead.",
   "io": {
     "design": {
-      "consumes": "structure",
+      "consumes": [
+        "structure",
+        "backbone"
+      ],
       "produces": "sequence"
     },
     "score": {

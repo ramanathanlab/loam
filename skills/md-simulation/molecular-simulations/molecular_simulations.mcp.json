@@ -65,7 +65,10 @@
   "io": {
     "run": {
       "consumes": "structure",
-      "produces": "trajectory"
+      "produces": [
+        "system",
+        "trajectory"
+      ]
     }
   }
 }

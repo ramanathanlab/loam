@@ -55,7 +55,7 @@
   "_example_todo_verify": "confirm the openmm-sycl examples/python-examples/input.{prmtop,inpcrd} paths are worker-visible.",
   "io": {
     "run": {
-      "consumes": "structure",
+      "consumes": "system",
       "produces": "trajectory"
     }
   }

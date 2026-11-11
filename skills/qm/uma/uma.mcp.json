@@ -58,7 +58,7 @@
   "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md s5). A thin 'skills' MCP tool uma.calc(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls the loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). The runner resolves the fairchem-xpu python + FAIRCHEM_CACHE_DIR worker-side from site.<system>.json; one structure per row, energy/forces (+optional LBFGS relax). timeout_each 180s covers batch first-call warmup (~2s) plus short opt; raise it for Nitro-XPU's 25-50s Triton JIT or many-step relaxations. 'omat'/'oc20'/'odac'/'omc' heads and periodic systems are UNVERIFIED on XPU (SKILL): only 'omol' was tested.",
   "io": {
     "calc": {
-      "consumes": "structure",
+      "consumes": "small_molecule",
       "produces": "score"
     }
   }

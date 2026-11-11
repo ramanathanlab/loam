@@ -595,3 +595,46 @@ should therefore record its **format** and ideally carry a consumable
 representation (or folding runners emit both CIF+PDB), so each consumer doesn't
 re-implement conversion. That's the one schema addition the registry needs before
 it's production-ready for heterogeneous producers/consumers.
+
+### 11.7 Every legal chain, debugged end to end (2026-11-11)
+
+Enumerated all type-legal producer→consumer edges from the `io` maps (43 raw;
+they collapse to a handful of distinct type-routes). Enumeration surfaced four
+taxonomy bugs, now fixed:
+- `backbone` was a dead-end → `proteinmpnn.design` consumes `[structure, backbone]`.
+- `uma.calc` "consumed structure" but is small-molecule QM → consumes `small_molecule`
+  (uma leaves the protein funnel).
+- `openmm.run` needs a parameterized system, not a raw structure → consumes `system`;
+  `molecular_simulations.run` produces `[system, trajectory]` (new molsim→openmm edge).
+- `complex` was an orphan consumer → collapsed into `structure`
+  (`pyrosetta.interface` consumes `structure`, validates ≥2 chains at runtime).
+
+Added `registry.materialize(artifact, want)` — the format adapter the routing
+needs: `cif↔pdb` via gemmi, and `sequence/fasta` extraction from a ProteinMPNN
+`.fa`. A chain driver then ran each routed edge end to end (query seeds →
+materialize → submit via the loam-skills MCP → poll → harvest):
+
+| chain | routes? | ok/32 | harvested |
+|---|---|---|---|
+| structure → proteinmpnn.design | ✅ | 32 | 32 sequence |
+| structure → proteinmpnn.score | ✅ | 32 | 32 score |
+| structure → pyrosetta.score | ✅ | 32 | 32 score |
+| structure → pyrosetta.relax | ✅ | 32 | 32 structure |
+| structure → rfd4_proteina.generate (target) | ✅ | 32 | — |
+| backbone → proteinmpnn.design | ✅ | 32 | 32 sequence |
+| sequence → chai.fold | ✅ route | 31 | 31 structure |
+| sequence → genslm_esm.embed | ✅ route | 30 | 30 embedding |
+
+**All edges route.** The two sub-32 rows are per-row HPC flakiness, not chain
+failures: one chai fold hit the 300 s cap on a cold node; two genslm rows SIGABRT'd
+at ~305 s — all on valid inputs; a `run_batch` resume reruns the stragglers.
+
+Deferred (documented, legitimately not run): `structure→molecular_simulations`
+(heavy Amber build, untested on Aurora), `system→openmm` (depends on molsim),
+`structure→pyrosetta.interface` (needs a ≥2-chain complex; the ubq seed is a
+monomer), `small_molecule→uma` (uma's own external input, already smoke-tested).
+
+**Finding — action propagation.** Multi-action skills (mpnn design/score,
+pyrosetta score/relax/interface) drive behavior off a ROW field (`score_only`,
+`action`), not the tool's action name. The chain test set those fields explicitly;
+`core.submit_skill` should inject the action so the tool name is authoritative.

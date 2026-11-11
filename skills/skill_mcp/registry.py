@@ -136,8 +136,72 @@ def query(base_dir: str, hypothesis_id: str, type: str, unused_only: bool = True
     return {"registry": str(reg), "type": type, "count": len(out), "artifacts": out}
 
 
+# A venv python that has gemmi, for structure format conversion (worker-side).
+_GEMMI_PY = os.environ.get(
+    "LOAM_GEMMI_PY", "/flare/FRAME-IDP/msinclair/software/Protenix/.venv/bin/python")
+
+
+def _first_design_seq(fa_path: str) -> str | None:
+    """First DESIGNED sequence from a ProteinMPNN .fa (record 0 is native)."""
+    import re
+    recs, cur, hdr = [], [], None
+    for line in open(fa_path, errors="replace"):
+        if line.startswith(">"):
+            if hdr is not None:
+                recs.append((hdr, "".join(cur)))
+            hdr, cur = line, []
+        else:
+            cur.append(line.strip())
+    if hdr is not None:
+        recs.append((hdr, "".join(cur)))
+    # skip the native (first) record; take the first sample
+    designs = [s for h, s in recs[1:] if s]
+    return designs[0] if designs else (recs[0][1] if recs else None)
+
+
+def materialize(artifact: dict, want: str, workdir: str | None = None) -> dict:
+    """Return the artifact in the format a consumer needs, converting if needed.
+
+    want ∈ {pdb, cif, fasta, sequence}. Structure conversions use gemmi; sequence
+    extraction reads a ProteinMPNN .fa. Converted files are cached next to the
+    source (or under workdir). Returns {ok, want, path?/value?, error?}.
+    """
+    import subprocess
+    paths = artifact.get("paths") or []
+    src = paths[0] if paths else None
+    if want in ("pdb", "cif"):
+        if not src:
+            return {"ok": False, "error": "no source path"}
+        if src.endswith("." + want):
+            return {"ok": True, "want": want, "path": src}
+        out = (src.rsplit(".", 1)[0]) + "." + want
+        if not os.path.isfile(out):
+            conv = ("import sys,gemmi;st=gemmi.read_structure(sys.argv[1]);"
+                    "st.setup_entities();"
+                    + ("st.write_pdb(sys.argv[2])" if want == "pdb"
+                       else "doc=st.make_pdbx_document();doc.write_file(sys.argv[2])"))
+            r = subprocess.run([_GEMMI_PY, "-c", conv, src, out],
+                               capture_output=True, text=True)
+            if r.returncode != 0 or not os.path.isfile(out):
+                return {"ok": False, "error": (r.stderr or r.stdout)[-300:]}
+        return {"ok": True, "want": want, "path": out}
+    if want in ("sequence", "fasta"):
+        seq = None
+        if src and src.endswith((".fa", ".fasta")):
+            seq = _first_design_seq(src)
+        if not seq:
+            return {"ok": False, "error": f"no sequence extractable from {src}"}
+        if want == "sequence":
+            return {"ok": True, "want": want, "value": seq}
+        name = artifact.get("row_id", "seq")
+        out = os.path.join(workdir or os.path.dirname(src or "."), f"{name}.fasta")
+        open(out, "w").write(f">protein|name={name}\n{seq}\n")
+        return {"ok": True, "want": want, "path": out, "value": seq}
+    return {"ok": False, "error": f"unknown format {want!r}"}
+
+
 if __name__ == "__main__":
     op = json.loads(sys.argv[1])
     kind = op.pop("op")
-    fn = {"harvest": harvest, "query": query}[kind]
+    fn = {"harvest": harvest, "query": query, "materialize": materialize}[kind]
     print(json.dumps(fn(**op)))

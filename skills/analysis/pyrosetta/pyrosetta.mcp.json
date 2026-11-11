@@ -62,7 +62,7 @@
       "produces": "structure"
     },
     "interface": {
-      "consumes": "complex",
+      "consumes": "structure",
       "produces": "score"
     }
   }
