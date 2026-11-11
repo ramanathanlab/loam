@@ -1,7 +1,9 @@
 {
   "name": "chai",
   "actions": ["fold"],
+  "description": "Co-fold protein/complex/ligand structures with Chai-1 on Aurora XPU; one row per fold, returns cif + interface scores.",
   "runner": "scripts/chai_run_row.py",
+  "required": ["fasta"],
   "gpus": 1,
   "timeout_each": 300,
   "row_schema": {
