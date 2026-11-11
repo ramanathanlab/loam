@@ -1,21 +1,31 @@
 {
   "name": "rfd4_proteina",
   "actions": ["generate"],
-  "description": "Generate protein/binder backbones with RFD4-Proteina (flow-matching all-atom) on Aurora XPU via the pinned resident-worker route; one row per design (one tile), returns a generated CIF + receipt.",
+  "description": "Generate protein/binder backbones with RFD4-Proteina (flow-matching all-atom) on Aurora XPU via the pinned resident-worker route; one row per design (one tile). The tool ANNOTATES the target itself: give a folded 'target' + hotspots/binder_len and it builds the annotated condition-spec CIF (RFD4's write_condition_spec_cif) before generating, or pass a ready 'input' annotated CIF. Returns a generated CIF + receipt.",
   "runner": "scripts/rfd4_run_row.py",
-  "required": ["input"],
+  "required": [],
   "gpus": 1,
-  "timeout_each": 1200,
+  "timeout_each": 1800,
   "row_schema": {
     "id": "str",
     "input": "str",
+    "target": "str",
+    "target_chain": "str",
+    "target_range": "str",
+    "hotspots": "str",
+    "binder_len": "str",
+    "hotspot_atoms": "str",
     "seed": "int",
     "seconds": "int",
-    "wrapper": "str"
+    "wrapper": "str",
+    "annotator": "str"
   },
   "defaults": {
     "seed": 101,
-    "seconds": 700
+    "seconds": 900,
+    "target_chain": "A",
+    "binder_len": "55",
+    "hotspot_atoms": "CA"
   },
   "expects": [
     "rfd4_run/predictions/**/*_generated.cif",
@@ -23,8 +33,12 @@
   ],
   "site_keys": ["python", "launcher", "share", "env"],
   "example": {
-    "id": "sat_00",
-    "input": "/abs/annotated.cif",
+    "id": "binder_00",
+    "target": "/abs/folded_target.cif",
+    "target_chain": "A",
+    "target_range": "1-76",
+    "hotspots": "10,20,30,40",
+    "binder_len": "55",
     "seed": 101,
     "seconds": 900
   },
