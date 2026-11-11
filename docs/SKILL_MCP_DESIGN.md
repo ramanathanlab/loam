@@ -281,3 +281,50 @@ Open decisions to settle before scaling to all skills:
   versioned output contracts.
 - Whether `site.<system>.json` lives in the loam tree (git-synced) or is a
   hand-maintained file on `/flare` (no lag, but off-repo).
+
+---
+
+## 8. First live test (2026-11-11) — fresh-session MCP call + a staging blocker
+
+Tested the *intended* workflow directly: launched a **fresh headless Claude
+session** (`claude -p`, loam-hpc MCP included) in a second herdr pane and had it
+call the MCP natively to stage + submit the chai prototype.
+
+**Result split:**
+
+- ✅ **The core test passed.** The fresh session reached `loam-hpc` with **no
+  connection workaround** — `mcp__loam-hpc__pool_status` returned valid JSON
+  (`aurora, cluster, 8 nodes × 12 = 96 tiles`), and `write_files` / `run_batch`
+  resolved and were invoked as native tools. (Contrast: the *parent* session has
+  the startup-`ECONNREFUSED` cached and can't see the tools at all — see
+  [[loam-hpc-mcp-endpoint]]. A fresh session is the clean way to drive the MCP.)
+- ❌ **Submission blocked by a deployment-version mismatch.** `write_files`
+  failed: `AttributeError: Agent<HpcClientAgent> does not have an action named
+  "write_files"`. Root cause: the worker's `/flare` clone
+  (`/flare/FRAME-IDP/avasan/loam`) is at **`89cffcb` (PR #27)**, 9 commits behind;
+  `write_files` was added in **`416228d` (PR #29)**. The deployed `hpc_agent.py`
+  has no `write_files` at all (verified by reading it on the worker via
+  `run_code`). This is the [[aurora-workers-import-repo-clone]] lag, concretely.
+
+**Implications for the design:**
+
+1. **A2 (`write_files`-stage the runner/inputs) requires the deployed agent to be
+   ≥ #29.** Until the `/flare` clone is pulled *and the block is cycled* (a running
+   worker has already imported the old module; `git pull` alone won't reload it),
+   A2 cannot stage anything. So the staging path has the same clone-lag dependency
+   A2 was meant to escape — not for the runner *source* (which the MCP ships) but
+   for the `write_files` *mechanism* that delivers it. Escaping clone lag for the
+   runner still assumes a one-time, ≥#29 agent deployment.
+2. **Interim fallback:** `run_code` *is* present on the client agent, so files can
+   be staged by writing them from inside a `run_code` payload. The hpc SKILL
+   discourages this ("never run the science in `run_code`"), but for *staging* it
+   is a legitimate bridge until the agent is redeployed — and it proves the
+   runner/venv/pathing/fold loop today without waiting on a block restart.
+3. **Driving the MCP:** use a **fresh** Claude session (or `claude -p`) for
+   MCP-backed work; don't rely on a parent session that booted while the server
+   was down.
+
+**To unblock the clean path:** on an Aurora login node,
+`git -C /flare/FRAME-IDP/avasan/loam pull` to ≥ #29 (or to `big-run-mcp-skills`
+to get the chai prototype too), then let the current block drain / request a
+fresh one so the agents re-import the updated `hpc_agent.py`.
