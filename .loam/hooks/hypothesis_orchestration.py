@@ -741,7 +741,10 @@ def _validator_tasks(plan_id: str, selected: list[dict[str, Any]], payload: Mapp
     validator = agent_registry(payload)['hypothesis-validator']
     execution = payload.get('loam_execution') or {}
     campaign = campaign_context(payload)
-    observation = 'batch_status, inspect_filesystem, list_batches'
+    is_skill_run = (execution.get('function_name') or '') == 'skill_run'
+    observation = 'skill_run(op="status"|"query")' if is_skill_run else 'batch_status, inspect_filesystem, list_batches'
+    exec_calls = 'skill_run(op="submit"/"status"/"harvest") calls' if is_skill_run \
+        else 'run_batch/write_files/batch_status calls'
     tasks = []
     for item in selected:
         hypothesis_id = item['hypothesis']['hypothesis_id']
@@ -753,7 +756,7 @@ def _validator_tasks(plan_id: str, selected: list[dict[str, Any]], payload: Mapp
                 "it, so a narrow experiment is not cheaper than a wide one -- it is the same wall clock with "
                 "most of the machine idle. Instruct your child to sweep the whole candidate set in ONE batch "
                 "(every design, fold and scoring job the hypothesis implies), not a probe followed by a real "
-                "run: your child may make as many sequential run_batch/write_files/batch_status calls as the "
+                f"run: your child may make as many sequential {exec_calls} as the "
                 "work needs, so breadth costs you nothing in children. "
                 "Do not compute anything yourself; delegate_task is your only executable tool, though "
                 f"you may call {observation} to check on and read a child's run. "
@@ -848,7 +851,8 @@ def _child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_id: str) -
             'goal': _child_goal(hypothesis, goal, plan_id, hypothesis_id, run_id),
             'context': _child_context(
                 instruction, execution, workdir, hypothesis, campaign,
-                _layout_block(layout_base, run_id, remote, batch_root, plan_id, hypothesis_id, shared_inputs),
+                _layout_block(layout_base, run_id, remote, batch_root, plan_id, hypothesis_id,
+                              shared_inputs, (execution.get('function_name') or '') == 'skill_run'),
             ),
             'role': 'leaf',
         }
@@ -1037,7 +1041,8 @@ def _hypothesis_block(hypothesis: Mapping[str, Any] | None) -> str:
 
 
 def _layout_block(base: str, run_id: str, remote: bool = False, batch_root: str = '',
-                  plan_id: str = '', hypothesis_id: str = '', shared_inputs: tuple[str, ...] = ()) -> str:
+                  plan_id: str = '', hypothesis_id: str = '', shared_inputs: tuple[str, ...] = (),
+                  skill_run: bool = False) -> str:
     """Where a child's files go in its workspace run; empty when the workspace is off."""
     if not run_id:
         return ''
@@ -1066,7 +1071,7 @@ def _layout_block(base: str, run_id: str, remote: bool = False, batch_root: str 
         "(what, why, alternatives, expected, confidence) BEFORE you act on it. Your full reasoning "
         "is not otherwise kept, so an unrecorded decision is lost.",
     ]
-    if remote:
+    if remote and not skill_run:
         # Always scratch/: the server writes a temp script into the workdir and
         # deletes it afterwards, which would corrupt the outputs/ manifest.
         lines.append(
@@ -1076,7 +1081,7 @@ def _layout_block(base: str, run_id: str, remote: bool = False, batch_root: str 
             f"{base}/outputs/{run_id}/ by absolute path from inside your program. "
             "A run_code with no workdir is REFUSED."
         )
-    if remote and batch_root:
+    if remote and batch_root and not skill_run:
         prefix = hypothesis_workspace.batch_prefix(hypothesis_id, run_id)
         labels = hypothesis_workspace.batch_labels(plan_id, hypothesis_id, run_id)
         lines += [
@@ -1086,7 +1091,7 @@ def _layout_block(base: str, run_id: str, remote: bool = False, batch_root: str 
             "with run_code (set batch_id first), BEFORE the output manifest step:",
             hypothesis_workspace.harvest_program(batch_root, f"{base}/outputs/{run_id}"),
         ]
-    if remote:
+    if remote and not skill_run:
         lines += [
             "OUTPUT MANIFEST (required): as your LAST tool call, run this program with run_code, then paste its "
             "complete output verbatim at the end of your report:",
@@ -1124,14 +1129,36 @@ def _child_context(instruction: str, execution: Mapping[str, Any], workdir: str,
         ) if part)
 
     names = hpc_tool_names(execution)
+    # Gated: a loam-skills execution tool (skill_run) is a single dispatcher over
+    # the whole funnel, NOT the HPC write_files/run_batch set. Only this branch
+    # changes; the default run_code/run_batch paradigm below is untouched.
+    is_skill_run = (execution.get('function_name') or '') == 'skill_run'
     run_code = names.get(execution.get('function_name') or 'run_code', '')
     place = f"under {workdir}" if workdir else "under the HPC base directory (HPC_BASE_DIR)"
-    lines = [
+    if is_skill_run:
+        tool = execution.get('tool_name') or names.get('skill_run') or 'mcp__loam-skills__skill_run'
+        lines = [
+            f"- `{tool}` is your ONLY execution tool. Call it once per step with an `op`; NEVER write "
+            "code, NEVER run_code, NEVER stage files yourself:",
+            "    op='pool'                                             -> the tile budget",
+            "    op='query'  + type, hypothesis_id                     -> list registry artifacts",
+            "    op='submit' + skill, action, (inputs OR from_registry+from_hypothesis), labels",
+            "                 -> run a batch (returns a batch_id). Prefer from_registry to chain.",
+            "    op='status' + batch_id                                -> poll until complete=true",
+            "    op='harvest'+ skill, action, batch_id, hypothesis_id  -> register its outputs",
+            "Chain by artifact TYPE with from_registry/from_hypothesis -- the registry passes the "
+            "files between steps, you never handle paths: structure -> rfd4_proteina.generate -> "
+            "backbone -> proteinmpnn.design -> sequence -> chai.fold -> structure -> "
+            "pyrosetta.interface. Scope EVERY call with labels/hypothesis_id for this hypothesis. "
+            "After op='status' shows succeeded>0, op='harvest' before the next step.",
+        ]
+    else:
+      lines = [
         f"- `{run_code}`: run one Python program (`payload`) on a GPU worker. Use it to harvest a "
         "batch's results, emit the required output manifest, and diagnose a row that failed -- not to "
         "run science and not to stage files.",
-    ]
-    if 'run_batch' in names:
+      ]
+      if 'run_batch' in names:
         # list_tools/register_tool are deliberately not advertised: "call list_tools
         # FIRST" outranked the campaign skills, and reusing a registered script
         # skipped the reviewed recipe. The skill is how a child gets the invocation.
