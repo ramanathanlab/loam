@@ -1,0 +1,46 @@
+{
+  "name": "boltz",
+  "actions": ["fold"],
+  "description": "Fold proteins/complexes/protein-ligand and estimate binding affinity with Boltz-2 on Aurora XPU; one row per prediction, returns pdb/cif + confidence (+ affinity) JSON.",
+  "runner": "scripts/boltz_run_row.py",
+  "required": ["input"],
+  "gpus": 1,
+  "timeout_each": 900,
+  "row_schema": {
+    "id": "str",
+    "input": "str",
+    "input_format": "str",
+    "seed": "int",
+    "recycling_steps": "int",
+    "sampling_steps": "int",
+    "diffusion_samples": "int",
+    "output_format": "str",
+    "use_msa": "bool",
+    "expect_affinity": "bool",
+    "sampling_steps_affinity": "int",
+    "diffusion_samples_affinity": "int"
+  },
+  "defaults": {
+    "input_format": "yaml",
+    "seed": 42,
+    "recycling_steps": 3,
+    "sampling_steps": 200,
+    "diffusion_samples": 5,
+    "output_format": "pdb",
+    "use_msa": false
+  },
+  "expects": ["out/boltz_results_*/predictions/*/*_model_0.*"],
+  "site_keys": ["boltz", "cache", "env"],
+  "example": {
+    "id": "ubq-smoke",
+    "input": "version: 1\nsequences:\n  - protein:\n      id: A\n      sequence: MQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTLSDYNIQKESTLHLVLRLRGG\n      msa: empty\n",
+    "input_format": "yaml",
+    "seed": 42,
+    "recycling_steps": 1,
+    "sampling_steps": 50,
+    "diffusion_samples": 1,
+    "output_format": "pdb",
+    "use_msa": false
+  },
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). A thin 'skills' MCP tool boltz.fold(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). Install paths come from site.<system>.json, resolved worker-side."
+}

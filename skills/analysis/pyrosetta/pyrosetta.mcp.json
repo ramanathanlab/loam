@@ -1,0 +1,43 @@
+{
+  "name": "pyrosetta",
+  "actions": ["score", "relax", "interface"],
+  "description": "Rosetta (ref2015) analysis of protein PDBs with PyRosetta 2026.34 on Aurora CPUs: total + per-term score (score), FastRelax refinement (relax), or binder/target interface metrics dG/dSASA/sc/packstat (interface). CPU-only; one row per PDB, returns scores JSON / relaxed PDB / interface JSON.",
+  "runner": "scripts/pyrosetta_run_row.py",
+  "required": ["pdb"],
+  "gpus": 1,
+  "_gpus_note": "PyRosetta is CPU-only and uses no GPU, but gpus=1 reserves one tile slot per row so EL packs 12 rows/node like the GPU skills. Tune upward if you want fewer concurrent CPU processes per node.",
+  "timeout_each": 600,
+  "_timeout_note": "600s default. Measured: init ~11-20s cold / ~3s warm; score <1s; FastRelax 1 round ~4-33s depending on size; interface (packed) ~4-58s. Raise for many relax rounds or large complexes.",
+  "row_schema": {
+    "id": "str",
+    "pdb": "str",
+    "action": "str",
+    "sfxn": "str",
+    "rounds": "int",
+    "max_iter": "int",
+    "constrain": "bool",
+    "partners": "str",
+    "pack_input": "bool",
+    "pack_separated": "bool"
+  },
+  "defaults": {
+    "action": "score",
+    "sfxn": "ref2015",
+    "rounds": 1,
+    "max_iter": 0,
+    "constrain": false,
+    "partners": "A_B",
+    "pack_input": false,
+    "pack_separated": false
+  },
+  "expects": ["scores.json"],
+  "_expects_note": "expects lists the 'score' deliverable (scores.json). action='relax' produces relaxed.pdb and action='interface' produces interface.json instead; the runner fails the row (exit 1) if its own action's expected output is missing. Set a per-action expects when staging if the executor enforces it strictly.",
+  "site_keys": ["python", "launcher", "env"],
+  "example": {
+    "id": "6mrr-score",
+    "pdb": "/flare/FRAME-IDP/msinclair/software/ProteinMPNN/inputs/PDB_monomers/pdbs/6MRR.pdb",
+    "action": "score",
+    "sfxn": "ref2015"
+  },
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). CPU-only; subprocesses the committed, verified rosetta_tool.py under the pyrosetta_energy venv (one pyrosetta.init per process, via extra_options= so the -ex1/-ex2aro defaults are kept — the SKILL.md warns a positional init string silently changes packing/relax/interface results). score/relax/interface all VERIFIED on an Aurora debug node (2026-10-29). interface expects 2-chain partners (default 'A_B', target=A/binder=B); repacked interface dG carries ~1-3 REU stochastic noise (SKILL.md gotcha 1)."
+}

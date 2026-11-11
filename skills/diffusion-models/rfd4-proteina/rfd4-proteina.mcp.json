@@ -1,0 +1,32 @@
+{
+  "name": "rfd4_proteina",
+  "actions": ["generate"],
+  "description": "Generate protein/binder backbones with RFD4-Proteina (flow-matching all-atom) on Aurora XPU via the pinned resident-worker route; one row per design (one tile), returns a generated CIF + receipt.",
+  "runner": "scripts/rfd4_run_row.py",
+  "required": ["input"],
+  "gpus": 1,
+  "timeout_each": 1200,
+  "row_schema": {
+    "id": "str",
+    "input": "str",
+    "seed": "int",
+    "seconds": "int",
+    "wrapper": "str"
+  },
+  "defaults": {
+    "seed": 101,
+    "seconds": 700
+  },
+  "expects": [
+    "rfd4_run/predictions/**/*_generated.cif",
+    "rfd4_run/predictions/**/receipt.json"
+  ],
+  "site_keys": ["python", "launcher", "share", "env"],
+  "example": {
+    "id": "sat_00",
+    "input": "/abs/annotated.cif",
+    "seed": 101,
+    "seconds": 900
+  },
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). A thin 'skills' MCP tool rfd4_proteina.generate(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=scripts/rfd4_run_row.py, inputs_path=jsonl, gpus=1, timeout_each). 'input' is an absolute path to an ANNOTATED CIF (SA_* columns + condition spec), built with scripts/make_rfd4_input.py or a ready-made benchmark under $RFD4_ENGINE/data/benchmarks/. Distinct seeds are distinct designs; reusing a seed is a replay. The runner resolves the resident wrapper worker-side via row['wrapper'] -> $RFD4_WRAPPER -> $HPC_LOAM_HOME/skills/diffusion-models/rfd4-proteina/scripts/run_rfd4_resident.sh, and the pinned env/checkpoint come from that wrapper (the read-only dkastner deployment, SKILL.md §1). Output existence alone is NOT completion: require rc=0 + receipt.json with matching input/seed (SKILL.md §6)."
+}

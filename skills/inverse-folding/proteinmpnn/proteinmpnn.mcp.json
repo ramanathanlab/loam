@@ -1,0 +1,52 @@
+{
+  "name": "proteinmpnn",
+  "actions": ["design", "score"],
+  "description": "ProteinMPNN inverse folding on Aurora XPU; redesign chosen chains of a backbone PDB (others kept as fixed context) or score a native sequence. One row per PDB, returns designed sequences (seqs/*.fa) or score_only/*.npz.",
+  "runner": "scripts/proteinmpnn_run_row.py",
+  "required": ["pdb"],
+  "gpus": 1,
+  "timeout_each": 300,
+  "row_schema": {
+    "id": "str",
+    "pdb": "str",
+    "designed_chains": "str",
+    "num_seq_per_target": "int",
+    "sampling_temp": "str",
+    "seed": "int",
+    "batch_size": "int",
+    "model_name": "str",
+    "use_soluble_model": "bool",
+    "ca_only": "bool",
+    "backbone_noise": "float",
+    "omit_AAs": "str",
+    "save_score": "bool",
+    "save_probs": "bool",
+    "score_only": "bool"
+  },
+  "defaults": {
+    "designed_chains": "",
+    "num_seq_per_target": 8,
+    "sampling_temp": "0.1",
+    "seed": 37,
+    "batch_size": 1,
+    "model_name": "v_48_020",
+    "use_soluble_model": false,
+    "ca_only": false,
+    "score_only": false,
+    "save_score": false,
+    "save_probs": false
+  },
+  "expects": ["out/seqs/*.fa"],
+  "site_keys": ["path", "python", "ipex_shim", "env"],
+  "example": {
+    "id": "redesign-binderA",
+    "pdb": "/flare/FRAME-IDP/avasan/campaigns/example/complex.pdb",
+    "designed_chains": "A",
+    "num_seq_per_target": 8,
+    "sampling_temp": "0.1 0.2",
+    "seed": 37,
+    "batch_size": 2,
+    "model_name": "v_48_020"
+  },
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). A thin 'skills' MCP tool proteinmpnn.design(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). The install root resolves worker-side from the EXPORTED $PROTEINMPNN_PATH (then site.<system>.json['proteinmpnn']); the IPEX shim dir must be on PYTHONPATH. --device is ignored; the tile is pinned by ZE_AFFINITY_MASK. NOTE 'expects' names the DESIGN output; for a score_only row the output is out/score_only/*.npz instead."
+}

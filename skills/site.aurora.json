@@ -1,5 +1,6 @@
 {
-  "_comment": "Worker-side install manifest for Aurora, keyed by skill. Runners read this (docs/SKILL_MCP_DESIGN.md §4.B). Paths are resolved ON THE WORKER; the laptop MCP never needs them. 'launcher' may use $HPC_LOAM_HOME-relative paths at the runner, but here we give absolutes the worker can see. Moving an install = edit this one file.",
+  "_comment": "Worker-side install manifest for Aurora, keyed by skill. Runners read this (docs/SKILL_MCP_DESIGN.md §4.B) and resolve paths ON THE WORKER; the laptop MCP never needs them. Moving an install or onboarding a user = edit this one file. A runner falls back to its own built-in _DEFAULTS when a key is absent, so entries override rather than define. Paths verified present on the worker for chai (2026-11-11); the rest are from each skill's SKILL.md Environment block and should be smoke-tested before trusting (several carry TODO(verify) in their runners).",
+
   "chai": {
     "python": "/flare/FRAME-IDP/msinclair/software/chai-lab/.venv/bin/python",
     "launcher": "/flare/FRAME-IDP/avasan/loam/skills/structure-prediction/chai/scripts/chai_xpu.py",
@@ -8,8 +9,97 @@
       "CHAI_DOWNLOADS_DIR": "/flare/FRAME-IDP/msinclair/software/chai-lab/downloads"
     }
   },
+
+  "boltz": {
+    "boltz": "/flare/FRAME-IDP/msinclair/software/boltz/.venv/bin/boltz",
+    "cache": "~/.boltz",
+    "env": {}
+  },
+
+  "esmfold2": {
+    "python": "/flare/FRAME-IDP/msinclair/software/esm/.venv/bin/python",
+    "launcher": "/flare/FRAME-IDP/msinclair/software/esm/scripts/aurora/fold_sequence.py",
+    "repo": "/flare/FRAME-IDP/msinclair/software/esm",
+    "env": {
+      "HF_HOME": "/flare/FRAME-IDP/msinclair/software/esm/.hf_cache",
+      "HF_HUB_OFFLINE": "1"
+    }
+  },
+
+  "protenix": {
+    "protenix": "/flare/FRAME-IDP/msinclair/software/Protenix/.venv/bin/protenix",
+    "root_dir": "/flare/FRAME-IDP/msinclair/software/protenix_data",
+    "env": {}
+  },
+
+  "rfdiffusion3": {
+    "foundry": "/flare/FRAME-IDP/msinclair/software/foundry",
+    "rfd3": "/flare/FRAME-IDP/msinclair/software/foundry/.venv/bin/rfd3",
+    "checkpoints": "/flare/FRAME-IDP/msinclair/software/checkpoints",
+    "env": {
+      "FOUNDRY_CHECKPOINT_DIRS": "/flare/FRAME-IDP/msinclair/software/checkpoints"
+    }
+  },
+
+  "rfd4_proteina": {
+    "python": "/lus/flare/projects/FRAME-IDP/dkastner/Projects/IDeA/envs/rfd4-xpu-2026.1.0/bin/python",
+    "launcher": "/flare/FRAME-IDP/avasan/loam/skills/diffusion-models/rfd4-proteina/scripts/run_rfd4_resident.sh",
+    "share": "/lus/flare/projects/FRAME-IDP/dkastner/Projects/IDeA",
+    "_note": "rfd4_run_row.py resolves the wrapper via row['wrapper'] -> $RFD4_WRAPPER -> $HPC_LOAM_HOME/.../run_rfd4_resident.sh; python/adapter/engine/checkpoint are pinned INSIDE run_rfd4_resident.sh. Informational unless the runner is extended to read this entry."
+  },
+
   "proteinmpnn": {
     "env_var": "PROTEINMPNN_PATH",
-    "_note": "proteinmpnn already resolves via an exported $PROTEINMPNN_PATH on the worker (verified 2026-11-11). The manifest records that rather than duplicating the path; a runner should prefer $PROTEINMPNN_PATH when present."
+    "python": "/flare/FRAME-IDP/msinclair/software/ProteinMPNN/.venv/bin/python",
+    "ipex_shim": "/flare/FRAME-IDP/avasan/loam/skills/inverse-folding/proteinmpnn/scripts/ipex_shim",
+    "env": {},
+    "_note": "Repo root resolves from the EXPORTED $PROTEINMPNN_PATH on the worker (verified /flare/FRAME-IDP/avasan/Software/ProteinMPNN). python kept independent (msinclair .venv) in case that checkout has no .venv; torch is decoupled from the repo scripts/weights. ipex_shim must be worker-visible."
+  },
+
+  "genslm_esm": {
+    "python": "/flare/FRAME-IDP/msinclair/software/genslm-esm-sae/venvs/aurora/bin/python",
+    "model_id": "genslm-test/genslm-esmc-600M-contrastive-2026-10-step-200000",
+    "sae_default": "/flare/FRAME-IDP/msinclair/software/genslm-esm-sae/campaigns/600m-codon/runs/l18-36-lr2e-4/best/layer32",
+    "env": {
+      "ZE_FLAT_DEVICE_HIERARCHY": "FLAT",
+      "HF_HOME": "/flare/FRAME-IDP/msinclair/hf_cache",
+      "HF_HUB_OFFLINE": "1",
+      "TOKENIZERS_PARALLELISM": "false",
+      "TMPDIR": "/tmp"
+    }
+  },
+
+  "uma": {
+    "python": "/flare/FRAME-IDP/msinclair/software/fairchem-xpu/.venv/bin/python",
+    "cache_dir": "/flare/FRAME-IDP/msinclair/hf_cache",
+    "env": {
+      "FAIRCHEM_CACHE_DIR": "/flare/FRAME-IDP/msinclair/hf_cache",
+      "HF_HUB_OFFLINE": "1"
+    }
+  },
+
+  "reactra": {
+    "wrapper": "/flare/FRAME-IDP/avasan/loam/skills/qm/reactra/scripts/reactra_cli.sh",
+    "control_reactra": "/flare/FRAME-IDP/msinclair/software/reactra/.venv/bin/reactra",
+    "env": {
+      "REACTRA_MECH_OVERLAY": "FILL_IN:<campaign-owned-dir>/mech_overlay"
+    }
+  },
+
+  "molecular_simulations": {
+    "python": "/flare/FRAME-IDP/msinclair/software/molecular-simulations/.venv/bin/python",
+    "amberhome": "/lus/flare/projects/FRAME-IDP/msinclair/envs/ambertools",
+    "env": {}
+  },
+
+  "openmm": {
+    "python": "/flare/FRAME-IDP/msinclair/software/openmm-sycl/.venv/bin/python",
+    "env": {}
+  },
+
+  "pyrosetta": {
+    "python": "/flare/FRAME-IDP/msinclair/software/pyrosetta_energy/.venv/bin/python",
+    "launcher": "/flare/FRAME-IDP/avasan/loam/skills/analysis/pyrosetta/scripts/rosetta_tool.py",
+    "env": {}
   }
 }

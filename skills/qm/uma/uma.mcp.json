@@ -1,0 +1,50 @@
+{
+  "name": "uma",
+  "actions": ["calc"],
+  "description": "Near-DFT energies, forces and geometry relaxations with Meta FAIR's UMA ML interatomic potential (fairchem-xpu) on Aurora XPU; one row per structure. Defaults to the 'batch' inference path -- 'default'/'high-precision' give WRONG forces on XPU and are refused.",
+  "runner": "scripts/uma_run_row.py",
+  "required": [],
+  "gpus": 1,
+  "timeout_each": 180,
+  "row_schema": {
+    "id": "str",
+    "task_name": "str",
+    "model": "str",
+    "inference": "str",
+    "structure_path": "str",
+    "molecule": "str",
+    "atoms": "dict",
+    "charge": "int",
+    "spin": "int",
+    "relax": "bool",
+    "fmax": "float",
+    "steps": "int",
+    "allow_wrong_xpu_forces": "bool"
+  },
+  "defaults": {
+    "task_name": "omol",
+    "model": "uma-s-1p2p1",
+    "inference": "batch",
+    "charge": 0,
+    "spin": 1,
+    "relax": false,
+    "fmax": 0.02,
+    "steps": 200,
+    "allow_wrong_xpu_forces": false
+  },
+  "expects": ["uma_out.json"],
+  "site_keys": ["python", "cache_dir", "launcher", "env"],
+  "example": {
+    "id": "ethanol-opt",
+    "task_name": "omol",
+    "model": "uma-s-1p2p1",
+    "inference": "batch",
+    "molecule": "CH3CH2OH",
+    "charge": 0,
+    "spin": 1,
+    "relax": true,
+    "fmax": 0.02,
+    "steps": 200
+  },
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md s5). A thin 'skills' MCP tool uma.calc(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls the loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). The runner resolves the fairchem-xpu python + FAIRCHEM_CACHE_DIR worker-side from site.<system>.json; one structure per row, energy/forces (+optional LBFGS relax). timeout_each 180s covers batch first-call warmup (~2s) plus short opt; raise it for Nitro-XPU's 25-50s Triton JIT or many-step relaxations. 'omat'/'oc20'/'odac'/'omc' heads and periodic systems are UNVERIFIED on XPU (SKILL): only 'omol' was tested."
+}

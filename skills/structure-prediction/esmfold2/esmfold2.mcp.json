@@ -1,0 +1,35 @@
+{
+  "name": "esmfold2",
+  "actions": ["fold"],
+  "description": "Single-sequence (no-MSA) protein fold with ESMFold2 (ESMC-6B LM + diffusion) on Aurora XPU; one row per chain, returns mmCIF with pLDDT/pTM.",
+  "runner": "scripts/esmfold2_run_row.py",
+  "required": ["seq"],
+  "gpus": 1,
+  "timeout_each": 2400,
+  "row_schema": {
+    "id": "str",
+    "seq": "str",
+    "fasta": "str",
+    "loops": "int",
+    "steps": "int",
+    "seed": "int",
+    "chunk_size": "int",
+    "out": "str"
+  },
+  "defaults": {
+    "loops": 20,
+    "steps": 100,
+    "seed": 0,
+    "out": "pred.cif"
+  },
+  "expects": ["*.cif"],
+  "site_keys": ["python", "launcher", "repo", "env"],
+  "example": {
+    "id": "gb1-smoke",
+    "seq": "MTYKLILNGKTLKGETTTEAVDAATAEKVFKQYANDNGVDGEWTYDDATKTFTVTE",
+    "loops": 4,
+    "steps": 20,
+    "out": "gb1_pred.cif"
+  },
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). A thin 'skills' MCP tool esmfold2.fold(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). Install paths come from site.<system>.json, resolved worker-side. The CLI launcher folds ONE chain (first FASTA record); a multi-record FASTA is reported as a failure. timeout_each is large because each row is a fresh process that pays the ~90s load + first-fold warm-up."
+}

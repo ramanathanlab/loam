@@ -1,0 +1,48 @@
+{
+  "name": "openmm",
+  "actions": ["run"],
+  "description": "Run OpenMM 8.5 MD (PME, HBonds, LangevinMiddle, mixed precision) on Aurora Intel PVC tiles via platform='OpenCL'; one row per system from AMBER/GROMACS/CHARMM/PDB inputs, returns a DCD trajectory + final state. No ligand parameterization.",
+  "runner": "scripts/openmm_run_row.py",
+  "required": [],
+  "gpus": 1,
+  "timeout_each": 3600,
+  "_timeout_note": "3600s default. Verified smoke: 5000 steps on a 2269-atom system ~2.1s compute + ~10s startup/JIT. Scale with nsteps and system size; bump for large systems or long runs.",
+  "row_schema": {
+    "id": "str",
+    "input_type": "str",
+    "prmtop": "str",
+    "inpcrd": "str",
+    "gro": "str",
+    "top": "str",
+    "psf": "str",
+    "crd": "str",
+    "params": "list",
+    "pdb": "str",
+    "nsteps": "int",
+    "temperature": "float",
+    "timestep_ps": "float",
+    "nonbonded_cutoff_nm": "float",
+    "report_interval": "int",
+    "minimize": "bool"
+  },
+  "defaults": {
+    "input_type": "amber",
+    "nsteps": 5000,
+    "temperature": 300.0,
+    "timestep_ps": 0.002,
+    "nonbonded_cutoff_nm": 1.0,
+    "report_interval": 1000,
+    "minimize": true
+  },
+  "expects": ["traj.dcd"],
+  "site_keys": ["python", "launcher", "env"],
+  "example": {
+    "id": "aladipep-smoke",
+    "input_type": "amber",
+    "prmtop": "/flare/FRAME-IDP/msinclair/software/openmm-sycl/examples/python-examples/input.prmtop",
+    "inpcrd": "/flare/FRAME-IDP/msinclair/software/openmm-sycl/examples/python-examples/input.inpcrd",
+    "nsteps": 5000
+  },
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). GPU platform is 'OpenCL' (NOT 'CUDA'/'SYCL'); DeviceIndex stays 0 (ZE_AFFINITY_MASK exposes one tile). 'required' is empty because the needed input keys differ by input_type; the runner enforces them per-type (amber->prmtop+inpcrd, gromacs->gro+top, charmm->psf+crd+params, pdb->pdb). VERIFIED path = input_type='amber' (prmtop/inpcrd, example above). TODO(verify): input_type='gromacs'/'charmm'/'pdb' use documented standard OpenMM app readers but were NOT live-tested on Aurora.",
+  "_example_todo_verify": "confirm the openmm-sycl examples/python-examples/input.{prmtop,inpcrd} paths are worker-visible."
+}
