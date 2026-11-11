@@ -742,9 +742,19 @@ def _validator_tasks(plan_id: str, selected: list[dict[str, Any]], payload: Mapp
     execution = payload.get('loam_execution') or {}
     campaign = campaign_context(payload)
     is_skill_run = (execution.get('function_name') or '') == 'skill_run'
-    observation = 'skill_run(op="status"|"query")' if is_skill_run else 'batch_status, inspect_filesystem, list_batches'
-    exec_calls = 'skill_run(op="submit"/"status"/"harvest") calls' if is_skill_run \
-        else 'run_batch/write_files/batch_status calls'
+    is_per_tool = bool(execution.get('skill_tools'))
+    if is_per_tool:
+        observation = 'batch_status, skill_query'
+        exec_calls = ('ONE loam-skills tool per child (rfd4_proteina_generate, proteinmpnn_design, '
+                      'chai_fold, pyrosetta_interface), then batch_status + skill_harvest -- dispatch '
+                      'one code-generator PER funnel step IN SEQUENCE (the registry passes artifacts '
+                      'between them via from_registry), harvesting each before the next')
+    elif is_skill_run:
+        observation = 'skill_run(op="status"|"query")'
+        exec_calls = 'skill_run(op="submit"/"status"/"harvest") calls'
+    else:
+        observation = 'batch_status, inspect_filesystem, list_batches'
+        exec_calls = 'run_batch/write_files/batch_status calls'
     tasks = []
     for item in selected:
         hypothesis_id = item['hypothesis']['hypothesis_id']
@@ -852,7 +862,9 @@ def _child_tasks(payload: Mapping[str, Any], plan_id: str, hypothesis_id: str) -
             'context': _child_context(
                 instruction, execution, workdir, hypothesis, campaign,
                 _layout_block(layout_base, run_id, remote, batch_root, plan_id, hypothesis_id,
-                              shared_inputs, (execution.get('function_name') or '') == 'skill_run'),
+                              shared_inputs,
+                              (execution.get('function_name') or '') == 'skill_run'
+                              or bool(execution.get('skill_tools'))),
             ),
             'role': 'leaf',
         }
@@ -1133,6 +1145,7 @@ def _child_context(instruction: str, execution: Mapping[str, Any], workdir: str,
     # the whole funnel, NOT the HPC write_files/run_batch set. Only this branch
     # changes; the default run_code/run_batch paradigm below is untouched.
     is_skill_run = (execution.get('function_name') or '') == 'skill_run'
+    is_per_tool = bool(execution.get('skill_tools'))
     run_code = names.get(execution.get('function_name') or 'run_code', '')
     place = f"under {workdir}" if workdir else "under the HPC base directory (HPC_BASE_DIR)"
     if is_skill_run:
@@ -1151,6 +1164,26 @@ def _child_context(instruction: str, execution: Mapping[str, Any], workdir: str,
             "backbone -> proteinmpnn.design -> sequence -> chai.fold -> structure -> "
             "pyrosetta.interface. Scope EVERY call with labels/hypothesis_id for this hypothesis. "
             "After op='status' shows succeeded>0, op='harvest' before the next step.",
+        ]
+    elif is_per_tool:
+        lines = [
+            "You run ONE funnel step: call the ONE loam-skills tool your validator assigned, then "
+            "poll and register it. NEVER write code, NEVER run_code, NEVER stage files.",
+            "SUBMIT tools (each: inputs OR from_registry=<type> + from_hypothesis, plus defaults + "
+            "labels; returns a batch_id):",
+            "  - rfd4_proteina_generate : a target `structure` -> binder `backbone`s "
+            "(from_registry='structure')",
+            "  - proteinmpnn_design     : a `backbone`/`structure` -> `sequence`s "
+            "(from_registry='backbone')",
+            "  - chai_fold / boltz_fold / esmfold2_fold : a `sequence` -> `structure` "
+            "(from_registry='sequence')",
+            "  - pyrosetta_interface / pyrosetta_score : a `structure` -> `score`",
+            "THEN, for the batch you submitted: call `batch_status` with its batch_id until "
+            "complete=true, then `skill_harvest`(batch_id, skill, action, hypothesis_id) to register "
+            "its typed outputs so the NEXT code-generator can read them. `skill_query`(type, "
+            "hypothesis_id) lists what is available. Chain by artifact TYPE via from_registry/"
+            "from_hypothesis -- the registry passes files between steps, you never handle paths. "
+            "Scope EVERY call with labels.hypothesis_id for this hypothesis.",
         ]
     else:
       lines = [
@@ -1614,6 +1647,14 @@ def tool_policy(payload: Mapping[str, Any]) -> dict[str, str] | None:
             return None
         names = hpc_tool_names(execution)
         allowed = sorted(set(names.values()))
+        # Per-tool loam-skills paradigm: a code-gen calls ONE typed loam-skills
+        # tool (rfd4_proteina_generate, proteinmpnn_design, chai_fold, ...),
+        # chained by the registry, plus poll batch_status + harvest -- instead of
+        # the single HPC run_code/run_batch executor. Gated on execution.skill_tools
+        # so the default HPC campaign is untouched.
+        if execution.get('skill_tools') and tool_name.startswith('mcp__') and (
+                'skills__' in tool_name or tool_name.endswith('__batch_status')):
+            return None
         if tool_name not in allowed:
             return _block(f'code-generator may use only the HPC MCP tools {allowed} and the read-only skill tools {sorted(skill_tools)}')
         # A child can inherit an invented root from its parent's context, so
