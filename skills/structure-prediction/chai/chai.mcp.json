@@ -1,0 +1,35 @@
+{
+  "name": "chai",
+  "actions": ["fold"],
+  "runner": "scripts/chai_run_row.py",
+  "gpus": 1,
+  "timeout_each": 300,
+  "row_schema": {
+    "id": "str",
+    "fasta": "str",
+    "seed": "int",
+    "recycles": "int",
+    "timesteps": "int",
+    "samples": "int",
+    "use_msa": "bool",
+    "expect_ligand": "bool"
+  },
+  "defaults": {
+    "recycles": 3,
+    "timesteps": 200,
+    "samples": 5,
+    "use_msa": false
+  },
+  "expects": ["out/*.cif"],
+  "site_keys": ["python", "launcher", "downloads", "env"],
+  "example": {
+    "id": "ubq-smoke",
+    "fasta": ">protein|name=ubq\nMQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTLSDYNIQKESTLHLVLRLRGG",
+    "seed": 42,
+    "recycles": 1,
+    "timesteps": 50,
+    "samples": 1,
+    "use_msa": false
+  },
+  "_doc": "Per-skill MCP spec (docs/SKILL_MCP_DESIGN.md §5). A thin 'skills' MCP tool chai.fold(inputs, defaults) validates each row against row_schema, write_files-stages inputs.jsonl + the runner, and calls the loam-hpc run_batch(script_path=runner, inputs_path=jsonl, gpus=1, timeout_each). Install paths come from site.<system>.json, resolved worker-side."
+}

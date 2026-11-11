@@ -1,0 +1,15 @@
+{
+  "_comment": "Worker-side install manifest for Aurora, keyed by skill. Runners read this (docs/SKILL_MCP_DESIGN.md §4.B). Paths are resolved ON THE WORKER; the laptop MCP never needs them. 'launcher' may use $HPC_LOAM_HOME-relative paths at the runner, but here we give absolutes the worker can see. Moving an install = edit this one file.",
+  "chai": {
+    "python": "/flare/FRAME-IDP/msinclair/software/chai-lab/.venv/bin/python",
+    "launcher": "/flare/FRAME-IDP/avasan/loam/skills/structure-prediction/chai/scripts/chai_xpu.py",
+    "downloads": "/flare/FRAME-IDP/msinclair/software/chai-lab/downloads",
+    "env": {
+      "CHAI_DOWNLOADS_DIR": "/flare/FRAME-IDP/msinclair/software/chai-lab/downloads"
+    }
+  },
+  "proteinmpnn": {
+    "env_var": "PROTEINMPNN_PATH",
+    "_note": "proteinmpnn already resolves via an exported $PROTEINMPNN_PATH on the worker (verified 2026-11-11). The manifest records that rather than duplicating the path; a runner should prefer $PROTEINMPNN_PATH when present."
+  }
+}
