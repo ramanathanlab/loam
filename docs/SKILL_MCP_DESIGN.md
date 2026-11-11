@@ -328,3 +328,32 @@ call the MCP natively to stage + submit the chai prototype.
 `git -C /flare/FRAME-IDP/avasan/loam pull` to ≥ #29 (or to `big-run-mcp-skills`
 to get the chai prototype too), then let the current block drain / request a
 fresh one so the agents re-import the updated `hpc_agent.py`.
+
+### 8.1 Resolution — green end to end (2026-11-11, same day)
+
+Recycled the deployment and re-ran the clean path:
+
+1. Switched the `/flare` clone `develop` → `big-run-mcp-skills` (write_files +
+   the chai prototype now on disk), via a `run_code` `git checkout` on the worker.
+2. Restarted the Globus Compute endpoint (`globus-compute-endpoint restart
+   loam-aurora-flex` on `uan-0011` over the MFA ControlMaster). The **stop timed
+   out** and aborted the auto-start, so an explicit `start` was needed; the
+   manager came back with the **same UUID**, self-heal spawned a fresh user
+   endpoint → **new 8-node block `9076123`** → workers importing the updated
+   module.
+3. **The "recycle = replace worker processes" rule held exactly.** A fresh
+   `run_code` subprocess saw `write_files` immediately (new process, new import)
+   while the live agent still 500'd — the disk edit and even a server bounce were
+   insufficient; only the new block's fresh worker processes picked it up. Once
+   the block ran, `write_files` became a live action.
+4. A **fresh headless Claude session** (`claude -p`, loam-hpc MCP) then ran the
+   whole intended workflow natively: `pool_status` → `write_files`-stage
+   (runner + manifest + 32-row inputs) → `run_batch` → batch `b-152a8c7abbcb`.
+
+**Result: 32/32 succeeded, 0 failed.** One concurrent wave (~83 s wall; per-fold
+90.1 / 90.3 / 97.2 s min/med/max — overlapping, not serial), spread across all 8
+nodes. Every row produced `out/pred.model_idx_0.cif` + a scores `.npz`. The
+runner resolved the chai venv/launcher/weights **worker-side** (site manifest +
+defaults) with zero laptop-side paths — **B1/C3 confirmed on live hardware**, and
+**A2 (`write_files` staging) confirmed** once the agent is ≥ #29. The clone-pull +
+block-cycle is a **one-time deploy cost**, not per-run.
