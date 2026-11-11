@@ -145,17 +145,99 @@ def validate_rows(manifest: dict, inputs: list, defaults: dict | None = None) ->
 # --------------------------------------------------------------------------- #
 # submit
 # --------------------------------------------------------------------------- #
-def submit_skill(skill: str, action: str, inputs: list,
+def registry_call(op: str, hpc_url: str = DEFAULT_HPC_URL, **args):
+    """Run a registry op WORKER-SIDE: ship registry.py, then run_code it on loam-hpc.
+
+    registry ops take base_dir as their first arg; we resolve it from the worker's
+    HPC_BASE_DIR so the laptop never hardcodes a /flare path.
+    """
+    cli = LoamHpcClient(hpc_url).connect()
+    reg_src = (Path(__file__).parent / "registry.py").read_text()
+    cli.call("write_files", {"files": {"skill_mcp/registry.py": reg_src}})
+    payload = (
+        "import os, sys, json\n"
+        "BASE = os.environ.get('HPC_BASE_DIR') or os.getcwd()\n"
+        "sys.path.insert(0, os.path.join(BASE, 'skill_mcp'))\n"
+        "import registry\n"
+        f"args = json.loads({json.dumps(json.dumps(args))})\n"
+        f"print(json.dumps(getattr(registry, {op!r})(BASE, **args)))\n"
+    )
+    out = cli.call("run_code", {"payload": payload, "timeout": 300})
+    txt = out.get("stdout", "") if isinstance(out, dict) else str(out)
+    for line in reversed(txt.splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            return json.loads(line)
+    raise RuntimeError(f"registry.{op} returned no JSON: {txt[-400:]}")
+
+
+def harvest_batch(skill: str, action: str, batch_id: str,
+                  hypothesis_id: str | None = None, hpc_url: str = DEFAULT_HPC_URL) -> dict:
+    """Register a completed batch's outputs as typed artifacts (produces+expects
+    from the manifest, so the agent only passes batch_id + skill + action)."""
+    manifests = load_manifests()
+    m = manifests.get(skill) or {}
+    io = (m.get("io") or {}).get(action) or {}
+    produces = io.get("produces")
+    if not produces:
+        raise ValueError(f"{skill}.{action} declares no `produces` type to harvest")
+    produces = produces[0] if isinstance(produces, list) else produces
+    return registry_call("harvest", hpc_url=hpc_url, batch_id=batch_id, tool=skill,
+                         action=action, produces=produces, expects=m.get("expects") or [],
+                         hypothesis_id=hypothesis_id)
+
+
+def _rows_from_registry(m: dict, action: str, from_type: str, hypothesis_id: str,
+                        defaults: dict | None, limit: int | None, hpc_url: str) -> list[dict]:
+    """Build consumer rows by routing registry artifacts of `from_type`."""
+    binding = (m.get("input_binding") or {}).get(action)
+    if not binding:
+        raise ValueError(f"{m['name']}.{action} has no input_binding; cannot use from_registry")
+    consumes = (m.get("io") or {}).get(action, {}).get("consumes")
+    allowed = consumes if isinstance(consumes, list) else ([consumes] if consumes else [])
+    if allowed and from_type not in allowed:
+        raise ValueError(f"{m['name']}.{action} consumes {allowed}, not {from_type!r}")
+    r = registry_call("route", hpc_url=hpc_url, hypothesis_id=hypothesis_id,
+                      type=from_type, want=binding["format"], limit=limit)
+    base_row = dict(defaults or {})
+    rows = []
+    for i, mat in enumerate(r.get("materialized", [])):
+        row = dict(base_row)
+        row[binding["field"]] = mat.get("value") if "value" in mat else mat.get("path")
+        row["parent"] = mat["artifact_id"]
+        row["id"] = f"{m['name']}-{action}-{i}"
+        rows.append(row)
+    if not rows:
+        raise ValueError(f"no {from_type!r} artifacts in hypothesis {hypothesis_id!r} "
+                         f"(seeds={r.get('n_seeds')})")
+    return rows
+
+
+def submit_skill(skill: str, action: str, inputs: list | None = None,
                  defaults: dict | None = None, timeout_each: float | None = None,
                  gpus: float | None = None, labels: dict | None = None,
-                 hpc_url: str = DEFAULT_HPC_URL) -> dict:
-    """Validate rows, stage them + the runner via loam-hpc write_files, run_batch."""
+                 from_registry: str | None = None, from_hypothesis: str | None = None,
+                 limit: int | None = None, hpc_url: str = DEFAULT_HPC_URL) -> dict:
+    """Validate rows, stage them + the runner via loam-hpc write_files, run_batch.
+
+    With `from_registry=<type>`, build the rows by routing registry artifacts of
+    that type (materialized into this tool's input format) instead of (or on top
+    of) explicit `inputs` — this is how a tool self-wires in a campaign.
+    """
     manifests = load_manifests()
     if skill not in manifests:
         raise ValueError(f"unknown skill {skill!r}; have {sorted(manifests)}")
     m = manifests[skill]
     if action not in m.get("actions", []):
         raise ValueError(f"skill {skill!r} has no action {action!r}; has {m.get('actions')}")
+
+    if from_registry:
+        hyp = from_hypothesis or (labels or {}).get("hypothesis_id") or "default"
+        routed = _rows_from_registry(m, action, from_registry, hyp, defaults, limit, hpc_url)
+        inputs = (inputs or []) + routed
+        defaults = None  # already folded into the routed rows
+    if not inputs:
+        raise ValueError("no inputs (pass `inputs` or `from_registry`)")
 
     rows = validate_rows(m, inputs, defaults)
 

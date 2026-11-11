@@ -50,5 +50,11 @@
       "consumes": "sequence",
       "produces": "embedding"
     }
+  },
+  "input_binding": {
+    "embed": {
+      "field": "sequence",
+      "format": "sequence"
+    }
   }
 }

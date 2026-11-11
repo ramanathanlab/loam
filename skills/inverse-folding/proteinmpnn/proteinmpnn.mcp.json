@@ -73,5 +73,15 @@
       "consumes": "structure",
       "produces": "score"
     }
+  },
+  "input_binding": {
+    "design": {
+      "field": "pdb",
+      "format": "pdb"
+    },
+    "score": {
+      "field": "pdb",
+      "format": "pdb"
+    }
   }
 }

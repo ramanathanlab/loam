@@ -65,5 +65,19 @@
       "consumes": "structure",
       "produces": "score"
     }
+  },
+  "input_binding": {
+    "score": {
+      "field": "pdb",
+      "format": "pdb"
+    },
+    "relax": {
+      "field": "pdb",
+      "format": "pdb"
+    },
+    "interface": {
+      "field": "pdb",
+      "format": "pdb"
+    }
   }
 }

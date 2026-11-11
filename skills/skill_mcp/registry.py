@@ -200,8 +200,27 @@ def materialize(artifact: dict, want: str, workdir: str | None = None) -> dict:
     return {"ok": False, "error": f"unknown format {want!r}"}
 
 
+def route(base_dir: str, hypothesis_id: str, type: str, want: str,
+          limit: int | None = None, unused_only: bool = False,
+          producer_tool: str | None = None) -> dict:
+    """query + materialize in one worker call: artifacts of a type, each rendered
+    into `want` format, ready to drop into a downstream tool's rows."""
+    q = query(base_dir, hypothesis_id, type, unused_only=unused_only,
+              limit=limit, producer_tool=producer_tool)
+    mats = []
+    for a in q["artifacts"]:
+        m = materialize(a, want)
+        if m.get("ok"):
+            e = {"artifact_id": a["artifact_id"], "producer_tool": a.get("producer_tool")}
+            if "path" in m: e["path"] = m["path"]
+            if "value" in m: e["value"] = m["value"]
+            mats.append(e)
+    return {"type": type, "want": want, "n_seeds": q["count"],
+            "n_materialized": len(mats), "materialized": mats}
+
+
 if __name__ == "__main__":
     op = json.loads(sys.argv[1])
     kind = op.pop("op")
-    fn = {"harvest": harvest, "query": query, "materialize": materialize}[kind]
+    fn = {"harvest": harvest, "query": query, "materialize": materialize, "route": route}[kind]
     print(json.dumps(fn(**op)))

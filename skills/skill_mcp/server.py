@@ -25,23 +25,47 @@ except ImportError:  # run directly from inside skills/skill_mcp
 
 
 def _make_tool(skill: str, action: str, manifest: dict):
-    def tool(inputs: list, defaults: dict | None = None,
+    def tool(inputs: list | None = None, defaults: dict | None = None,
              timeout_each: float | None = None, gpus: float | None = None,
-             labels: dict | None = None) -> dict:
+             labels: dict | None = None, from_registry: str | None = None,
+             from_hypothesis: str | None = None, limit: int | None = None) -> dict:
         return core.submit_skill(skill, action, inputs, defaults=defaults,
-                                 timeout_each=timeout_each, gpus=gpus, labels=labels)
+                                 timeout_each=timeout_each, gpus=gpus, labels=labels,
+                                 from_registry=from_registry, from_hypothesis=from_hypothesis,
+                                 limit=limit)
 
     tool.__name__ = f"{skill}_{action}"
     schema_desc = ", ".join(f"{k}:{v}" for k, v in manifest.get("row_schema", {}).items())
+    io = (manifest.get("io") or {}).get(action, {})
     tool.__doc__ = (
-        f"Submit a {skill} {action} batch. `inputs` is a LIST of rows; each row: "
-        f"{{{schema_desc}}}. Rows are validated, staged via loam-hpc write_files, and "
-        f"run one-per-tile via run_batch (gpus={manifest.get('gpus', 1)}, "
-        f"timeout_each={manifest.get('timeout_each', 900)}s by default). "
-        f"Returns the batch_id; poll loam-hpc batch_status. "
+        f"Submit a {skill} {action} batch. Give `inputs` (a LIST of rows: "
+        f"{{{schema_desc}}}), OR `from_registry=<type>` to auto-build rows from "
+        f"registry artifacts of that type (this action consumes {io.get('consumes')}, "
+        f"produces {io.get('produces')}); use `labels={{hypothesis_id,plan_id}}` to scope. "
+        f"Rows run one-per-tile via run_batch (gpus={manifest.get('gpus', 1)}, "
+        f"timeout_each={manifest.get('timeout_each', 900)}s). Returns batch_id; poll "
+        f"loam-hpc batch_status, then call skill_harvest to register the outputs. "
         f"{manifest.get('description', '')}"
     ).strip()
     return tool
+
+
+def _registry_tools():
+    def skill_query(type: str, hypothesis_id: str, limit: int | None = None) -> dict:
+        """List registry artifacts of a TYPE (sequence/backbone/structure/complex/
+        score/trajectory/embedding) for a hypothesis — what is available to route
+        into a downstream tool."""
+        return core.registry_call("query", hypothesis_id=hypothesis_id, type=type,
+                                  limit=limit, unused_only=False)
+
+    def skill_harvest(batch_id: str, skill: str, action: str,
+                      hypothesis_id: str | None = None) -> dict:
+        """Register a COMPLETED batch's outputs as typed artifacts (produces+expects
+        from the manifest). Call after batch_status shows complete, so later tools
+        can route from these via from_registry."""
+        return core.harvest_batch(skill, action, batch_id, hypothesis_id=hypothesis_id)
+
+    return [skill_query, skill_harvest]
 
 
 def create_server() -> FastMCP:
@@ -63,6 +87,9 @@ def create_server() -> FastMCP:
         for action in m.get("actions", []):
             server.add_tool(_make_tool(name, action, m))
             registered.append(f"{name}_{action}")
+    for t in _registry_tools():
+        server.add_tool(t)
+        registered.append(t.__name__)
     server._loam_registered = registered  # for the __main__ banner
     return server
 

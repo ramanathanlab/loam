@@ -48,5 +48,11 @@
       "consumes": "sequence",
       "produces": "structure"
     }
+  },
+  "input_binding": {
+    "fold": {
+      "field": "seq",
+      "format": "sequence"
+    }
   }
 }

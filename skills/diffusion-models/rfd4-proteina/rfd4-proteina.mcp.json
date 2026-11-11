@@ -55,5 +55,11 @@
       "consumes": "structure",
       "produces": "backbone"
     }
+  },
+  "input_binding": {
+    "generate": {
+      "field": "target",
+      "format": "cif"
+    }
   }
 }
