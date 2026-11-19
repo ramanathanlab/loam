@@ -1,3 +1,8 @@
-# Local Loam runtime state may contain delegated task text and summaries.
-.loam/state/*
-!.loam/state/README.md
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+build/
+dist/
+.DS_Store

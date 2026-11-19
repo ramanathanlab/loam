@@ -1,0 +1,19 @@
+#!/bin/bash
+# Template adapted from /flare/FRAME-IDP/msinclair/software/pyrosetta_energy/scripts/submit_top100_energy.pbs
+# Usage: qsub -v TOP_DIR=/path/with/leaderboard_and_pdbs,WORKERS=96 submit_energy.pbs
+#PBS -N rosetta_energy
+#PBS -A FRAME-IDP
+#PBS -q debug
+#PBS -l select=1:ncpus=208
+#PBS -l walltime=00:45:00
+#PBS -l filesystems=flare:home
+#PBS -j oe
+set -euo pipefail
+REPO=/flare/FRAME-IDP/msinclair/software/pyrosetta_energy
+: "${TOP_DIR:?set TOP_DIR}"; WORKERS=${WORKERS:-96}
+OUT_DIR="$TOP_DIR/rosetta_energy"; mkdir -p "$OUT_DIR"
+export TMPDIR=/tmp
+"$REPO/.venv/bin/python" "$REPO/scripts/compute_rosetta_energy.py" \
+  --top100-dir "$TOP_DIR" --out "$OUT_DIR/rosetta_energy.json" \
+  --out-csv "$OUT_DIR/rosetta_energy.csv" --workers "$WORKERS" 2>&1 \
+  | grep -v -e '│' -e '┌' -e '└'   # drop the per-worker license banner
