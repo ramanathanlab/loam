@@ -1,0 +1,164 @@
+# loam test campaign: designed EGFR binders, remote execution on Aurora.
+# Relative paths resolve against this file's directory.
+#
+# Everything about WHAT the campaign does lives in files: campaigns/binder-design.md
+# and rules/. This file is only wiring and sizing.
+
+goal: campaigns/binder-design.md
+rules:
+  - rules/binder-protocol.md
+  - rules/binder-constraint.md
+state_dir: state
+skills_dirs: [/Users/msinclair/github/matts_crazy_idea/skills]
+rounds: 1
+
+
+# Every agent runs on argo-proxy at :61612. Verified 2026-11-10: it answers on
+# both 127.0.0.1 and localhost, and serves argo:gpt-5.6-luna (67 models listed).
+# The literal IPv4 address is used anyway so the URL cannot depend on how
+# `localhost` resolves.
+#
+# No token is needed -- Argo accepts these requests with no Authorization
+# header -- so api_key_env is omitted and ModelSpec supplies the literal
+# 'none' that the OpenAI client requires.
+models:
+  reasoner:       {model: argo:gpt-5.6-luna, base_url: http://127.0.0.1:61612/v1}
+  validator:      {model: argo:gpt-5.6-luna, base_url: http://127.0.0.1:61612/v1}
+  reviewer:       {model: argo:gpt-5.6-luna, base_url: http://127.0.0.1:61612/v1}
+  code_generator: {model: argo:gpt-5.6-luna, base_url: http://127.0.0.1:61612/v1}
+
+execution:
+  # hpc: loam starts and stops the bundled MCP server itself, generating the
+  # server's HPC_* environment from the hpc: block below. Per
+  # skills/hpc-deployment/SKILL.md:105, do NOT instead launch a separately
+  # configured server or source a campaign environment file -- that is what the
+  # mcp mode would require, and the skill rules it out. mcp_url is derived here
+  # and must not be set.
+  #
+  # run_batch-first: a stage stages one script plus JSONL inputs and submits
+  # the whole sweep at once, then requires complete: true and ok: true from
+  # batch_status.
+  mode: hpc
+  workdir: /flare/FRAME-IDP/msinclair/campaign_lite/work
+
+  # Handed verbatim to every code-generator. The child runs on an Aurora node
+  # and cannot see this laptop, so nothing local may be referenced here.
+  setup: |
+    Run every scientific tool by activating its venv in a bash command inside
+    the execution tool (subprocess.run(["bash","-lc", CMD])), never by
+    importing it as a Python library. Use absolute paths only; the working
+    directory is not the project root.
+
+    Before writing any code, read the recipe for the tool you need with the
+    skill tool. The campaign's skills carry the exact activation and CLI
+    invocation for each stage and are the authority over your recollection:
+    structure-prediction (co-folding and interface metrics), inverse-folding
+    (sequence design on a fixed backbone), diffusion-models (de novo backbone
+    generation), md-simulation (OpenMM/AmberTools and MMPBSA), analysis
+    (structural metrics).
+
+    Write all outputs under /flare/FRAME-IDP/msinclair/campaign_lite/work, in a
+    subdirectory named for the hypothesis you were dispatched for. Inspect an
+    actual output file before reporting any aggregate number from it.
+
+  # Managed HPC. Loam converts this whole mapping into the server's internal
+  # environment (SKILL.md's mapping table) and renders the allocation as
+  # HPC_ENDPOINT_CONFIG_JSON. Do not add a second environment file.
+  hpc:
+    endpoint_id: d83212d9-5751-4892-a78a-bd60d7232fc2
+    campaign_id: campaign-lite-egfr-20261110
+    system: aurora                  # selects the EL SystemConfig and ZE_AFFINITY_MASK pinning
+    exchange_url: https://exchange.academy-agents.org/v1
+    base_dir: /flare/FRAME-IDP/msinclair/campaign_lite
+    # Becomes the ENDPOINT CONFIG's base_dir -- the directory the endpoint's
+    # worker_init does `cd` into and prepends to PYTHONPATH. It must exist on
+    # /flare and contain skills/, or worker_init fails at the `cd`, no worker
+    # registers, and the submit is rejected with
+    #   422 ENDPOINT_NOT_ONLINE "User endpoint did not signal readiness"
+    # which is what pointing this at the campaign directory produced.
+    #
+    # It does NOT set the workers' HPC_LOAM_HOME: the endpoint template
+    # hardcodes that (to this same path) and ignores any client-supplied
+    # worker_init. This value only feeds the endpoint config.
+    worker_code_dir: /flare/FRAME-IDP/msinclair/loam-hpc
+    inspect_roots: []               # agents read and write only under base_dir
+    # Cluster mode needs one worker slot per client agent plus one for the
+    # long-running HpcClusterAgent, so the endpoint must offer pool_size + 1 = 5.
+    pool_size: 4                    # one client agent per node
+    server_script: /Users/msinclair/github/matts_crazy_idea/skills/hpc-deployment/scripts/mcp_server.py
+    host: 127.0.0.1
+    port: 8000
+    # Covers the PBS queue wait plus pool assembly. Queue wait is free -- PBS
+    # starts the walltime clock when the block STARTS -- so a generous value
+    # costs calendar time, not allocation time. A 4-node debug-scaling request
+    # can sit well past the 900 s that smaller blocks get away with.
+    startup_timeout: 2700
+    allocation:
+      account: FRAME-IDP
+      queue: debug-scaling
+      # HARD one-hour wall: the queue reclaims the nodes mid-batch at 01:00:00.
+      # Every timeout below is sized to finish inside it.
+      walltime: "01:00:00"
+      nodes: 4                      # 4 x 12 XPUs = 48 devices at once
+      init_blocks: 1
+      min_blocks: 1
+      max_blocks: 1
+      # DEAD CONFIG: max_idletime is not a variable in this endpoint's
+      # user_config_template, so the manager never renders it. Required by
+      # loam's HPCAllocation schema, so it cannot simply be removed.
+      # Block lifetime here is governed by walltime and idle_heartbeats_hard.
+      max_idletime: 300
+      # Every other key above IS a template variable. Verified 2026-11-10
+      # against the live template: account, queue, walltime, nodes_per_block,
+      # init_blocks, min_blocks, max_blocks, available_accelerators,
+      # max_workers_per_node, base_dir. Do NOT quote walltime's value here --
+      # the manager's Jinja env already quotes client-supplied strings, and an
+      # outer pair renders as walltime: ""01:00:00"" -> ParserError.
+      endpoint_options: {}          # only keys the endpoint schema accepts
+
+# Jnana generates and Elo-ranks; separate agents validate its top_k and write code.
+# Hypothesis IDs become persistent workspace names and must not change once set.
+tournament:
+  jnana_root: /Users/msinclair/github/Jnana
+  generation: {model: argo:gpt-5.6-luna, base_url: http://127.0.0.1:61612/v1}
+  ranking:    {model: argo:gpt-5.6-luna, base_url: http://127.0.0.1:61612/v1}
+  # Sized for ONE 1-hour debug-scaling block, wider rather than deeper: 8
+  # hypotheses generated, the top 4 validated at once so more of the 48 XPUs
+  # stay busy. Ranking is the serial step, so the pool is kept small -- a large
+  # hypothesis pool cannot be ranked inside an hour.
+  initial_hypotheses: 8
+  new_per_round: 2
+  top_k: 4
+  # Swiss, because top_k: 4 selects HALF this pool: a scheme that leaves some
+  # hypotheses barely ranked would decide that split by luck. A Swiss round's
+  # pairings are disjoint, so all 8 are ranked every round.
+  scheme: swiss
+  # 3 rounds x (8 hypotheses / 2) = 12 matches, each round paired on the Elo the
+  # previous one produced.
+  swiss_rounds: 3
+  # A round's 4 matches are disjoint, so they can all run at once -- ranking is
+  # the serial step that would otherwise idle 48 XPUs. Measured ~16-21 s/match
+  # serialized, so this is the difference between ~1 min and ~4 min of ranking.
+  workers: 4
+  matches: 10                     # unused under swiss; kept for a scheme: random fallback
+  # Generation timeout: stops workers and aborts before ranking rather than
+  # eating the block.
+  max_seconds: 600
+
+workspace_inputs: null            # local mode only; must stay null in mcp mode
+concurrency: 4                    # validators running at once; matches top_k
+max_code_calls: 3                 # code-generator delegations per validator
+max_requests: 200                 # LLM requests per agent run
+model_retries: 8                  # SDK retries per request on 429/5xx/connection errors
+
+# Seconds. A tool or model request that runs out is reported to the agent, which
+# carries on; an agent run that runs out ends only that thread, never the round.
+# Sized against the ONE-HOUR wall: no single timeout may exceed the block, or it
+# expires only after the queue has already reclaimed the nodes.
+timeouts:
+  tool: 900                       # one run_batch/batch_status round trip
+  model_request: 600
+  validator: 2700                 # 45 min, inside the hour with room to report
+  code_generator: 1200
+  reviewer: 900
+  reasoner: 900

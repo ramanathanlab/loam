@@ -1,1 +1,0 @@
-User prefers biology experiment suggestions to be in silico and executable by the assistant, rather than wet-lab experiments.

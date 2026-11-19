@@ -1,9 +1,0 @@
-{
-  "last_report_path": "/Users/msinclair/github/loam/.hermes/.loam-home/logs/curator/20261001-143111",
-  "last_run_at": "2026-10-01T14:31:11.284202+00:00",
-  "last_run_duration_seconds": 0.231946,
-  "last_run_summary": "auto: no changes; llm: skipped (consolidation off)",
-  "last_run_summary_shown_at": null,
-  "paused": false,
-  "run_count": 1
-}

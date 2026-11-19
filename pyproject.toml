@@ -1,20 +1,42 @@
+[project]
+name = "loam"
+version = "0.1.0"
+description = "Loam's hypothesis-driven campaign loop on pydantic-ai"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic-ai-slim[openai,anthropic,mcp]>=2.66",
+    "pyyaml",
+    "httpx",
+    # Jnana is imported from tournament.jnana_root; these are its import-time needs
+    "requests",
+    "jsonschema",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+# execution.mode: hpc only. The local process starts skills/hpc-deployment's
+# mcp_server.py and must import its dependencies.
+#
+# ensemble-launcher is here for ONE reason: HpcClusterAgent.__init__ reads
+# ensemble_launcher.config.aurora_config, and Academy constructs that agent
+# LOCALLY (mcp_server.py launch_cluster) before shipping it to the endpoint.
+# hpc_agent.py guards the EL import with try/except ModuleNotFoundError ->
+# EL_AVAILABLE, but __init__ does not check that flag, so without EL installed
+# here the server dies with `NameError: name 'aurora_config' is not defined`
+# before any job is submitted. Only the base install is needed -- mpi4py lives
+# in EL's `hpc` extra and the launcher itself only ever runs on the worker.
+hpc = ["fastmcp", "globus-compute-sdk", "academy-py", "ensemble-launcher"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-[project]
-name = "loam"
-version = "0.1.0"
-description = "Runtime dependencies for the HPC deployment skill"
-readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [
-    "academy-py>=0.5,<2",
-    "fastmcp>=3.4,<5",
-    "globus-compute-sdk",
-    "parsl",
-    "pydantic>=2,<3",
-]
+[tool.setuptools.packages.find]
+include = ["loam*"]
 
-[tool.setuptools]
-py-modules = []
+[tool.setuptools.package-data]
+loam = ["prompts/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
