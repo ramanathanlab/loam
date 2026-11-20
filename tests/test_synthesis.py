@@ -156,3 +156,15 @@ def test_a_failed_reduction_leaves_a_failed_receipt(tmp_path):
     receipt = json.loads(manifest.read_text())
     assert receipt['status'] == 'failed' and receipt['error_type'] == 'RuntimeError'
     assert receipt['calls'][0]['status'] == 'failed'
+
+
+def test_unbounded_history_still_bounds_each_request_to_48000_bytes(tmp_path):
+    cfg = make_cfg(tmp_path)
+    assert cfg.max_history_bytes is None
+
+    class Agents:
+        async def run(self, role, text):
+            return Brief(report='r', tournament_brief='b')
+
+    result = asyncio.run(synthesize(Agents(), cfg, [{'hypothesis_id': 'h'}], [], '', 1))
+    assert json.loads(Path(result['synthesis_receipt']).read_text())['prompt_budget_bytes'] == 48000

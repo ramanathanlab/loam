@@ -225,7 +225,7 @@ class Campaign:
             row['summary'] = pool[row['hypothesis_id']].summary if row['hypothesis_id'] in pool else ''
         return table
 
-    async def synthesize(self, threads: list[dict], table: list[dict], previous_brief: str, n: int) -> dict:
+    async def synthesize(self, threads: list[dict], table: list[dict], previous_brief: str, round_number: int) -> dict:
         digest = []
         for t in threads:
             h, r = t['hypothesis'], t['report'] or {}
@@ -239,7 +239,7 @@ class Campaign:
                 'error': t['error'],
             })
         try:
-            return await synthesize(self.agents, self.cfg, digest, table, previous_brief, n)
+            return await synthesize(self.agents, self.cfg, digest, table, previous_brief, round_number)
         except Exception as exc:  # keep steering from the last good brief rather than losing the round
             log.exception('reasoner failed')
             return {'report': f'reasoner failed: {exc!r}', 'tournament_brief': previous_brief}
