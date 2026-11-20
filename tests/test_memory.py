@@ -81,3 +81,22 @@ def test_memory_block_loads_from_yaml(tmp_path):
     path.write_text(yaml.safe_dump(values))
     memory = load(path).memory
     assert (memory.bank, memory.recall_tokens, memory.instance) == ('lessons', 500, 'loam-memory')
+
+
+# ---- interface --------------------------------------------------------------------------------------
+
+def test_no_memory_is_a_silent_no_op(tmp_path):
+    import asyncio
+
+    from loam.memory import Lesson, NoMemory, from_config
+
+    memory = from_config(make_cfg(tmp_path))
+    assert isinstance(memory, NoMemory)
+
+    async def exercise():
+        await memory.start()
+        assert await memory.recall('anything', kinds=['procedural']) == ''
+        await memory.retain([Lesson('review', 'text', 1, 'h1')])
+        await memory.close()
+
+    asyncio.run(exercise())
