@@ -78,8 +78,11 @@ def test_subprocess_timeout_kills_descendants(tmp_path, monkeypatch):
     assert timed_out and code == -signal.SIGKILL
     assert time.monotonic() - start < 4  # An inherited pipe must not wait for the child.
     child = Path('/proc') / stdout.decode().strip() / 'status'
-    if child.exists():
-        assert '\nState:\tZ' in child.read_text()  # Killed, awaiting its new parent's reap.
+    try:
+        state = child.read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return  # Already reaped; /proc can disappear during open/read as well.
+    assert '\nState:\tZ' in state  # Killed, awaiting its new parent's reap.
 
 
 def test_existing_mode_does_not_construct_globus_executor(monkeypatch):
