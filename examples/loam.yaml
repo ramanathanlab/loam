@@ -164,6 +164,21 @@ model_retries: 8                  # SDK retries per request on 429/5xx/connectio
 # unchanged. Set it for small-context local models; null keeps the full history.
 max_history_bytes: null
 
+# One request gate per OpenAI-compatible endpoint (base_url), shared by every
+# agent and every Jnana worker in this campaign, so a big pool backs off
+# together instead of stampeding a throttled provider. A throttle response
+# (429/529, or 503 with Retry-After) makes every caller wait out the server's
+# Retry-After, or else `backoff` seconds doubling up to `max_backoff`; for
+# `recovery_window` seconds afterwards calls are spaced `recovery_spacing`
+# apart. requests_per_minute caps calls to one endpoint all the time; null
+# leaves them uncapped. Provider-string models (no base_url) are not gated.
+rate_limits:
+  requests_per_minute: null
+  recovery_spacing: 2
+  recovery_window: 60
+  backoff: 5
+  max_backoff: 120
+
 # Seconds. A tool or model request that runs out is reported to the agent, which
 # carries on; an agent run that runs out ends only that thread, never the round.
 # Sized against the ONE-HOUR wall: no single timeout may exceed the block, or it

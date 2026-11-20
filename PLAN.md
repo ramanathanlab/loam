@@ -138,6 +138,7 @@ A large campaign runs many agents for hours; no single failure may end it.
 | tool error or tool timeout (`timeouts.tool`) | `Resilient` toolset wrapper | returned to the model as a failed tool result; no retry budget spent |
 | shell command timeout | `run_shell` | whole process group killed |
 | 429 / 5xx / dropped connection to an LLM | provider SDK, `model_retries` | retried with backoff; each request bounded by `timeouts.model_request` |
+| 429 / 529 / 503+Retry-After from an OpenAI-compatible endpoint | `rate_limits` gate shared per endpoint | every agent and Jnana caller waits out one cooldown, then calls are spaced; `rate_limits.requests_per_minute` caps calls throughout |
 | dropped MCP session | one connection per agent run | fails only that run's calls; the next run reconnects |
 | code-generator crash, timeout, or request limit | `delegate` | reported to the validator, run recorded as `crashed` |
 | validator or reviewer crash/timeout | `Campaign.validate` | that hypothesis is untested this round |
