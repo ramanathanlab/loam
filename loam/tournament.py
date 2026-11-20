@@ -10,8 +10,10 @@ import logging
 import math
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
-from .config import TournamentConfig
+from .config import Config, RateLimits, TournamentConfig
+from .rate_limits import jnana_coscientist
 from .schemas import Hypothesis
 
 log = logging.getLogger('loam')
@@ -22,20 +24,37 @@ class GenerationTimedOut(RuntimeError):
 
 
 class Tournament:
-    def __init__(self, cfg: TournamentConfig, state_dir: Path):
+    def __init__(self, cfg: TournamentConfig, state_dir: Path, *, model_retries: int = 8,
+                 request_timeout: float = 600, rate_limits: RateLimits | None = None):
         self.cfg = cfg
+        self.model_retries = model_retries
+        self.request_timeout = request_timeout
+        self.rate_limits = rate_limits
         self.state_file = state_dir / 'jnana.json'
         if str(cfg.jnana_root) not in sys.path:
             sys.path.insert(0, str(cfg.jnana_root))
 
+    @classmethod
+    def for_campaign(cls, cfg: Config) -> Tournament:
+        """This campaign's tournament: Jnana's model requests get the campaign's SDK retries,
+        request timeout and shared rate-limit gate, like the agents' own."""
+        return cls(cfg.tournament, cfg.state_dir, model_retries=cfg.model_retries,
+                   request_timeout=cfg.timeouts.model_request, rate_limits=cfg.rate_limits)
+
     def run(self, goal: str, *, initial: bool, brief: str = '') -> list[Hypothesis]:
         """Blocking (Jnana is threaded); call through asyncio.to_thread."""
+        import importlib
+
         from jnana.protognosis.core.coscientist import CoScientist
-        from jnana.protognosis.periodic_tournament import run_incremental_tournament
+        periodic = importlib.import_module('jnana.protognosis.periodic_tournament')
+        # Generation and ranking both use this subclass, so their requests pass the shared gate.
+        # Ranking builds its own CoScientist from periodic's module global, patched for the call only.
+        campaign_scientist = jnana_coscientist(CoScientist, retries=self.model_retries,
+                                               timeout=self.request_timeout, limits=self.rate_limits)
 
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        cs = CoScientist(llm_config=self.cfg.generation.jnana(), storage_path=str(self.state_file),
-                         max_workers=max(self.cfg.initial_hypotheses, self.cfg.new_per_round))
+        cs = campaign_scientist(llm_config=self.cfg.generation.jnana(), storage_path=str(self.state_file),
+                                max_workers=max(self.cfg.initial_hypotheses, self.cfg.new_per_round))
         existing = len(cs.get_all_hypotheses())
         count = max(0, self.cfg.initial_hypotheses - existing) if initial else self.cfg.new_per_round
         if count:
@@ -57,10 +76,11 @@ class Tournament:
         # scheme/rounds/workers were previously left at Jnana's defaults, which
         # silently gave every campaign a single serial batch of random pairings.
         # match_count is still passed because Jnana ignores it under swiss.
-        result = run_incremental_tournament(
-            state_file=self.state_file, llm_config=self.cfg.ranking.jnana(),
-            match_count=self.cfg.matches, top_k=self.cfg.top_k, max_seconds=self.cfg.max_seconds,
-            scheme=self.cfg.scheme, rounds=self.cfg.swiss_rounds, workers=self.cfg.workers)
+        with patch.object(periodic, 'CoScientist', campaign_scientist):
+            result = periodic.run_incremental_tournament(
+                state_file=self.state_file, llm_config=self.cfg.ranking.jnana(),
+                match_count=self.cfg.matches, top_k=self.cfg.top_k, max_seconds=self.cfg.max_seconds,
+                scheme=self.cfg.scheme, rounds=self.cfg.swiss_rounds, workers=self.cfg.workers)
         bodies = {h.hypothesis_id: h for h in cs.get_all_hypotheses()}
         return [
             Hypothesis(id=r['hypothesis_id'], summary=r['summary'], elo=float(r['elo_rating']),

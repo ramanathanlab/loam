@@ -36,7 +36,7 @@ class Campaign:
         self.cfg = cfg
         self.skills = skills.discover(cfg.skills_dirs)
         self.agents = agents or build(cfg)
-        self.tournament = tournament or Tournament(cfg.tournament, cfg.state_dir)
+        self.tournament = tournament or Tournament.for_campaign(cfg)
         self.memory = memory if memory is not None else memory_from_config(cfg)
         self.rounds_dir = cfg.state_dir / 'rounds'
         self.ledger = cfg.state_dir / 'ledger.jsonl'

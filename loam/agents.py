@@ -65,7 +65,7 @@ def build(cfg: Config) -> Agents:
         # Every tool that touches the world is wrapped, so its failures reach the model, not the run.
         toolsets = [Resilient(t, timeout=cfg.timeouts.tool)
                     for t in [FunctionToolset(list(tools)), execution_tools] if t is not None]
-        return Agent(cfg.models[role].build(), name=role, output_type=output_type, deps_type=Deps,
+        return Agent(cfg.models[role].build(cfg.rate_limits), name=role, output_type=output_type, deps_type=Deps,
                      instructions=[(PROMPTS / f'{role}.md').read_text(), campaign_context],
                      tools=unwrapped, toolsets=toolsets, retries=3,
                      capabilities=([ProcessHistory(lambda messages: bounded_history(messages, cfg.max_history_bytes))]
