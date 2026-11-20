@@ -221,6 +221,7 @@ state_dir/                                # Orchestrator-only records (written a
 ├── ledger.jsonl                          # Reconciled, independently verified claims
 ├── rounds/
 │   └── round-NNN.json                    # Full round record: rankings, threads, steering, brief
+├── synthesis/round-NNN/<attempt>/        # The reasoner's input, every request/response, and manifest.json (the receipt)
 └── hypotheses/<id>/
     ├── experiment.json                   # Hypothesis statement + per-round outcome summary
     └── runs/<rNNN-KK>.json               # Code-generator instruction, status, result, batch IDs
@@ -337,6 +338,7 @@ loam/
 ├── workspace.py       # Persistent per-hypothesis records, run directories, atomic JSON writes
 ├── reconcile.py       # Deterministic claim acceptance and provenance verification
 ├── steering.py        # Elo + evidence priority scoring across the hypothesis pool
+├── synthesis.py       # Round synthesis: reduces threads + steering to the next brief within the context
 ├── skills.py          # SKILL.md discovery, prompt catalog, and read_skill helper
 └── prompts/           # Role system instructions (validator, code_generator, reviewer, reasoner)
 examples/              # Aurora EGFR binder campaign YAML, goal, campaign rules, redacted Site profiles

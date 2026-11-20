@@ -142,6 +142,7 @@ A large campaign runs many agents for hours; no single failure may end it.
 | dropped MCP session | one connection per agent run | fails only that run's calls; the next run reconnects |
 | code-generator crash, timeout, or request limit | `delegate` | reported to the validator, run recorded as `crashed` |
 | validator or reviewer crash/timeout | `Campaign.validate` | that hypothesis is untested this round |
+| round too large for one reasoner request | `synthesis.synthesize` | evidence packed into requests under a byte budget and reduced level by level; every record sent once, lineage kept under `state_dir/synthesis/` |
 | reasoner failure | `Campaign.synthesize` | previous brief carried forward |
 | Jnana generation timeout | `Campaign.rank` | generation is stopped and the round aborts before ranking |
 | other tournament failure | `Campaign.rank` | validate the pool's current top_k by Elo |
