@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.exceptions import AgentRunError, ApprovalRequired, CallDeferred, ToolFailed
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, WrapperToolset
 
 from .config import Config
@@ -228,10 +229,10 @@ async def fetch_url(url: str, max_chars: int = 20000) -> str:
     return f'HTTP {response.status_code}\n{response.text[:max_chars]}'
 
 
-SIDE_EFFECTS = {'write_files', 'run_code', 'run_batch', 'register_tool', 'run_shell'}
+SIDE_EFFECTS = (MCP_FULL - MCP_READ) | {'write_files', 'run_shell'}
 
 
-async def prepare_execution_tools(ctx, tools):
+async def prepare_execution_tools(ctx: RunContext[Deps], tools: list[ToolDefinition]) -> list[ToolDefinition]:
     """Run side-effecting tools one at a time within an agent turn, so a submission sees the files
     written just before it; hypotheses still run in parallel."""
     return [replace(tool, sequential=True) if tool.name in SIDE_EFFECTS else tool for tool in tools]

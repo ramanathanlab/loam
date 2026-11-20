@@ -6,7 +6,17 @@ import json
 import logging
 from dataclasses import replace
 
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, ModelResponse, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    ToolReturnPart,
+    UserPromptPart,
+)
+
+log = logging.getLogger('loam')
 
 NOTE = ('CONTEXT WINDOW NOTE: Older exchanges were removed from this prompt. '
         'Their files and owned batch receipts remain on disk. Use list_batches and '
@@ -38,8 +48,8 @@ def bounded_history(messages: list[ModelMessage], max_bytes: int = 96000) -> lis
     """
     before = model_visible_size(messages)
 
-    def finish(history):
-        logging.getLogger('loam.history').info(
+    def finish(history: list[ModelMessage]) -> list[ModelMessage]:
+        log.info(
             'Bounded model-visible history from %d to %d bytes; execution records unchanged',
             before, model_visible_size(history))
         return history
@@ -51,7 +61,8 @@ def bounded_history(messages: list[ModelMessage], max_bytes: int = 96000) -> lis
         return messages
     prefix = list(messages[:starts[0]])
     if prefix and isinstance(prefix[-1], ModelRequest) and not any(
-            isinstance(p, UserPromptPart) and p.content == NOTE for p in prefix[-1].parts):
+            isinstance(p, UserPromptPart) and isinstance(p.content, str) and p.content.startswith('CONTEXT WINDOW NOTE:')
+            for p in prefix[-1].parts):
         prefix[-1] = replace(prefix[-1], parts=[*prefix[-1].parts, UserPromptPart(NOTE)])
     for start in starts:
         candidate = prefix + list(messages[start:])
@@ -70,7 +81,7 @@ def bounded_history(messages: list[ModelMessage], max_bytes: int = 96000) -> lis
                      'use a fresh, narrower delegation')
 
 
-def _shorten(part, cap: int):
+def _shorten(part: ModelRequestPart, cap: int) -> ModelRequestPart:
     if not isinstance(part, ToolReturnPart):
         return part
     content = part.content if isinstance(part.content, str) else json.dumps(part.content, default=str)
