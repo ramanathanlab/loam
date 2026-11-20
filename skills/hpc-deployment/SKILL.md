@@ -38,10 +38,12 @@ The user-authored loam YAML is the sole campaign settings file. Select
 | `inspect_roots` | `HPC_INSPECT_ROOTS` |
 | `cold_endpoint_timeout` | `HPC_COLD_ENDPOINT_TIMEOUT` |
 | `cold_endpoint_backoff` | `HPC_COLD_ENDPOINT_BACKOFF` |
+| Site profile (`site_profile`) | `LOAM_SOFTWARE_ROOT`, `LOAM_DATA_ROOT`, `LOAM_CACHE_ROOT`, `LOAM_MODEL_WEIGHTS_JSON`, `LOAM_INFERENCE_JSON`; the roots are also exported in the endpoint config's `worker_init` |
 
 The YAML also supplies `server_script`, local `host` and `port`,
 `startup_timeout`, and the allocation's `account`, `queue`, `walltime`, block
-limits, idle timeout, and endpoint-specific options. Loam renders the
+limits, idle timeout, and endpoint-specific options. The account and queue may
+instead come from the Site profile the YAML names; a value in the YAML wins. Loam renders the
 allocation as `HPC_ENDPOINT_CONFIG_JSON` and starts the server with an internal
 environment. Users must not create, edit, or source a second campaign
 environment file. The server may continue consuming these generated variables.

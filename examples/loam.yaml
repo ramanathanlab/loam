@@ -2,14 +2,20 @@
 # Relative paths resolve against this file's directory.
 #
 # Everything about WHAT the campaign does lives in files: campaigns/binder-design.md
-# and rules/. This file is only wiring and sizing.
+# and rules/. This file is only wiring and sizing. The allocation account,
+# software and cache roots, and model weights live in a Site profile outside the
+# repo; see site-profiles/ for redacted examples. The campaign's own directories
+# below (workdir, base_dir, worker_code_dir) are placeholders to fill in.
 
 goal: campaigns/binder-design.md
 rules:
   - rules/binder-protocol.md
   - rules/binder-constraint.md
 state_dir: state
-skills_dirs: [/Users/msinclair/github/matts_crazy_idea/skills]
+skills_dirs: [../skills]
+# Looked up as ~/.config/loam/site-profiles/aurora-myproject.yaml (or under
+# $XDG_CONFIG_HOME). Without this line, LOAM_SITE_PROFILE may give a profile's path.
+site_profile: aurora-myproject
 rounds: 1
 
 
@@ -39,7 +45,7 @@ execution:
   # the whole sweep at once, then requires complete: true and ok: true from
   # batch_status.
   mode: hpc
-  workdir: /flare/FRAME-IDP/msinclair/campaign_lite/work
+  workdir: /flare/YOUR_ALLOCATION/YOUR_USER/campaign_lite/work
 
   # Handed verbatim to every code-generator. The child runs on an Aurora node
   # and cannot see this laptop, so nothing local may be referenced here.
@@ -55,9 +61,10 @@ execution:
     structure-prediction (co-folding and interface metrics), inverse-folding
     (sequence design on a fixed backbone), diffusion-models (de novo backbone
     generation), md-simulation (OpenMM/AmberTools and MMPBSA), analysis
-    (structural metrics).
+    (structural metrics). Software lives under $LOAM_SOFTWARE_ROOT, from the
+    Site profile.
 
-    Write all outputs under /flare/FRAME-IDP/msinclair/campaign_lite/work, in a
+    Write all outputs under /flare/YOUR_ALLOCATION/YOUR_USER/campaign_lite/work, in a
     subdirectory named for the hypothesis you were dispatched for. Inspect an
     actual output file before reporting any aggregate number from it.
 
@@ -69,7 +76,7 @@ execution:
     campaign_id: campaign-lite-egfr-20261110
     system: aurora                  # selects the EL SystemConfig and ZE_AFFINITY_MASK pinning
     exchange_url: https://exchange.academy-agents.org/v1
-    base_dir: /flare/FRAME-IDP/msinclair/campaign_lite
+    base_dir: /flare/YOUR_ALLOCATION/YOUR_USER/campaign_lite
     # Becomes the ENDPOINT CONFIG's base_dir -- the directory the endpoint's
     # worker_init does `cd` into and prepends to PYTHONPATH. It must exist on
     # /flare and contain skills/, or worker_init fails at the `cd`, no worker
@@ -80,12 +87,12 @@ execution:
     # It does NOT set the workers' HPC_LOAM_HOME: the endpoint template
     # hardcodes that (to this same path) and ignores any client-supplied
     # worker_init. This value only feeds the endpoint config.
-    worker_code_dir: /flare/FRAME-IDP/msinclair/loam-hpc
+    worker_code_dir: /flare/YOUR_ALLOCATION/YOUR_USER/loam-hpc
     inspect_roots: []               # agents read and write only under base_dir
     # Cluster mode needs one worker slot per client agent plus one for the
     # long-running HpcClusterAgent, so the endpoint must offer pool_size + 1 = 5.
     pool_size: 4                    # one client agent per node
-    server_script: /Users/msinclair/github/matts_crazy_idea/skills/hpc-deployment/scripts/mcp_server.py
+    server_script: ../skills/hpc-deployment/scripts/mcp_server.py
     host: 127.0.0.1
     port: 8000
     # Covers the PBS queue wait plus pool assembly. Queue wait is free -- PBS
@@ -94,7 +101,8 @@ execution:
     # can sit well past the 900 s that smaller blocks get away with.
     startup_timeout: 2700
     allocation:
-      account: FRAME-IDP
+      # account comes from the Site profile. queue is set here because this
+      # campaign is sized for debug-scaling; it overrides the profile's.
       queue: debug-scaling
       # HARD one-hour wall: the queue reclaims the nodes mid-batch at 01:00:00.
       # Every timeout below is sized to finish inside it.
@@ -119,7 +127,7 @@ execution:
 # Jnana generates and Elo-ranks; separate agents validate its top_k and write code.
 # Hypothesis IDs become persistent workspace names and must not change once set.
 tournament:
-  jnana_root: /Users/msinclair/github/Jnana
+  jnana_root: ~/github/Jnana        # a local Jnana checkout
   generation: {model: argo:gpt-5.6-luna, base_url: http://127.0.0.1:61612/v1}
   ranking:    {model: argo:gpt-5.6-luna, base_url: http://127.0.0.1:61612/v1}
   # Sized for ONE 1-hour debug-scaling block, wider rather than deeper: 8

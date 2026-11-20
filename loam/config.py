@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, ValidationInfo, model_validator
 
 from .systems import SYSTEMS, SystemName
 
@@ -87,6 +88,63 @@ class HPCAllocation(ConfigModel):
         return self
 
 
+class SiteAllocation(ConfigModel):
+    account: NonEmptyStr | None = None
+    queue: NonEmptyStr | None = None
+
+
+class InferenceEndpoint(ConfigModel):
+    base_url: NonEmptyStr
+    api_key_env: str | None = None
+
+
+def _absolute_posix(value: str) -> str:
+    path = PurePosixPath(value)
+    if '\\' in value or not path.is_absolute() or '..' in path.parts:
+        raise ValueError('must be an absolute POSIX path without ..')
+    return value
+
+
+RemotePath = Annotated[str, AfterValidator(_absolute_posix)]
+
+
+class SiteProfile(ConfigModel):
+    """One project's or user's setup on a System, kept outside the repo (see GLOSSARY.md, ADR 0004).
+
+    Found by `load`: the campaign config's `site_profile` name in site_profiles_dir(), else the path in
+    LOAM_SITE_PROFILE. Allocation values fill the campaign config's where it leaves them out; everything
+    else reaches the deployment environment as LOAM_* variables, so skills refer to paths only through them.
+    """
+
+    allocation: SiteAllocation = SiteAllocation()
+    software_root: RemotePath
+    data_root: RemotePath | None = None
+    cache_root: RemotePath | None = None
+    model_weights: dict[str, RemotePath] = {}
+    inference: dict[str, InferenceEndpoint] = {}
+    worker_init: str = ''   # shell run on each worker before it starts; the campaign config's wins
+
+    def roots(self) -> dict[str, str]:
+        roots = {'LOAM_SOFTWARE_ROOT': self.software_root, 'LOAM_DATA_ROOT': self.data_root,
+                 'LOAM_CACHE_ROOT': self.cache_root}
+        return {name: value for name, value in roots.items() if value is not None}
+
+    def environment(self) -> dict[str, str]:
+        compact = {'sort_keys': True, 'separators': (',', ':')}
+        return {
+            **self.roots(),
+            'LOAM_MODEL_WEIGHTS_JSON': json.dumps(self.model_weights, **compact),
+            'LOAM_INFERENCE_JSON': json.dumps(
+                {name: endpoint.model_dump() for name, endpoint in self.inference.items()}, **compact),
+        }
+
+    def full_worker_init(self, snippet: str | None) -> str:
+        """Export the roots on every worker, then run `snippet` (the campaign config's) or the profile's own."""
+        exports = [f'export {name}={shlex.quote(value)}' for name, value in self.roots().items()]
+        body = self.worker_init if snippet is None else snippet
+        return '\n'.join([*exports, body] if body else exports)
+
+
 class HPCDeployment(ConfigModel):
     endpoint_id: NonEmptyStr
     campaign_id: NonEmptyStr
@@ -111,9 +169,12 @@ class HPCDeployment(ConfigModel):
     cold_endpoint_timeout: PositiveFloat = 300.0
     cold_endpoint_backoff: PositiveFloat = 5.0
     allocation: HPCAllocation
+    # The Site profile `load` found, handed in as validation context; never written in the campaign config.
+    _site_profile: SiteProfile | None = PrivateAttr(default=None)
 
     @model_validator(mode='after')
-    def validate_deployment(self):
+    def validate_deployment(self, info: ValidationInfo):
+        self._site_profile = (info.context or {}).get('site_profile')
         for name in ('base_dir', 'worker_code_dir'):
             _validate_remote_path(name, getattr(self, name))
         for root in self.inspect_roots:
@@ -141,6 +202,9 @@ class HPCDeployment(ConfigModel):
             'max_workers_per_node': accelerators,
             'base_dir': self.worker_code_dir,
         }
+        if self._site_profile is not None:
+            endpoint_config['worker_init'] = self._site_profile.full_worker_init(
+                allocation.endpoint_options.get('worker_init'))
         return {
             'HPC_GLOBUS_ENDPOINT_ID': self.endpoint_id,
             'HPC_CAMPAIGN_ID': self.campaign_id,
@@ -158,14 +222,15 @@ class HPCDeployment(ConfigModel):
             'HPC_MCP_HOST': self.host,
             'HPC_MCP_PORT': str(self.port),
             **definition.environment(),
+            **(self._site_profile.environment() if self._site_profile else {}),
         }
 
 
 def _validate_remote_path(name: str, value: str) -> PurePosixPath:
-    path = PurePosixPath(value)
-    if '\\' in value or not path.is_absolute() or '..' in path.parts:
-        raise ValueError(f'execution.hpc.{name} must be an absolute POSIX path without ..')
-    return path
+    try:
+        return PurePosixPath(_absolute_posix(value))
+    except ValueError as error:
+        raise ValueError(f'execution.hpc.{name} {error}') from None
 
 
 class Execution(ConfigModel):
@@ -299,6 +364,7 @@ class Config(ConfigModel):
     model_retries: PositiveInt = 8       # SDK retries per LLM request on 429/5xx/connection errors, with backoff
     timeouts: Timeouts = Timeouts()
     memory: MemoryConfig | None = None   # cross-campaign lessons; see MemoryConfig
+    site_profile: NonEmptyStr | None = None  # a Site profile's name; see `load`
 
     @model_validator(mode='after')
     def validate_campaign(self):
@@ -318,10 +384,60 @@ class Config(ConfigModel):
         return '\n\n'.join(p.read_text() for p in self.rules)
 
 
+def site_profiles_dir() -> Path:
+    config_home = os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config'
+    return Path(config_home) / 'loam' / 'site-profiles'
+
+
+def _find_site_profile(name: str | None) -> tuple[str, SiteProfile] | None:
+    """The Site profile to use, with the label errors name it by: the config's `site_profile` name,
+    looked up in site_profiles_dir(); else the explicit path in LOAM_SITE_PROFILE; else none."""
+    if name:
+        label, path = name, site_profiles_dir() / f'{name}.yaml'
+    elif explicit := os.environ.get('LOAM_SITE_PROFILE'):
+        label, path = explicit, Path(explicit).expanduser()
+    else:
+        return None
+    return label, _read_site_profile(label, path)
+
+
+def _read_site_profile(label: str, path: Path) -> SiteProfile:
+    if not path.is_file():
+        raise ValueError(f'site profile {label!r} not found at {path}')
+    try:
+        return SiteProfile.model_validate(yaml.safe_load(path.read_text()) or {})
+    except ValidationError as error:
+        problems = '; '.join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
+        raise ValueError(f'site profile {label!r} ({path}) is invalid: {problems}') from None
+
+
+def _apply_site_profile(raw: dict[str, Any], label: str, site_profile: SiteProfile) -> None:
+    """Fill the campaign config's allocation from the profile where the config leaves a value out."""
+    hpc = (raw.get('execution') or {}).get('hpc')
+    if not isinstance(hpc, dict):
+        return
+    allocation = hpc.setdefault('allocation', {})
+    if not isinstance(allocation, dict):
+        return
+    for key, value in site_profile.allocation.model_dump().items():
+        if key in allocation:
+            continue
+        if value is None:
+            raise ValueError(f'execution.hpc.allocation.{key} is not set, and site profile {label!r} '
+                             f'has no allocation.{key}')
+        allocation[key] = value
+
+
 def load(path: str | Path) -> Config:
     """Load a YAML config; relative paths resolve against the config file's directory."""
     path = Path(path).resolve()
-    cfg = Config.model_validate(yaml.safe_load(path.read_text()))
+    raw = yaml.safe_load(path.read_text()) or {}
+    found = _find_site_profile(raw.get('site_profile'))
+    site_profile = None
+    if found:
+        label, site_profile = found
+        _apply_site_profile(raw, label, site_profile)
+    cfg = Config.model_validate(raw, context={'site_profile': site_profile})
     here = path.parent
 
     def fix(p: Path) -> Path:
