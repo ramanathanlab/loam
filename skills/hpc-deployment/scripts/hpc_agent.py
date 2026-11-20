@@ -32,6 +32,7 @@ import tempfile
 import time
 import uuid
 from contextlib import aclosing
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Mapping
@@ -47,9 +48,9 @@ try:
     from ensemble_launcher import EnsembleLauncher
     from ensemble_launcher.config import (
         LauncherConfig,
+        MPIConfig,
         PolicyConfig,
-        aurora_config,
-        polaris_config,
+        SystemConfig,
     )
     from ensemble_launcher.ensemble import Task
     from ensemble_launcher.orchestrator import ClusterClient
@@ -85,7 +86,7 @@ _TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
 def _device_pin() -> str:
-    """The accelerator this process is pinned to: ZE_AFFINITY_MASK (Aurora) or CUDA_VISIBLE_DEVICES."""
+    """The accelerator this process is pinned to: ZE_AFFINITY_MASK (Intel) or CUDA_VISIBLE_DEVICES."""
     return os.environ.get("ZE_AFFINITY_MASK", os.environ.get("CUDA_VISIBLE_DEVICES", ""))
 
 
@@ -350,22 +351,67 @@ class HpcAgent(Agent):
         )
 
 
+# Written by loam.systems.System.environment(); this side can't import loam.
+_SYSTEM_ENV = ("HPC_CPU_IDS", "HPC_GPU_IDS", "HPC_GPU_PIN_VAR", "HPC_NODE_DISCOVERY", "HPC_MPI_FLAVOR")
+
+
+@dataclass(frozen=True)
+class SystemSpec:
+    """One System's node shape and launch mechanics, as loam spelled them out.
+
+    Read from the deployment environment (loam.systems) so this agent never
+    looks a System up by name: a new System needs no change here.
+    """
+    cpu_ids: tuple[int, ...]
+    gpu_ids: tuple[int | str, ...]
+    gpu_pin_var: str
+    node_discovery: str
+    mpi_flavor: str
+
+    @classmethod
+    def from_environment(cls, environ: Mapping[str, str]) -> SystemSpec:
+        missing = [name for name in _SYSTEM_ENV if not environ.get(name)]
+        if missing:
+            raise RuntimeError(f"deployment environment is missing {', '.join(missing)}; "
+                               "loam generates these from execution.hpc.system")
+        if environ["HPC_NODE_DISCOVERY"] not in _NODE_DISCOVERY:
+            raise RuntimeError(f"unsupported HPC_NODE_DISCOVERY {environ['HPC_NODE_DISCOVERY']!r}")
+        return cls(
+            cpu_ids=tuple(json.loads(environ["HPC_CPU_IDS"])),
+            gpu_ids=tuple(json.loads(environ["HPC_GPU_IDS"])),
+            gpu_pin_var=environ["HPC_GPU_PIN_VAR"],
+            node_discovery=environ["HPC_NODE_DISCOVERY"],
+            mpi_flavor=environ["HPC_MPI_FLAVOR"],
+        )
+
+
+def _pbs_nodefile_nodes(environ: Mapping[str, str]) -> list[str]:
+    """Short hostnames from the PBS node file, or this host outside an allocation (as EL's get_nodes)."""
+    nodefile = environ.get("PBS_NODEFILE")
+    lines = Path(nodefile).read_text().splitlines() if nodefile else []
+    nodes = [line.strip().split(".")[0] for line in lines if line.strip()]
+    return nodes or [socket.gethostname()]
+
+
+_NODE_DISCOVERY = {"pbs-nodefile": _pbs_nodefile_nodes}
+
+
+def discover_nodes(method: str, environ: Mapping[str, str]) -> list[str]:
+    """The allocation's nodes, found the way the System says to."""
+    return _NODE_DISCOVERY[method](environ)
+
+
 class HpcClusterAgent(Agent):
     """Owns the lifecycle of one EL cluster; stopping this agent stops the cluster."""
-    def __init__(self, base_dir: str, ckpt_dir: str, nnodes: int,
-                 system: Literal["aurora", "polaris"],
+    def __init__(self, base_dir: str, ckpt_dir: str, nnodes: int, spec: SystemSpec,
                  task_executor_name: list[str] | None = None):
         super().__init__()
         self.ckpt_dir = str(Path(base_dir, ckpt_dir))
-        if system == "aurora":
-            self.system_config = aurora_config
-            gpu_selector = "ZE_AFFINITY_MASK"
-        elif system == "polaris":
-            self.system_config = polaris_config
-            gpu_selector = "CUDA_VISIBLE_DEVICES"
-        else:
-            raise ValueError(f"unsupported system {system!r}; expected 'aurora' or 'polaris'")
-
+        self.spec = spec
+        self.system_config = SystemConfig(
+            name="loam", ncpus=len(spec.cpu_ids), ngpus=len(spec.gpu_ids),
+            cpus=list(spec.cpu_ids), gpus=list(spec.gpu_ids),
+        )
         self.launcher_config = LauncherConfig(
             child_executor_name="async_mpi",
             task_executor_name=task_executor_name or ["async_processpool"],
@@ -373,11 +419,12 @@ class HpcClusterAgent(Agent):
             checkpoint_dir=self.ckpt_dir,
             task_flush_interval=0.5,
             result_flush_interval=0.5,
-            gpu_selector=gpu_selector,
+            gpu_selector=spec.gpu_pin_var,
             master_logs=True,
             children_scheduler_policy="fixed_leafs_children_policy",
             policy_config=PolicyConfig(nlevels=2, leaf_nodes=nnodes),
             log_dir=str(Path(base_dir, "logs")),
+            mpi_config=MPIConfig(flavor=spec.mpi_flavor),
         )
         self._el = None
 
@@ -385,10 +432,12 @@ class HpcClusterAgent(Agent):
         # start()/stop() block (fork + sleep; terminate/join up to 30s+); run
         # them off the event loop so the agent keeps reading its mailbox and
         # heartbeating.
+        # Runs on the worker, inside the allocation: only here are its nodes visible.
         def start() -> EnsembleLauncher:
             el = EnsembleLauncher(ensemble_file={},
                                   system_config=self.system_config,
-                                  launcher_config=self.launcher_config)
+                                  launcher_config=self.launcher_config,
+                                  Nodes=discover_nodes(self.spec.node_discovery, os.environ))
             el.start()
             return el
 

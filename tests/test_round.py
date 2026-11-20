@@ -361,8 +361,51 @@ def test_managed_hpc_yaml_resolves_script_and_generates_canonical_environment(tm
         'HPC_MCP_TRANSPORT': 'http',
         'HPC_MCP_HOST': '0.0.0.0',
         'HPC_MCP_PORT': '8765',
+        # The System, spelled out so nothing downstream looks Aurora up by name.
+        # Cores 0 and 52 are left to the OS, as in ensemble_launcher's aurora_config.
+        'HPC_CPU_IDS': json.dumps([*range(1, 52), *range(53, 104)], separators=(',', ':')),
+        'HPC_GPU_IDS': '["0","1","2","3","4","5","6","7","8","9","10","11"]',
+        'HPC_GPU_PIN_VAR': 'ZE_AFFINITY_MASK',
+        'HPC_NODE_DISCOVERY': 'pbs-nodefile',
+        'HPC_MPI_FLAVOR': 'mpich',
     }
     assert not any(token in key.upper() for key in environment for token in ('SECRET', 'TOKEN', 'PASSWORD', 'KEY'))
+
+
+def test_managed_hpc_polaris_environment_spells_out_its_system(tmp_path):
+    values, _ = hpc_config_values(tmp_path)
+    values['execution']['hpc']['system'] = 'polaris'
+
+    environment = Config.model_validate(values).execution.hpc.environment()
+
+    assert environment['HPC_SYSTEM'] == 'polaris'
+    # Matches ensemble_launcher's polaris_config: 32 cores, four A100s pinned by CUDA index.
+    assert json.loads(environment['HPC_CPU_IDS']) == list(range(32))
+    assert environment['HPC_GPU_IDS'] == '[0,1,2,3]'
+    assert environment['HPC_GPU_PIN_VAR'] == 'CUDA_VISIBLE_DEVICES'
+    assert environment['HPC_NODE_DISCOVERY'] == 'pbs-nodefile'
+    assert environment['HPC_MPI_FLAVOR'] == 'mpich'
+    assert json.loads(environment['HPC_ENDPOINT_CONFIG_JSON']) == {
+        'worker_init': 'module load tools',
+        'account': 'project',
+        'queue': 'debug',
+        'walltime': '01:02:03',
+        'nodes_per_block': 2,
+        'init_blocks': 1,
+        'min_blocks': 1,
+        'max_blocks': 3,
+        'max_idletime': 90,
+        'available_accelerators': 4,
+        'max_workers_per_node': 4,
+        'base_dir': '/campaign/loam',
+    }
+
+
+def test_managed_hpc_rejects_an_undefined_system(tmp_path):
+    values, _ = hpc_config_values(tmp_path)
+    values['execution']['hpc']['system'] = 'frontier'
+    with pytest.raises(ValueError, match="'aurora' or 'polaris'"):
+        Config.model_validate(values)
 
 
 @pytest.mark.parametrize(('change', 'message'), [

@@ -2,11 +2,12 @@
 name: hpc-deployment
 description: >-
   Deploy a local seven-tool MCP server backed by a user-supplied Globus
-  Compute endpoint and an Ensemble Launcher cluster on PBSPro resources.
+  Compute endpoint and an Ensemble Launcher cluster on the System's batch
+  allocation (Aurora, Polaris).
 license: Apache-2.0
 ---
 
-# Globus Compute → PBSPro → Academy-agent MCP deployment
+# Globus Compute → batch allocation → Academy-agent MCP deployment
 
 ## Sole responsibility
 
@@ -14,7 +15,7 @@ This skill does exactly this, and nothing else:
 
 1. Start a **local FastMCP server**. Cluster mode exposes exactly seven tools: `run_code`, `write_files`, `inspect_filesystem`, `run_batch`, `batch_status`, `list_batches`, and `pool_status`. Direct mode omits `run_batch`.
 2. The server uses a **Globus Compute `Executor`** targeting the **endpoint UUID supplied by the user**.
-3. The submitted endpoint job uses its **Parsl `PBSProProvider`** to request the **user-supplied allocation** (`account`, `queue`, `walltime`, `nodes_per_block`, block count, filesystem/place settings, and worker environment).
+3. The submitted endpoint job uses its **Parsl provider** (`PBSProProvider` on the PBS Systems, Aurora and Polaris) to request the **user-supplied allocation** (`account`, `queue`, `walltime`, `nodes_per_block`, block count, filesystem/place settings, and worker environment).
 4. Within that allocation, start Academy agents in one of two modes. **Direct mode** starts one `HpcAgent` per pinned GPU/tile, and the agent runs payloads itself. **Cluster mode** (`create_server(cluster=True)`, used by the executable entry point) starts one `HpcClusterAgent` that runs an Ensemble Launcher cluster, plus exactly `HPC_POOL_SIZE` unpinned `HpcClientAgent`s that submit into it. Server startup fails and cleans up if the complete requested client pool is unavailable.
 
 The harness never uses SSH, `qsub`, `qstat`, `sbatch`, or a campaign-local scheduler wrapper to execute campaign work. The endpoint and its Parsl provider own scheduling. The agent has no domain-specific actions and no arbitrary shell action.
@@ -32,7 +33,7 @@ The user-authored loam YAML is the sole campaign settings file. Select
 | `worker_code_dir` | `HPC_LOAM_HOME` |
 | `campaign_id` | `HPC_CAMPAIGN_ID` |
 | `exchange_url` | `ACADEMY_EXCHANGE_URL` |
-| `system` | `HPC_SYSTEM` |
+| `system` | `HPC_SYSTEM`, plus the System spelled out: `HPC_CPU_IDS`, `HPC_GPU_IDS`, `HPC_GPU_PIN_VAR`, `HPC_NODE_DISCOVERY`, `HPC_MPI_FLAVOR` |
 | `allocation.nodes` | `HPC_NNODES` |
 | `inspect_roots` | `HPC_INSPECT_ROOTS` |
 | `cold_endpoint_timeout` | `HPC_COLD_ENDPOINT_TIMEOUT` |
@@ -66,11 +67,18 @@ limits. A permissive schema alone does not prove that the template supports the
 request. No endpoint or queue has been verified merely because it appears in a
 configuration example.
 
-For Aurora direct mode, request 12 addressable tiles per node and pin each
-worker with `ZE_FLAT_DEVICE_HIERARCHY=FLAT` plus a distinct
-`ZE_AFFINITY_MASK`; `pool_size` is requested nodes × 12 unless the endpoint
-exposes another count. In cluster mode EL owns accelerator placement and
-`pool_size` is the configured client-agent count, not the tile count.
+Each System is defined once in `loam.systems`: its cores, accelerators, the
+variable that pins a process to one accelerator, how nodes are found, and the
+MPI launcher. Loam spells these out in the generated environment, and neither
+the server nor the cluster agent branches on `HPC_SYSTEM`; it is only a label.
+Adding a System means adding a definition there, not editing these scripts.
+
+In direct mode, request one worker per accelerator in `HPC_GPU_IDS` and pin each
+with a distinct value of `HPC_GPU_PIN_VAR`; `pool_size` is requested nodes ×
+accelerators per node unless the endpoint exposes another count. System-specific
+pinning details live in the per-System references (`references/aurora.md`). In
+cluster mode EL owns accelerator placement and `pool_size` is the configured
+client-agent count, not the accelerator count.
 
 ## Architecture
 
@@ -80,7 +88,7 @@ MCP harness
   → Globus Compute Executor(endpoint_id=HPC_GLOBUS_ENDPOINT_ID,
                             user_endpoint_config=HPC_ENDPOINT_CONFIG_JSON)
   → endpoint manager / user endpoint
-  → Parsl PBSProProvider allocation
+  → the System's Parsl provider allocation (PBSProProvider on Aurora/Polaris)
   → direct mode:  one worker per pinned GPU/tile
                   → one Academy HpcAgent per worker
   → cluster mode: HpcClusterAgent → EL cluster (owns GPU placement)
@@ -88,13 +96,13 @@ MCP harness
   → run_code for cheap single calls; run_batch for campaign work
 
 ```
-The endpoint UUID routes the request; it does not select the queue. The endpoint's accepted user configuration is rendered by its Parsl `PBSProProvider` into the PBS request. In multi-user deployments, record both the manager UUID and the spawned user-endpoint UUID: they are different by design.
+The endpoint UUID routes the request; it does not select the queue. The endpoint's accepted user configuration is rendered by its Parsl provider into the scheduler request. In multi-user deployments, record both the manager UUID and the spawned user-endpoint UUID: they are different by design.
 
 ## Endpoint discovery and flex-scaling validation
 
-When the user asks which Polaris endpoint to use or whether a single endpoint supports varying queues, node counts, and walltimes, SSH to the endpoint host and inspect `~/.globus_compute/` conservatively. Identify candidates from endpoint directories, read their `endpoint.json`, `config.yaml`, `user_config_schema.json`, and `user_config_template.yaml.j2`, then check recent endpoint logs/process state. Do not expose credential files, certificates, or token data.
+When the user asks which endpoint to use or whether a single endpoint supports varying queues, node counts, and walltimes, SSH to the endpoint host and inspect `~/.globus_compute/` conservatively. Identify candidates from endpoint directories, read their `endpoint.json`, `config.yaml`, `user_config_schema.json`, and `user_config_template.yaml.j2`, then check recent endpoint logs/process state. Do not expose credential files, certificates, or token data.
 
-A permissive schema does **not** establish flex scaling on its own. Confirm that the per-submission Jinja template actually renders `user_endpoint_config` into the Parsl PBSProProvider fields for `queue`, `walltime`, `nodes_per_block`, blocks, account, and PBS filesystem/placement options. A deliberately minimal manager `config.yaml` with its engine defined in that template is an expected flex-scaling architecture, not a defect. Validate live queue constraints with `qstat -Q` and, when selecting a queue, `qstat -Qf <queue>`; route queues can impose node-count minima that make an otherwise valid request fail.
+A permissive schema does **not** establish flex scaling on its own. Confirm that the per-submission Jinja template actually renders `user_endpoint_config` into the Parsl provider fields (here `PBSProProvider`) for `queue`, `walltime`, `nodes_per_block`, blocks, account, and PBS filesystem/placement options. A deliberately minimal manager `config.yaml` with its engine defined in that template is an expected flex-scaling architecture, not a defect. On the PBS Systems, validate live queue constraints with `qstat -Q` and, when selecting a queue, `qstat -Qf <queue>`; route queues can impose node-count minima that make an otherwise valid request fail.
 
 Record the verified manager UUID in campaign YAML as `execution.hpc.endpoint_id`; never hard-code a user endpoint UUID or site-specific resource defaults into this skill. A directory on disk does not prove an endpoint is healthy—prefer current logs/process state over historical registrations.
 
@@ -103,9 +111,9 @@ See `references/polaris-globus-compute-flex-scaling.md` for the concise Polaris 
 ## Deployment and verification
 
 1. On the endpoint host, inspect the live endpoint user-config schema/template and queue limits. Confirm that the requested allocation keys are accepted and rendered, the intended environment is activated, `HPC_BASE_DIR` is importable, and accelerator placement is correct. Two checks that are cheap here and expensive later:
-   - `pbs_rstat` — an `M*` maintenance reservation in state `RN` means no block will start, however healthy everything looks. `qstat -Bf` still reports `scheduling = True`, the queue is still `enabled`/`started`, and `qsub` is still accepted; parsl logs one `scale_out_facade` and goes silent, because the template sets `block_error_handler: false`. It is indistinguishable from a long queue wait until you look here.
+   - `pbs_rstat` (PBS Systems) — an `M*` maintenance reservation in state `RN` means no block will start, however healthy everything looks. `qstat -Bf` still reports `scheduling = True`, the queue is still `enabled`/`started`, and `qsub` is still accepted; parsl logs one `scale_out_facade` and goes silent, because the template sets `block_error_handler: false`. It is indistinguishable from a long queue wait until you look here.
    - `HPC_BASE_DIR` must already EXIST on the shared filesystem. `HpcClusterAgent.__init__` passes `ckpt_dir` and `log_dir` under it straight to EL with no `mkdir`, and nothing else creates them.
-2. Create/reuse a local uv environment containing `fastmcp`, `globus-compute-sdk`, `academy-py`, and `ensemble-launcher`. The last is needed even though the launcher only ever runs on a worker: `HpcClusterAgent.__init__` reads `ensemble_launcher.config.aurora_config`, and Academy constructs that agent LOCALLY before shipping it, so without it the server dies with `NameError: name 'aurora_config' is not defined`. The base install suffices; `mpi4py` lives in EL's `hpc` extra.
+2. Create/reuse a local uv environment containing `fastmcp`, `globus-compute-sdk`, `academy-py`, and `ensemble-launcher`. The last is needed even though the launcher only ever runs on a worker: `HpcClusterAgent.__init__` builds EL's `SystemConfig` and `LauncherConfig` from the generated environment, and Academy constructs that agent LOCALLY before shipping it, so without EL the server dies with a `NameError` before submitting anything. The agent finds its nodes later, on the worker, the way `HPC_NODE_DISCOVERY` says (`PBS_NODEFILE` on PBS Systems). The base install suffices; `mpi4py` lives in EL's `hpc` extra.
 3. Put the reviewed managed-HPC inputs in the campaign YAML and run `python -m loam CONFIG.yaml`. Loam generates the server's internal environment and starts `server_script`; do not source a campaign environment file or launch a separately configured server.
 4. The server validates its generated environment and imports its dependencies before submitting anything, so bad configuration fails without costing a job. Its Academy launch manager uses the Globus Compute `Executor` created with the supplied UUID and endpoint configuration. A local `ThreadPoolExecutor` is invalid: it launches agents locally.
    A multi-user endpoint forks the per-config user endpoint on demand, and the first submit against a cold one is answered `422 ENDPOINT_NOT_ONLINE`, which the Globus SDK does not retry. `ClusterPool` therefore retries just that code, bounded by the YAML's `cold_endpoint_timeout` (default 300s) starting at `cold_endpoint_backoff` (default 5s); every other error still aborts on the first attempt. Set these in the campaign YAML like every other input — loam renders them into the generated environment, and no `HPC_*` variable is ever a user-facing knob. Do not widen this into a general retry — it would hide a misconfiguration behind minutes of silence. Note the symptom when it is NOT handled: the launch dies, but the user endpoint keeps starting and queues a block, stranding an allocation with no client attached.
@@ -168,7 +176,7 @@ own timeout instead of triggering a rebuild.
 Distinguish:
 
 - **Submit rejection:** no endpoint task was accepted—inspect UUID, auth, and endpoint configuration.
-- **Scheduler wait:** PBS block is queued—do not blindly resubmit. Scheduler-wait allowance is independent of payload timeout.
+- **Scheduler wait:** the batch job (block) is queued—do not blindly resubmit. Scheduler-wait allowance is independent of payload timeout.
 - **Payload failure:** an agent returned a normal result with nonzero `returncode`—use stderr to fix/retry only that payload.
 - **Cluster loss (cluster mode):** the cluster agent stopped answering—the pool rebuilds it automatically; see "Self-healing". Do not restart the server unless healing has reported itself unrecoverable.
 
@@ -203,8 +211,8 @@ The action resolves paths and restricts them to the explicit allowed roots: `HPC
 
 ## Size batches from observed allocation state
 
-Call `pool_status` instead of assuming a node count. On Aurora a
-`run_batch(gpus=1)` row uses one tile and `pool_status.total_tiles` is the
+Call `pool_status` instead of assuming a node count. A `run_batch(gpus=1)` row
+uses one accelerator (one tile on Aurora, one GPU on Polaris) and `pool_status.total_tiles` is the
 configured one-wave capacity. This is not a live-free-tile count: inspect
 `list_batches` and `batch_status` for work already in flight.
 

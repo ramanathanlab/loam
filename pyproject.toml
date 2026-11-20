@@ -18,12 +18,12 @@ dev = ["pytest"]
 # execution.mode: hpc only. The local process starts skills/hpc-deployment's
 # mcp_server.py and must import its dependencies.
 #
-# ensemble-launcher is here for ONE reason: HpcClusterAgent.__init__ reads
-# ensemble_launcher.config.aurora_config, and Academy constructs that agent
-# LOCALLY (mcp_server.py launch_cluster) before shipping it to the endpoint.
+# ensemble-launcher is here for ONE reason: HpcClusterAgent.__init__ builds
+# EL's SystemConfig/LauncherConfig, and Academy constructs that agent LOCALLY
+# (mcp_server.py launch_cluster) before shipping it to the endpoint.
 # hpc_agent.py guards the EL import with try/except ModuleNotFoundError ->
 # EL_AVAILABLE, but __init__ does not check that flag, so without EL installed
-# here the server dies with `NameError: name 'aurora_config' is not defined`
+# here the server dies with `NameError: name 'SystemConfig' is not defined`
 # before any job is submitted. Only the base install is needed -- mpi4py lives
 # in EL's `hpc` extra and the launcher itself only ever runs on the worker.
 hpc = ["fastmcp", "globus-compute-sdk", "academy-py", "ensemble-launcher"]

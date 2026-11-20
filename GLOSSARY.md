@@ -19,3 +19,13 @@ _Avoid_: rejection, critique
 **Lesson memory**:
 The store of lessons shared by every campaign, which the orchestrator alone writes to after each round and recalls from into validator and code-generator prompts.
 _Avoid_: bank, knowledge base, agent memory
+
+## Deployment
+
+**System**:
+An HPC machine as every user sees it (Aurora, Polaris, Jupiter): its scheduler, node shape, accelerator type, and how work is launched on it.
+_Avoid_: machine, cluster, platform, site
+
+**Site profile**:
+One project's or user's setup on a System: allocation account, filesystem roots, software environments, caches, model-weight locations, and inference endpoints.
+_Avoid_: site, site config, user config, environment
