@@ -24,7 +24,7 @@ from academy.manager import Manager
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from globus_compute_sdk import Executor
-from hpc_agent import HpcAgent, HpcClientAgent, HpcClusterAgent
+from hpc_agent import SystemSpec, HpcAgent, HpcClientAgent, HpcClusterAgent
 from pool_manager import CampaignPool, ClusterPool
 
 import inspect as _inspect
@@ -73,11 +73,10 @@ if not isinstance(ENDPOINT_CONFIG, dict):
 if POOL_SIZE < 1:
     raise RuntimeError("HPC_POOL_SIZE must be positive")
 INSPECT_ROOTS = [item for item in os.environ.get("HPC_INSPECT_ROOTS", "").split(":") if item]
-# Selects the EL SystemConfig and the GPU-pinning variable the cluster agent
-# hands to tasks: ZE_AFFINITY_MASK on Aurora, CUDA_VISIBLE_DEVICES on Polaris.
-SYSTEM = os.environ.get("HPC_SYSTEM", "polaris")
-if SYSTEM not in ("aurora", "polaris"):
-    raise RuntimeError("HPC_SYSTEM must be 'aurora' or 'polaris'")
+# A label for pool_status only. The System's node shape and launch mechanics
+# arrive spelled out (HPC_CPU_IDS, HPC_GPU_IDS, ...; see loam.systems), so this
+# server never branches on which System it is.
+SYSTEM = os.environ.get("HPC_SYSTEM", "")
 # How long a listen stream stays open before a clean reconnect (academy default
 # 60s). Shorter clears stale readers sooner when a proxy severs our side, at the
 # cost of a few extra listen requests per agent per minute.
@@ -170,6 +169,8 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
     # rebuild so a new ClusterClient can't bind the dead master's checkpoint.
     if cluster and nnodes is None:
         raise ValueError("create_server(cluster=True) needs nnodes")
+    # Parsed before anything is submitted, so a missing System fails for free.
+    spec = SystemSpec.from_environment(os.environ)
 
     @asynccontextmanager
     async def lifespan(server: FastMCP):
@@ -223,7 +224,7 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
                     CAMPAIGN_ID, BASE_DIR, generation_ckpt_dir, INSPECT_ROOTS), **named)
 
             async def launch_cluster(generation_ckpt_dir: str) -> Handle:
-                return await launch(HpcClusterAgent(BASE_DIR, generation_ckpt_dir, nnodes, SYSTEM))
+                return await launch(HpcClusterAgent(BASE_DIR, generation_ckpt_dir, nnodes, spec))
 
             # Each tool forwards to the same-named action on the next pool agent;
             # failures come back as ToolError so the harness gets a readable message.
@@ -380,7 +381,7 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
                 not current free/busy; combine with list_batches / batch_status to see
                 what is already in flight. Instant, never queues behind worker calls.
                 """
-                per_node = {"aurora": 12, "polaris": 4}.get(SYSTEM, 12)
+                per_node = len(spec.gpu_ids)
                 total_tiles = (nnodes * per_node) if cluster else POOL_SIZE
                 cfg = ENDPOINT_CONFIG
 

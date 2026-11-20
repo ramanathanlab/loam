@@ -12,6 +12,8 @@ from urllib.parse import urlsplit
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .systems import SYSTEMS, SystemName
+
 Role = Literal['validator', 'code_generator', 'reviewer', 'reasoner']
 
 
@@ -88,7 +90,7 @@ class HPCAllocation(ConfigModel):
 class HPCDeployment(ConfigModel):
     endpoint_id: NonEmptyStr
     campaign_id: NonEmptyStr
-    system: Literal['aurora', 'polaris']
+    system: SystemName
     exchange_url: NonEmptyStr
     base_dir: str
     worker_code_dir: str
@@ -122,7 +124,8 @@ class HPCDeployment(ConfigModel):
         return self
 
     def environment(self) -> dict[str, str]:
-        accelerators = 12 if self.system == 'aurora' else 4
+        definition = SYSTEMS[self.system]
+        accelerators = definition.gpus_per_node
         allocation = self.allocation
         endpoint_config = {
             **allocation.endpoint_options,
@@ -154,6 +157,7 @@ class HPCDeployment(ConfigModel):
             'HPC_MCP_TRANSPORT': 'http',
             'HPC_MCP_HOST': self.host,
             'HPC_MCP_PORT': str(self.port),
+            **definition.environment(),
         }
 
 
