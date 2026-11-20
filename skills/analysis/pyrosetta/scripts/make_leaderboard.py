@@ -7,7 +7,8 @@ Writes /path/to/pdb_dir/leaderboard.json with entries
   {"binder_id": <file stem>, "pdb": <abs path>, "score": 0.0}
 (the repo script only reads binder_id, pdb (basename is re-joined to the dir) and score).
 """
-import argparse, json
+import argparse
+import json
 from pathlib import Path
 
 ap = argparse.ArgumentParser()

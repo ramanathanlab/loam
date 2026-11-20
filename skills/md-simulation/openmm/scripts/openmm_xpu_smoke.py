@@ -2,10 +2,21 @@
 """Minimal OpenMM MD on Intel PVC (Aurora) via the OpenCL platform.
 Usage: ZE_AFFINITY_MASK=0 python openmm_xpu_smoke.py <prmtop> <inpcrd> [nsteps] [outdir]
 """
-import sys, time, os
-from openmm.app import *
-from openmm import *
-from openmm.unit import *
+import os
+import sys
+import time
+
+from openmm import LangevinMiddleIntegrator, Platform
+from openmm.app import (
+    PME,
+    AmberInpcrdFile,
+    AmberPrmtopFile,
+    DCDReporter,
+    HBonds,
+    Simulation,
+    StateDataReporter,
+)
+from openmm.unit import kelvin, nanometer, picosecond, picoseconds
 
 prmtop_f, inpcrd_f = sys.argv[1], sys.argv[2]
 nsteps = int(sys.argv[3]) if len(sys.argv) > 3 else 5000

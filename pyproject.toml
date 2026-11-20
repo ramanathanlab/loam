@@ -47,3 +47,11 @@ loam = ["prompts/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Bare `pytest` imports the checkout it runs in (e.g. a worktree), not whatever
+# loam happens to be installed in the venv.
+pythonpath = ["."]
+
+[tool.ruff]
+# The version CI runs (`uvx ruff@0.14.2 check .`); ruff refuses to run under
+# any other. Rule set is ruff's defaults.
+required-version = "==0.14.2"

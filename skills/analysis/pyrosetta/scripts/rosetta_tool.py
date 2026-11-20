@@ -9,7 +9,11 @@ Run with the pyrosetta_energy venv:
   $PY rosetta_tool.py interface in.pdb --partners A_B [--pack-separated] [--pack-input] [--json out.json]
 All energies are ref2015 Rosetta Energy Units (REU). Only numpy is in the venv (no pandas).
 """
-import argparse, csv, json, sys, time
+import argparse
+import csv
+import json
+import sys
+import time
 
 
 def init(extra=""):
@@ -30,7 +34,6 @@ def cmd_score(a):
     pose = load(pr, a.pdb)
     sfxn = pr.create_score_function(a.sfxn)
     total = sfxn(pose)
-    from pyrosetta.rosetta.core.scoring import ScoreType
     emap = pose.energies().total_energies()
     terms = {}
     for st in sfxn.get_nonzero_weighted_scoretypes():
@@ -67,7 +70,8 @@ def cmd_perres(a):
         rows.append(row)
     with open(a.csv, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        w.writeheader(); w.writerows(rows)
+        w.writeheader()
+        w.writerows(rows)
     worst = sorted(rows, key=lambda r: -r["total"])[:5]
     print("sum(per-res totals)=%.2f  pose total=%.2f" % (sum(r["total"] for r in rows), sfxn(pose)))
     print("worst residues:", [(r["chain"], r["pdb_resnum"], r["name3"], round(r["total"], 2)) for r in worst])

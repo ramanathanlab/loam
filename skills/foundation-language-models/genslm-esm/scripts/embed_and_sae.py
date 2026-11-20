@@ -3,7 +3,9 @@
 Usage:
   python embed_and_sae.py --out OUTDIR [--sae-dir CKPT/layerNN] [--layer 32]
 """
-import argparse, json, time
+import argparse
+import json
+import time
 from pathlib import Path
 
 import torch

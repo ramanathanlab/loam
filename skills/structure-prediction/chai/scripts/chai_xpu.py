@@ -41,7 +41,8 @@ def _register_skip_dupes(self, adapter):
 
 _apb.TypeMatcher.register_adapter = _register_skip_dupes
 
-import os, tempfile  # noqa: E402
+import os  # noqa: E402
+import tempfile  # noqa: E402
 import pandas as pd  # noqa: E402
 import chai_lab.data.parsing.msas.aligned_pqt as _apq  # noqa: E402
 import chai_lab.data.dataset.msas.load as _msaload  # noqa: E402
