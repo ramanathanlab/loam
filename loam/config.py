@@ -238,6 +238,43 @@ class TournamentConfig(ConfigModel):
         return self
 
 
+class MemoryConfig(ConfigModel):
+    """Optional cross-campaign lesson memory (Hindsight). Absent: no memory, and nothing changes.
+
+    One bank is shared by every campaign; `campaign` tags what this one retains. Without `url`, loam
+    starts its own `hindsight-api` on the embedded Postgres instance `instance` and stops it at the end.
+    The embedding model is fixed for a database's lifetime: loam refuses to start a database with a
+    different one, because Hindsight would otherwise resize the column under the stored vectors.
+    """
+
+    campaign: NonEmptyStr
+    llm: ModelSpec                 # extracts lessons on retain; any OpenAI-compatible endpoint
+    embeddings: ModelSpec          # embedding model on an OpenAI-compatible endpoint
+    bank: NonEmptyStr = 'loam'
+    url: str | None = None         # an already-running Hindsight server, shared by concurrent campaigns
+    instance: str | None = None    # embedded Postgres instance for the loam-owned server
+    recall_tokens: PositiveInt = 1000      # cap on recalled lesson text per prompt
+    drain_timeout: PositiveFloat = 600.0   # seconds to wait at campaign end for queued retains
+    timeout: PositiveFloat = 60.0          # one memory call (recall, retain submit)
+
+    @model_validator(mode='after')
+    def validate_memory(self):
+        for name in ('llm', 'embeddings'):
+            if not getattr(self, name).base_url:
+                raise ValueError(f'memory.{name} needs a base_url: memory only supports OpenAI-compatible endpoints')
+        if self.url is not None:
+            url = urlsplit(self.url)
+            if url.scheme not in {'http', 'https'} or not url.netloc:
+                raise ValueError('memory.url must be an HTTP(S) URL')
+            if self.instance is not None:
+                raise ValueError('memory.instance only applies to the loam-owned server; drop it when memory.url is set')
+        else:
+            self.instance = self.instance or 'loam-memory'
+            if not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,62}', self.instance):
+                raise ValueError('memory.instance must be lowercase letters, digits, - or _ (max 63 chars)')
+        return self
+
+
 class Config(ConfigModel):
     goal: str                    # path to a markdown goal file, or the goal text itself
     rules: list[Path] = []       # optional campaign rule files, appended to every agent's instructions
@@ -253,6 +290,7 @@ class Config(ConfigModel):
     max_requests: PositiveInt = 200      # LLM requests per agent run (pydantic-ai's default of 50 is too low)
     model_retries: PositiveInt = 8       # SDK retries per LLM request on 429/5xx/connection errors, with backoff
     timeouts: Timeouts = Timeouts()
+    memory: MemoryConfig | None = None   # cross-campaign lessons; see MemoryConfig
 
     @model_validator(mode='after')
     def validate_campaign(self):

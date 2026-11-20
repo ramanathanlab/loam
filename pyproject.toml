@@ -27,6 +27,13 @@ dev = ["pytest"]
 # before any job is submitted. Only the base install is needed -- mpi4py lives
 # in EL's `hpc` extra and the launcher itself only ever runs on the worker.
 hpc = ["fastmcp", "globus-compute-sdk", "academy-py", "ensemble-launcher"]
+# Optional `memory:` block. loam runs `hindsight-api` as its own child process
+# on the embedded Postgres (pg0), with embeddings and LLM served by remote
+# OpenAI-compatible endpoints. hindsight-all is deliberately NOT used: its
+# hindsight-api-slim[all] pulls torch/sentence-transformers onto the laptop.
+# Pinned exactly: loam sets Hindsight's HINDSIGHT_API_* env vars, which are
+# not a stable interface across versions.
+memory = ["hindsight-api-slim[embedded-db]==1.2.3", "hindsight-client==1.2.3"]
 
 [build-system]
 requires = ["setuptools>=68"]
