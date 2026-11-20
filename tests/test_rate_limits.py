@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from loam.config import RateLimits
 from loam.rate_limits import EndpointCooldown, endpoint_cooldown, retry_after, jnana_coscientist
 
 
@@ -88,7 +89,7 @@ def test_sdk_retries_with_cooldown_hooks_and_keeps_request_body(asynchronous):
     import httpx2
     import openai
     calls = []
-    gate = EndpointCooldown('mock-service', jitter=lambda: 0, spacing=0.01)
+    gate = EndpointCooldown('mock-service', RateLimits(recovery_spacing=0.01), jitter=lambda: 0)
     def handler(request):
         calls.append(request.content)
         if len(calls) == 1:

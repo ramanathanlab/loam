@@ -25,7 +25,7 @@ class GenerationTimedOut(RuntimeError):
 
 class Tournament:
     def __init__(self, cfg: TournamentConfig, state_dir: Path, *, model_retries: int = 8,
-                 request_timeout: float = 600, rate_limits: RateLimits | None = None):
+                 request_timeout: float = 600, rate_limits: RateLimits = RateLimits()):
         self.cfg = cfg
         self.model_retries = model_retries
         self.request_timeout = request_timeout

@@ -22,6 +22,30 @@ class ConfigModel(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
+PositiveInt = Annotated[int, Field(gt=0)]
+PositiveFloat = Annotated[float, Field(gt=0)]
+NonEmptyStr = Annotated[str, Field(min_length=1)]
+
+
+class RateLimits(ConfigModel):
+    """Per-endpoint request gate, shared by every agent and Jnana worker in this process that calls one
+    OpenAI-compatible base_url. Seconds unless named otherwise. See loam.rate_limits."""
+
+    model_config = ConfigDict(extra='forbid', frozen=True)  # hashable: one gate per (endpoint, limits)
+
+    requests_per_minute: PositiveFloat | None = None  # steady cap on calls to one endpoint; None: uncapped
+    recovery_spacing: PositiveFloat = 2.0   # gap between calls after a throttle response...
+    recovery_window: PositiveFloat = 60.0   # ...for this long after its cooldown ends
+    backoff: PositiveFloat = 5.0            # first cooldown when a throttle response has no Retry-After; doubles
+    max_backoff: PositiveFloat = 120.0      # cap on that doubling
+
+    @model_validator(mode='after')
+    def validate_rate_limits(self):
+        if self.backoff > self.max_backoff:
+            raise ValueError('rate_limits.backoff must not exceed rate_limits.max_backoff')
+        return self
+
+
 class ModelSpec(ConfigModel):
     """One agent's model. With base_url: any OpenAI-compatible endpoint.
     Without: a pydantic-ai model string such as 'anthropic:claude-opus-5-5' or 'test'."""
@@ -34,7 +58,7 @@ class ModelSpec(ConfigModel):
         key = os.environ.get(self.api_key_env) if self.api_key_env else None
         return key or ('none' if custom_endpoint else None)
 
-    def build(self, rate_limits: RateLimits | None = None):
+    def build(self, rate_limits: RateLimits = RateLimits()):
         """The pydantic-ai model. An endpoint's requests pass its shared rate-limit gate."""
         if not self.base_url:
             return self.model
@@ -58,10 +82,6 @@ class ModelSpec(ConfigModel):
                          api_key=self.api_key(custom_endpoint=self.base_url is not None),
                          base_url=self.base_url, max_tokens=max_tokens,
                          model_adapter={'json_max_tokens': max_tokens})
-
-PositiveInt = Annotated[int, Field(gt=0)]
-PositiveFloat = Annotated[float, Field(gt=0)]
-NonEmptyStr = Annotated[str, Field(min_length=1)]
 
 
 class HPCAllocation(ConfigModel):
@@ -281,25 +301,6 @@ class Timeouts(ConfigModel):
     code_generator: PositiveFloat = 3600
     reviewer: PositiveFloat = 1800
     reasoner: PositiveFloat = 1800
-
-
-class RateLimits(ConfigModel):
-    """Per-endpoint request gate, shared by every agent and Jnana worker in this process that calls one
-    OpenAI-compatible base_url. Seconds unless named otherwise. See loam.rate_limits."""
-
-    model_config = ConfigDict(extra='forbid', frozen=True)  # hashable: one gate per (endpoint, limits)
-
-    requests_per_minute: PositiveFloat | None = None  # steady cap on calls to one endpoint; None: uncapped
-    recovery_spacing: PositiveFloat = 2.0   # gap between calls after a throttle response...
-    recovery_window: PositiveFloat = 60.0   # ...for this long after its cooldown ends
-    backoff: PositiveFloat = 5.0            # first cooldown when a throttle response has no Retry-After; doubles
-    max_backoff: PositiveFloat = 120.0      # cap on that doubling
-
-    @model_validator(mode='after')
-    def validate_rate_limits(self):
-        if self.backoff > self.max_backoff:
-            raise ValueError('rate_limits.backoff must not exceed rate_limits.max_backoff')
-        return self
 
 
 class TournamentConfig(ConfigModel):
