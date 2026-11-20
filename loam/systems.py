@@ -1,9 +1,15 @@
-"""Systems: the HPC machines loam can deploy onto, as everyone sees them.
+"""Systems: every System loam can deploy onto, as every user sees it.
 
 A System is defined once, here, and resolved into explicit deployment
 environment variables. Nothing downstream (the MCP server, the cluster agent)
 looks a System up by name, so adding one is a new entry in SYSTEMS rather than
 another branch in every consumer. See docs/adr/0004.
+
+The independent truth for a System's shape is ensemble_launcher itself:
+`ensemble_launcher.config.get_system_config` (cores, accelerators) and
+`ensemble_launcher.helper_functions.get_nodes` (PBS node discovery).
+The deployment environment written here is read back, without importing
+loam, by `SystemSpec` in skills/hpc-deployment/scripts/hpc_agent.py.
 """
 
 from __future__ import annotations

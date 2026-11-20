@@ -16,3 +16,6 @@ Judgement-call rules for loam: the ones a linter cannot check. Lint and style ru
 
 5. **Round behaviour is tested through `Campaign`, with scripted `FunctionModel`s and injected fakes.** Tests use no real models, network or Jnana checkout.
    Source: `tests/test_round.py`, `tests/test_memory.py`.
+
+6. **Names and docs use the terms in `GLOSSARY.md`.** A word listed there under _Avoid_ is a finding unless it names a different, existing concept (EL's "cluster mode" is not a System).
+   Source: `GLOSSARY.md`.
