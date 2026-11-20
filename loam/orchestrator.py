@@ -15,11 +15,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
 
 from . import execution, reconcile, skills, steering
 from .agents import Agents, build
 from .config import Config
 from .execution import Deps
+from .memory import Memory, lessons, recall_block
+from .memory import from_config as memory_from_config
 from .schemas import Hypothesis, ValidationReport
 from .tournament import GenerationTimedOut, Tournament
 from .workspace import Workspace, write_json
@@ -28,25 +31,50 @@ log = logging.getLogger('loam')
 
 
 class Campaign:
-    def __init__(self, cfg: Config, agents: Agents | None = None, tournament: Tournament | None = None):
+    def __init__(self, cfg: Config, agents: Agents | None = None, tournament: Tournament | None = None,
+                 memory: Memory | None = None):
         self.cfg = cfg
         self.skills = skills.discover(cfg.skills_dirs)
         self.agents = agents or build(cfg)
         self.tournament = tournament or Tournament(cfg.tournament, cfg.state_dir)
+        self.memory = memory if memory is not None else memory_from_config(cfg)
         self.rounds_dir = cfg.state_dir / 'rounds'
         self.ledger = cfg.state_dir / 'ledger.jsonl'
         self.rounds_dir.mkdir(parents=True, exist_ok=True)
 
     async def run(self, rounds: int = 1) -> None:
-        if self.cfg.execution.mode in {'mcp', 'hpc'}:
-            await execution.check_mcp_tools(self.cfg)
-        for _ in range(rounds):
-            await self.round()
+        try:
+            await self.memory.start()  # unguarded: misconfigured memory stops the campaign before round 1
+            await self.retain_latest()
+            if self.cfg.execution.mode in {'mcp', 'hpc'}:
+                await execution.check_mcp_tools(self.cfg)
+            for _ in range(rounds):
+                await self.round()
+        finally:
+            try:
+                await self.memory.close()
+            except Exception:
+                log.exception('memory close failed')
+
+    def completed_rounds(self) -> list[tuple[int, Path]]:
+        return [(int(path.stem.removeprefix('round-')), path) for path in self.rounds_dir.glob('round-*.json')
+                if path.stem.removeprefix('round-').isdigit()]
+
+    async def retain_latest(self) -> None:
+        """Retain the latest completed round's lessons again: a crash between writing a round record and
+        retaining its lessons would otherwise lose them. Idempotent: retain replaces by document id."""
+        latest = max(self.completed_rounds(), default=None)
+        if latest is not None:
+            await self.retain(json.loads(latest[1].read_text()))
+
+    async def retain(self, record: dict) -> None:
+        try:
+            await self.memory.retain(lessons(record))
+        except Exception:  # a memory outage never costs a round
+            log.exception('round %d: retaining lessons failed', record['round'])
 
     async def round(self) -> dict:
-        done = list(self.rounds_dir.glob('round-*.json'))
-        completed = [(int(path.stem.removeprefix('round-')), path) for path in done
-                     if path.stem.removeprefix('round-').isdigit()]
+        completed = self.completed_rounds()
         n = max((number for number, _ in completed), default=0) + 1
         previous = max(completed, default=None)
         brief = json.loads(previous[1].read_text())['brief']['tournament_brief'] if previous else ''
@@ -65,6 +93,7 @@ class Campaign:
                   'steering': table, 'brief': new_brief}
         path = self.rounds_dir / f'round-{n:03d}.json'
         write_json(path, record)
+        await self.retain(record)
         log.info('round %d: done -> %s', n, path)
         return record
 
@@ -146,12 +175,14 @@ class Campaign:
             ws = None
             try:
                 ws = Workspace(self.cfg, h)
-                deps = Deps(self.cfg, self.skills, ws, n, hypothesis=f'{h.summary}\n\n{h.content}')
+                deps = Deps(self.cfg, self.skills, ws, n, hypothesis=f'{h.summary}\n\n{h.content}',
+                            memory=self.memory)
                 thread['code_results'] = deps.code_results  # same list: filled even if the validator dies
                 prior = ws.experiment()['rounds']
                 prompt = f'Validate this hypothesis (Jnana id {h.id}, Elo {h.elo:.0f}):\n\n{deps.hypothesis}'
                 if prior:
                     prompt += f'\n\nPRIOR WORK ON THIS HYPOTHESIS (earlier rounds):\n{json.dumps(prior, indent=1)}'
+                prompt += await recall_block(self.memory, h.summary)
                 report = await self.agents.run('validator', prompt, deps)
                 # Before the reviewer spends a pass on claims that provenance will
                 # discard anyway, let the validator correct them.

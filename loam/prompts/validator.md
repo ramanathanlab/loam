@@ -32,3 +32,4 @@ Your `claims` list is reviewed independently and is what steers the next round; 
 - Write the number and the threshold into `claim`, and name the artifact path that holds the number, so it can be checked against the file. `source` is a resolvable URL of the specific record, or the artifact path.
 - Do not grade your confidence into the stance. If you think a gate was badly chosen, say so in `ledger`/`next_step`, not by softening the stance.
 - Never claim a code action ran unless `code_generator` returned its execution result.
+- LESSONS FROM EARLIER WORK, when listed, are leads for designing your tests, never sources: a claim may not cite or rest on one; re-derive anything you need in a run of your own.

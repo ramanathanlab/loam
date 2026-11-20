@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
 from pydantic_ai.usage import UsageLimits
 
-from . import execution, skills
+from . import execution, memory, skills
 from .config import Config, Role
 from .execution import Deps, Resilient
 from .schemas import Brief, CodeResult, Review, ValidationReport
@@ -79,14 +79,16 @@ def build(cfg: Config) -> Agents:
             return 'Code-generator budget exhausted. Poll pending batches yourself, then conclude.'
         ctx.deps.code_calls += 1
         run_id, run_dir = ctx.deps.ws.open_run(ctx.deps.round, instruction)
-        prompt = f'HYPOTHESIS UNDER TEST:\n{ctx.deps.hypothesis}\n\nRUN {run_id}. INSTRUCTION:\n{instruction}'
+        prompt = (f'HYPOTHESIS UNDER TEST:\n{ctx.deps.hypothesis}\n\nRUN {run_id}. INSTRUCTION:\n{instruction}'
+                  + await memory.recall_block(ctx.deps.memory, instruction, kinds=['procedural']))
         child_deps = replace(ctx.deps, run_dir=run_dir, shell_executed=False,
                              submitted_batches=set(), executed_batches=set())
         try:
             result = await agents.run('code_generator', prompt, child_deps)
         except Exception as exc:  # crashed, timed out, or out of requests: reported to the validator, not fatal
             ctx.deps.ws.close_run(run_id, None, error=repr(exc))
-            ctx.deps.code_results.append({'run_id': run_id, 'status': 'crashed', 'error': repr(exc)})
+            ctx.deps.code_results.append({'run_id': run_id, 'instruction': instruction,
+                                          'status': 'crashed', 'error': repr(exc)})
             return (f'code_generator for run {run_id} ended without a result: {exc!r}. '
                     f'Anything it wrote is under outputs/{run_id}/.')
         if cfg.execution.mode in {'mcp', 'hpc'}:
@@ -96,7 +98,7 @@ def build(cfg: Config) -> Agents:
             observed = 'executed' if child_deps.shell_executed else 'blocked'
         result = result.model_copy(update={'status': observed})
         ctx.deps.ws.close_run(run_id, result)
-        ctx.deps.code_results.append({'run_id': run_id, **result.model_dump()})
+        ctx.deps.code_results.append({'run_id': run_id, 'instruction': instruction, **result.model_dump()})
         return json.dumps({'run_id': run_id, 'outputs': f'outputs/{run_id}/', **result.model_dump()}, indent=1)
 
     agents = Agents(

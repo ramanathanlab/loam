@@ -162,3 +162,20 @@ timeouts:
   code_generator: 1200
   reviewer: 900
   reasoner: 900
+
+# Optional cross-campaign lesson memory (Hindsight); off while this block is
+# commented out. Needs `uv sync --all-extras` (or `--extra memory`). See the
+# README's "Memory (optional)" section. Uncomment to enable:
+# memory:
+#   campaign: egfr-binders           # required; tags every lesson this campaign saves
+#   # Both endpoints must be OpenAI-compatible (base_url required).
+#   llm:        {model: argo:gpt-5.6-luna, base_url: http://127.0.0.1:61612/v1}
+#   # Fixed for the life of `instance`. Not text-embedding-3-large: its 3072
+#   # dimensions exceed pgvector's HNSW limit of 2000.
+#   embeddings: {model: argo:text-embedding-3-small, base_url: http://127.0.0.1:61612/v1}
+#   bank: loam                       # one bank shared by every campaign
+#   # url: http://127.0.0.1:8888     # an already-running server (concurrent campaigns); drop `instance` then
+#   # instance: loam-memory          # default when url is unset; embedded Postgres under ~/.pg0/instances/<instance>/
+#   recall_tokens: 1000              # cap on recalled lesson text per prompt
+#   drain_timeout: 600               # seconds to wait at campaign end for queued retains
+#   timeout: 60                      # seconds per memory call (recall, retain submit)

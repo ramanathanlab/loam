@@ -23,6 +23,7 @@ from pydantic_ai.exceptions import AgentRunError, ApprovalRequired, CallDeferred
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, WrapperToolset
 
 from .config import Config
+from .memory import Memory, NoMemory
 from .workspace import Workspace
 
 # Tool names on loam's hpc-deployment MCP server, split by who may call them.
@@ -54,6 +55,7 @@ class Deps:
     shell_executed: bool = False
     submitted_batches: set[str] = field(default_factory=set)
     executed_batches: set[str] = field(default_factory=set)
+    memory: Memory = field(default_factory=NoMemory)   # recall only, for the code-generator prompt
 
 
 @dataclass

@@ -72,6 +72,8 @@ Each LLM role uses a `ModelSpec` (`{model, base_url, api_key_env}`):
 - **Without `base_url`:** Accepts any native `pydantic-ai` model identifier (e.g., `anthropic:claude-sonnet-4-5`, `openai:gpt-5`, `test`).
 - **Secrets stay out of YAML:** API keys are referenced by environment variable name via `api_key_env`; Globus Compute and Academy credentials stay in their standard external stores.
 
+With the optional `memory:` block, the validator and code generator also get lessons from earlier work (earlier rounds of this campaign and earlier campaigns) in their prompts; no role gains a tool. See [Memory (optional)](#memory-optional).
+
 ---
 
 ## Installation
@@ -83,10 +85,12 @@ Requires **Python 3.11+** and a local checkout of **Jnana** (referenced via `tou
 uv sync                    # core dependencies
 uv sync --extra dev        # + pytest for offline test suite
 uv sync --extra hpc        # + managed HPC (fastmcp, globus-compute-sdk, academy-py, ensemble-launcher)
+uv sync --extra memory     # + optional cross-campaign memory (Hindsight); see "Memory (optional)"
+uv sync --all-extras       # everything above at once
 
 # Or using pip
 pip install -e .
-pip install -e ".[dev,hpc]"
+pip install -e ".[dev,hpc,memory]"
 ```
 
 ---
@@ -231,12 +235,74 @@ If a campaign is interrupted mid-round, restarting `python -m loam <config.yaml>
 
 ---
 
+## Memory (optional)
+
+Within a campaign, the brief, the ledger and each hypothesis's prior work carry knowledge from round to round. A `memory:` block carries **lessons** across campaigns, so a new campaign doesn't pay again for failures an earlier one already hit. It uses [Hindsight](https://github.com/vectorize-io/hindsight), runs on the machine that runs the orchestrator, and keeps its database there. Without a `memory:` block nothing changes.
+
+**What is saved.** Lessons, not findings. After each round's record is written, the orchestrator saves:
+- **procedural lessons**: code-generator runs whose observed status was `blocked` or `crashed` (the instruction and the error), and validator reports whose outcome was `blocked` (the blocker named in `next_step`);
+- **review lessons**: claims the reviewer marked `rejected` or `unverifiable`, with the reviewer's `checked` explanation.
+
+Accepted claims, successful runs and briefs are never saved, so a finding about one target can't mislead a campaign on another. Every lesson is tagged with `campaign:<memory.campaign>`; round, hypothesis and run ids are kept as metadata, not in the lesson text, and file paths are replaced by `<path>`. Lessons are saved as one document per (round, hypothesis, kind), so saving them again replaces that document instead of adding copies. Each run starts by re-saving the last completed round's lessons, so a crash between writing a round record and saving its lessons loses nothing.
+
+**Where lessons are injected.** The orchestrator recalls them; agents have no memory tool and never write to memory.
+- **Validator:** lessons relevant to the hypothesis summary, beside its prior work.
+- **Code generator:** procedural lessons relevant to the delegated instruction.
+- **Reviewer and reasoner:** nothing, so verdicts and briefs rest only on this campaign's evidence.
+
+Recalled text is capped at `recall_tokens` per prompt, and each lesson is labelled with its source campaign. Lessons are **leads, never evidence**: the prompt says they can't be cited, and a claim must still rest on a run output or a source URL.
+
+**Install.** `uv sync --all-extras`, or `uv sync --extra memory` if you already have the extras you need (a single `--extra` removes the others). The extra installs `hindsight-api-slim[embedded-db]` and `hindsight-client`, with no torch.
+
+**Minimal configuration** (argo-proxy; see the commented block at the end of [`examples/loam.yaml`](examples/loam.yaml)):
+
+```yaml
+memory:
+  campaign: egfr-binders     # required: tags what this campaign saves
+  llm:        {model: argo:gpt-5.6-luna, base_url: http://127.0.0.1:61612/v1}
+  embeddings: {model: argo:text-embedding-3-small, base_url: http://127.0.0.1:61612/v1}
+```
+
+| Field | Default | Meaning |
+| :--- | :--- | :--- |
+| `campaign` | *(required)* | Tag on every lesson this campaign saves |
+| `llm` | *(required)* | `ModelSpec` that extracts lessons; needs a `base_url` (OpenAI-compatible) |
+| `embeddings` | *(required)* | `ModelSpec` for the embedding model; needs a `base_url` |
+| `bank` | `loam` | Memory bank id, shared by all campaigns |
+| `url` | none | An already-running Hindsight server; loam then only connects |
+| `instance` | `loam-memory` when `url` is unset | Embedded Postgres instance of the loam-started server (not allowed with `url`) |
+| `recall_tokens` | `1000` | Cap on recalled lesson text per prompt |
+| `drain_timeout` | `600` | Seconds to wait at campaign end for queued lessons to finish saving |
+| `timeout` | `60` | Seconds per memory call |
+
+Keys are read from `api_key_env`, as for agent models; with argo-proxy, leave it out. Use `argo:text-embedding-3-small` (1536 dimensions), not `-large`: its 3072 dimensions exceed pgvector's HNSW index limit of 2000.
+
+**Server and data.** Without `url`, loam starts `hindsight-api` as a child process for the length of the run, on embedded Postgres instance `instance`, and stops it at the end after waiting up to `drain_timeout` for lessons still being saved. The data lives in `~/.pg0/instances/<instance>/` and persists across campaigns. Lessons still queued when `drain_timeout` runs out resume the next time loam starts the server on the same `instance` (or, with `url`, when that same server restarts); they are not recovered anywhere else.
+
+**The embedding model is fixed per `instance`.** The vector size is set by the first embedding model used. loam records that model once the server first starts healthy (so a typo or a failed first start does not lock the instance) and afterwards refuses to start if the config names another one, checking before the server starts, since Hindsight would otherwise resize the column under the stored vectors. To switch models, set a new `instance`; it starts with an empty bank.
+
+**Concurrent campaigns.** Start one Hindsight server yourself and point each campaign at it with `url` (and no `instance`). loam then only connects as a client. The embedding-model guard doesn't apply, because loam doesn't own that database: keeping the embedding model consistent is up to you.
+
+**Failures.** Misconfiguration fails fast, before round 1: the extra isn't installed, a named `api_key_env` is unset, the server never becomes healthy, bank setup fails, or the embedding model doesn't match. After that, memory never costs a round: a failed recall gives the agent no lessons, a failed save is logged and dropped, and the round finishes as it would without memory.
+
+**Smoke test.** [`examples/memory_smoke.py`](examples/memory_smoke.py) is an opt-in check against real endpoints, not part of `pytest`. It starts a server on a separate instance (`loam-memory-smoke`), queues lessons asynchronously and waits for them to be saved, checks the embedding-model guard, and recalls the lessons:
+
+```bash
+uv sync --all-extras
+.venv/bin/python examples/memory_smoke.py --base-url http://localhost:61612/v1 \
+    --llm-model argo:gpt-5.6-luna --embed-model argo:text-embedding-3-small
+```
+
+---
+
 ## Repository Layout
 
 ```text
 loam/
 ├── __main__.py        # CLI entry point (`python -m loam <config.yaml>`)
-├── config.py          # Strict YAML configuration models (Config, ModelSpec, Execution, HPCDeployment)
+├── config.py          # Strict YAML configuration models (Config, ModelSpec, Execution, HPCDeployment, MemoryConfig)
+├── memory.py          # Optional cross-campaign lesson memory: Memory interface, NoMemory, lesson extraction
+├── hindsight.py       # Hindsight backend for memory: loam-owned server, embedding-model guard, retain/recall
 ├── launcher.py        # Managed HPC MCP server lifecycle
 ├── orchestrator.py    # Deterministic Python Campaign & round loop
 ├── agents.py          # Builder for validator, code_generator, reviewer, and reasoner

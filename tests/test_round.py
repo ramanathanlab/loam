@@ -626,9 +626,13 @@ def test_generation_timeout_aborts_before_ranking_or_save(tmp_path, monkeypatch)
     class CoScientist:
         def __init__(self, **kwargs):
             self.memory = SimpleNamespace(save=lambda: calls.append('save'))
-        get_all_hypotheses = lambda self: []
+        def get_all_hypotheses(self):
+            return []
+
         set_research_goal = start = stop = generate_hypotheses = lambda self, *a, **k: None
-        wait_for_completion = lambda self, timeout: False
+
+        def wait_for_completion(self, timeout):
+            return False
 
     fakes = {'jnana.protognosis.core.coscientist': SimpleNamespace(CoScientist=CoScientist),
              'jnana.protognosis.core.multi_llm_config': SimpleNamespace(LLMConfig=lambda **k: k),
