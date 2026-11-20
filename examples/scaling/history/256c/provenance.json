@@ -1,0 +1,110 @@
+{
+  "label": "256c",
+  "job_id": "2999784",
+  "original_package": "loamlite",
+  "job_script_sha256": "30bcbc21e51210c954cf8416f188509b1f5bf446c677147963e1d018a635c854",
+  "configuration_sha256": "980668508d69f14ce465191cf371b766f0d5105e3994d21d6a47fd88b7ac1d5b",
+  "original_control_sources": {
+    "scripts/run_single_allocation.py": "5239530a73e2df54b8212907fef229d2a68b585c3c11e15058d07725fa362265",
+    "scripts/run_single_replica.py": "6bb5f0153d45141a965cbe2cffde1ecd236f8dc03214a055426a8c8a2deb7345",
+    "scripts/run_single_allocation_campaign.py": "9858c5c659f0aed9df24b74ff395147bd1d77134d446408a230d29ed64c6c24d",
+    "loamlite/allocation.py": "c41841abb0a77b2986ed80206f50449b223e90644e9d6c5bb7aa3e877f1bfbcb",
+    "loamlite/inference_pool.py": "aa0b9523cad3ef256d0d1d3858ea172080b642394b7c3f0c296836b068b9e988",
+    "loamlite/config.py": "1fd951949b82306080157f1940c5d3aa34a8d9dd59403185c106be07b370fa07",
+    "loamlite/execution.py": "8bfe2501e1b56aa0816eb894045ea0ce620c38261bbae7e56e8c68536e5fe7a4",
+    "loamlite/orchestrator.py": "37fe6618fe342e6c2fc298e9af5bcf1730a354d9d348516f4362adc1f4c274f8",
+    "loamlite/synthesis.py": "d61ba475445768e667d26c7e352713214eb331b19f6a95321d68cdb7457b4e24",
+    "loamlite/agents.py": "8886cebc98aa8902d1812ec6e937d0bbdef4e3ed02027537682e92a826e8cca1",
+    "loamlite/history.py": "1d56d9f0c332ca8f157a08f37affe182c8627f6cfa1a74b9950251ab31ab4ff8",
+    "loamlite/tournament.py": "8b5607bee127f18ab3e91fb49872e83b680d0d7653243efa93d804400c43d256",
+    "scripts/sample_jupiter_telemetry.py": "447b3178077fa8981b3d0649e789280d659d8b74868df8c4ba922ee1dd8c31a2",
+    "skills/hpc-deployment/scripts/hpc_agent.py": "478eb694d529856b6ee2f71fa1be4e8640c0fbcb4ef966e7ae8ddc066dad20a6",
+    "skills/hpc-deployment/scripts/mcp_server.py": "39754c8f254dbe54fbf4fcda889eb660e7732d8d39a01a1cdf3984c34c5f79b6",
+    "loamlite/allocation_startup.py": "ad7d6cd7bbd8a9b51fabe72cccb062537d11be70bcac333b3f88bcbdf4e26e2f",
+    "loamlite/jnana_checkpoint.py": "836507dddda772b24218b56df7f9ffb53ac2389e7f4d4d4157fd6c7e9daa03e8",
+    "loamlite/skills.py": "7dd87408cddced95f46e7e2c808c7fe4834cb00260c045ce1aec8fbee26b1b51"
+  },
+  "results": {
+    "label": "256c",
+    "job_id": "2999784",
+    "nodes": 256,
+    "inference": 102,
+    "science": 154,
+    "screen_trials": 61134,
+    "full_context_trials": 10337,
+    "overall_GPU_busy_percent": 40.5087560993584,
+    "allocated_GPU_hours": 7539.2,
+    "scientific_completion_passed": false,
+    "qualified_campaign": false,
+    "case_status": "Diagnostic numerical outputs; campaign not qualified",
+    "recipe": {
+      "trial": "unified-256c",
+      "job_id": "2999784",
+      "nodes": 256,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script": "/e/project1/deepwing/meigooni1/loamlite/matts_crazy_idea/runs/jupiter-saturation-20261116T204408Z/unified-256c/job.sh",
+      "job_script_sha256": "30bcbc21e51210c954cf8416f188509b1f5bf446c677147963e1d018a635c854",
+      "inference": 102,
+      "science": 154,
+      "concurrency": 616,
+      "top_k": 1848,
+      "initial_hypotheses": 3696,
+      "new_per_round": 924,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 204,
+      "synthesis_concurrency": 102,
+      "science_workers_per_gpu": 2,
+      "physical_science_GPUs": 616,
+      "logical_science_worker_slots": 1232,
+      "hypotheses_per_science_node": 4.0,
+      "admission_waves": 3.0,
+      "tournament_max_seconds": 10800,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": 60,
+      "controller_gc_threshold0": 10000,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 32768,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "09:00:00",
+      "config_source": "/e/fscratch/deepwing/meigooni1/loamlite/jupiter-saturation-20261116T204408Z/unified-256c/campaign/campaign.yaml",
+      "config_sha256": "980668508d69f14ce465191cf371b766f0d5105e3994d21d6a47fd88b7ac1d5b"
+    }
+  },
+  "note": "Original launch script plus operational configuration extraction. Scientific data, goal prompts and seed proposal texts remain external. Original configuration hash records the private source; it is not a copy of its research text. Current wrapper stages a fresh run and is not a new GPU benchmark.",
+  "historical_seed_proposals": 24
+}

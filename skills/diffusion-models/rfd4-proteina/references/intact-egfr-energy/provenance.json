@@ -1,0 +1,17 @@
+{
+  "purpose": "Frozen validated local recipes; original installations and other campaigns unchanged.",
+  "files": [
+    {
+      "source": "/e/project1/deepwing/meigooni1/agent/loam/skills/diffusion-models/rfd4-proteina-jupiter/references/funnel-scripts/cofold.py",
+      "copy": "/e/project1/deepwing/meigooni1/loam/matts_crazy_idea/skills/diffusion-models/rfd4-proteina/references/intact-egfr-energy/cofold.py",
+      "sha256": "894cd0743d3f636136dda9916a8d4b4017b54552392e1dc057671d449b46d82b"
+    },
+    {
+      "source": "/e/project1/deepwing/meigooni1/agent/loam/skills/diffusion-models/rfd4-proteina-jupiter/references/funnel-scripts/mmgbsa.py",
+      "copy": "/e/project1/deepwing/meigooni1/loam/matts_crazy_idea/skills/diffusion-models/rfd4-proteina/references/intact-egfr-energy/mmgbsa.py",
+      "sha256": "1869fe966e4e0bcdc318e8e7b980bfa2b8769f557e42666829655de38a4bf9ea",
+      "source_sha256": "03e45e4cdf670a1e8677f58066c5be682338f0ebb3d96d895af92a68d105429c",
+      "local_changes": "Verify zero covalent bonds between sequence-defined target and binder residue ranges; report explicit partition because Amber can lose chain labels."
+    }
+  ]
+}

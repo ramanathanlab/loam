@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 
 from . import execution, reconcile, skills, steering
 from .agents import Agents, build
@@ -23,6 +24,7 @@ from .execution import Deps
 from .schemas import Hypothesis, ValidationReport
 from .tournament import GenerationTimedOut, Tournament
 from .workspace import Workspace, write_json
+from .synthesis import synthesize as bounded_synthesis
 
 log = logging.getLogger('loam')
 
@@ -32,7 +34,9 @@ class Campaign:
         self.cfg = cfg
         self.skills = skills.discover(cfg.skills_dirs)
         self.agents = agents or build(cfg)
-        self.tournament = tournament or Tournament(cfg.tournament, cfg.state_dir)
+        self.tournament = tournament or Tournament(cfg.tournament, cfg.state_dir,
+                                                  model_retries=cfg.model_retries,
+                                                  request_timeout=cfg.timeouts.model_request)
         self.rounds_dir = cfg.state_dir / 'rounds'
         self.ledger = cfg.state_dir / 'ledger.jsonl'
         self.rounds_dir.mkdir(parents=True, exist_ok=True)
@@ -60,7 +64,7 @@ class Campaign:
 
         log.info('round %d: reasoner', n)
         table = self.steering(ranked)
-        new_brief = await self.synthesize(threads, table, brief)
+        new_brief = await self.synthesize(threads, table, brief, n)
         record = {'round': n, 'rankings': [h.model_dump() for h in ranked], 'threads': threads,
                   'steering': table, 'brief': new_brief}
         path = self.rounds_dir / f'round-{n:03d}.json'
@@ -142,7 +146,17 @@ class Campaign:
         """One hypothesis: validator -> independent reviewer -> reconcile. Never raises."""
         thread: dict = {'hypothesis': h.model_dump(), 'report': None, 'raw_report': None,
                         'review': None, 'accepted': [], 'code_results': [], 'error': None}
+        queued_at = time.time()
+        def event(kind, **extra):
+            row = {'event': kind, 'timestamp': time.time(), 'round': n,
+                   'hypothesis_id': h.id, **extra}
+            with (self.cfg.state_dir / 'admission-timings.jsonl').open('a') as stream:
+                stream.write(json.dumps(row) + '\n')
+        event('queued')
         async with gate:
+            thread['admission'] = {'queued_at': queued_at, 'started_at': time.time(),
+                                   'wait_seconds': time.time() - queued_at}
+            event('started', wait_seconds=thread['admission']['wait_seconds'])
             ws = None
             try:
                 ws = Workspace(self.cfg, h)
@@ -176,6 +190,8 @@ class Campaign:
                                   'accepted_claims': len(thread['accepted']), 'error': thread['error']})
                 except Exception:
                     log.exception('could not record round %d for hypothesis %s', n, h.id)
+            thread['admission']['finished_at'] = time.time()
+            event('finished', error=thread['error'])
         return thread
 
     async def review(self, report: ValidationReport, deps: Deps):
@@ -193,7 +209,7 @@ class Campaign:
             row['summary'] = pool[row['hypothesis_id']].summary if row['hypothesis_id'] in pool else ''
         return table
 
-    async def synthesize(self, threads: list[dict], table: list[dict], previous_brief: str) -> dict:
+    async def synthesize(self, threads: list[dict], table: list[dict], previous_brief: str, n: int = 0) -> dict:
         digest = []
         for t in threads:
             h, r = t['hypothesis'], t['report'] or {}
@@ -201,16 +217,13 @@ class Campaign:
                 'hypothesis_id': h['id'], 'summary': h['summary'], 'elo': h['elo'], 'matches': h['matches'],
                 'outcome': r.get('outcome'), 'self_reported_evidence_score': r.get('evidence_score'),
                 'next_step': r.get('next_step'), 'pending_batches': r.get('pending_batches'),
-                'accepted_claims': [{k: c[k] for k in ('claim', 'stance', 'policy', 'delta')} for c in t['accepted']],
+                'accepted_claims': t['accepted'],
                 'claims_not_accepted': len(r.get('claims', [])) - len(t['accepted']),
                 'statement_overreach': bool((t['review'] or {}).get('statement_overreach')),
                 'error': t['error'],
             })
-        prompt = (f'PREVIOUS BRIEF:\n{previous_brief or "(first round)"}\n\n'
-                  f'THIS ROUND\'S THREADS:\n{json.dumps(digest, indent=1)}\n\n'
-                  f'STEERING TABLE (whole pool, highest priority first):\n{json.dumps(table, indent=1)}')
         try:
-            return (await self.agents.run('reasoner', prompt)).model_dump()
+            return await bounded_synthesis(self.agents, self.cfg, digest, table, previous_brief, n)
         except Exception as exc:  # keep steering from the last good brief rather than losing the round
             log.exception('reasoner failed')
             return {'report': f'reasoner failed: {exc!r}', 'tournament_brief': previous_brief}

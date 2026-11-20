@@ -1,0 +1,14 @@
+[
+  {
+    "source": "skills/structure-prediction/esmfold2/SKILL.md",
+    "source_sha256": "aed197b595ff53f99142f2ddb4e6c6dc8ca328f5d233d604bf9736343aaea36b",
+    "packaged_path": "references/aurora-notes.md",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/structure-prediction/esmfold2/scripts/run_esmfold2_example.sh",
+    "source_sha256": "810719ea4feb098761b24eb018ecfd20f0a0dbdd069a763629de3f4415b5369c",
+    "packaged_path": "references/aurora-resources/scripts/run_esmfold2_example.sh",
+    "kind": "historical-reference"
+  }
+]

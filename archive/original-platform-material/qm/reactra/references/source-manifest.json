@@ -1,0 +1,26 @@
+[
+  {
+    "source": "skills/qm/reactra/SKILL.md",
+    "source_sha256": "be094debc11b82be10da320b098a7fa74d62c8df2222b37ef06f75edb4361fb7",
+    "packaged_path": "references/aurora-notes.md",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/qm/reactra/references/examples.md",
+    "source_sha256": "01835e0db6755532248dcc522142e0d033df74f9978460c5669de72d6a74236b",
+    "packaged_path": "references/aurora-resources/references/examples.md",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/qm/reactra/references/loam-execution.md",
+    "source_sha256": "557f52ec291ba0f9e09dbbf843152b1dc1b394caf6bd3526c4bfbcf0661fb270",
+    "packaged_path": "references/aurora-resources/references/loam-execution.md",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/qm/reactra/scripts/reactra_cli.sh",
+    "source_sha256": "2b4c88d877c227b1981831bf9bbf102ed1d5a2d6ec4e407e897dbbda545400ab",
+    "packaged_path": "references/aurora-resources/scripts/reactra_cli.sh",
+    "kind": "historical-reference"
+  }
+]

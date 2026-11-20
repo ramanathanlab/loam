@@ -10,6 +10,11 @@ import logging
 import math
 import sys
 from pathlib import Path
+from unittest.mock import patch
+import importlib
+
+from .rate_limits import jnana_coscientist
+from .jnana_checkpoint import checkpointed_coscientist
 
 from .config import TournamentConfig
 from .schemas import Hypothesis
@@ -22,8 +27,10 @@ class GenerationTimedOut(RuntimeError):
 
 
 class Tournament:
-    def __init__(self, cfg: TournamentConfig, state_dir: Path):
+    def __init__(self, cfg: TournamentConfig, state_dir: Path, *, model_retries: int = 8, request_timeout: float = 600):
         self.cfg = cfg
+        self.model_retries = model_retries
+        self.request_timeout = request_timeout
         self.state_file = state_dir / 'jnana.json'
         if str(cfg.jnana_root) not in sys.path:
             sys.path.insert(0, str(cfg.jnana_root))
@@ -31,10 +38,13 @@ class Tournament:
     def run(self, goal: str, *, initial: bool, brief: str = '') -> list[Hypothesis]:
         """Blocking (Jnana is threaded); call through asyncio.to_thread."""
         from jnana.protognosis.core.coscientist import CoScientist
-        from jnana.protognosis.periodic_tournament import run_incremental_tournament
+        periodic = importlib.import_module('jnana.protognosis.periodic_tournament')
+        campaign_scientist = checkpointed_coscientist(
+            jnana_coscientist(CoScientist, retries=self.model_retries,
+                             timeout=self.request_timeout), interval_seconds=5)
 
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        cs = CoScientist(llm_config=self.cfg.generation.jnana(), storage_path=str(self.state_file),
+        cs = campaign_scientist(llm_config=self.cfg.generation.jnana(), storage_path=str(self.state_file),
                          max_workers=max(self.cfg.initial_hypotheses, self.cfg.new_per_round))
         existing = len(cs.get_all_hypotheses())
         count = max(0, self.cfg.initial_hypotheses - existing) if initial else self.cfg.new_per_round
@@ -57,10 +67,11 @@ class Tournament:
         # scheme/rounds/workers were previously left at Jnana's defaults, which
         # silently gave every campaign a single serial batch of random pairings.
         # match_count is still passed because Jnana ignores it under swiss.
-        result = run_incremental_tournament(
-            state_file=self.state_file, llm_config=self.cfg.ranking.jnana(),
-            match_count=self.cfg.matches, top_k=self.cfg.top_k, max_seconds=self.cfg.max_seconds,
-            scheme=self.cfg.scheme, rounds=self.cfg.swiss_rounds, workers=self.cfg.workers)
+        with patch.object(periodic, 'CoScientist', campaign_scientist, create=True):
+            result = periodic.run_incremental_tournament(
+                state_file=self.state_file, llm_config=self.cfg.ranking.jnana(),
+                match_count=self.cfg.matches, top_k=self.cfg.top_k, max_seconds=self.cfg.max_seconds,
+                scheme=self.cfg.scheme, rounds=self.cfg.swiss_rounds, workers=self.cfg.workers)
         bodies = {h.hypothesis_id: h for h in cs.get_all_hypotheses()}
         return [
             Hypothesis(id=r['hypothesis_id'], summary=r['summary'], elo=float(r['elo_rating']),

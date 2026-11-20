@@ -6,3 +6,25 @@ __pycache__/
 build/
 dist/
 .DS_Store
+
+.auth-venv/
+network.env
+.auth-cache/
+
+runs/
+logs/
+
+# Campaign evidence and credentials stay outside source control.
+reports/
+main_status.json
+network.env
+*.key
+*.pem
+
+# Ignore environment symlinks as well as directories.
+.venv
+.auth-venv
+
+.science-inputs/
+local-inputs/
+datasets/

@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Stage/submit exactly one job; every inference/science service is a job step."""
+import argparse,copy,hashlib,json,os,re,shutil,subprocess,time,uuid
+from pathlib import Path
+import yaml
+from prepare_pathsafe_energy_stage import prepare
+
+REPO=Path(__file__).resolve().parents[1]
+REFERENCE=REPO/'runs/jupiter-scale20-20261113T042053Z'
+RUNTIME=REPO/'runs/jupiter-inference-balance-20261113T162725Z/inference-runtime'
+
+def write(path,data):
+    path.write_text(json.dumps(data,indent=2)+'\n')
+
+def stage(root,nodes,inference,label,mode,walltime,reservation,concurrency,*,top_k=None,initial_hypotheses=None,new_per_round=None,tournament_workers=None,science_workers_per_gpu=1):
+    reference=REFERENCE.resolve(strict=True);runtime=RUNTIME.resolve(strict=True)
+    assert re.fullmatch(r'[a-z0-9-]+',label) and 0<inference<nodes
+    top_k=concurrency if top_k is None else top_k
+    assert concurrency>0 and top_k>=concurrency
+    assert initial_hypotheses is None or initial_hypotheses>=top_k
+    assert new_per_round is None or new_per_round>0
+    assert tournament_workers is None or tournament_workers>0
+    assert science_workers_per_gpu in (1,2)
+    root.mkdir(parents=True,exist_ok=True)
+    experiment=root/'experiment.json'
+    if not experiment.exists():write(experiment,{'created_at':time.time(),'purpose':'Single-allocation Nemotron/science campaign','owned_job_ids':[],'reference':str(reference)})
+    job=root/label
+    if job.exists():raise RuntimeError('Refuse to overwrite an existing staged job')
+    job.mkdir();campaign=job/'campaign';campaign.mkdir();infra=job/'infra';infra.mkdir(mode=0o700)
+    shutil.copytree(runtime,infra/'inference-runtime')
+    # Only the launch-ownership guard changes; vLLM/model/numerical args stay frozen.
+    native=infra/'inference-runtime/scripts/jupiter_nemotron.py';old=native.read_text()
+    needle='    if not job_id.isdigit() or os.environ.get("SLURM_JOB_NAME") != attempt.name:\n        raise RuntimeError("The Nemotron server must run in its dedicated Slurm allocation")'
+    replacement='''    if request.get("allocation_manifest"):
+        from loamlite.allocation import validate_role
+        allocation = validate_role(Path(request["allocation_manifest"]), "inference")
+        if os.environ.get("SLURM_JOB_NAME") != allocation["job_name"] or socket.gethostname().split(".")[0] != request["assigned_host"]:
+            raise RuntimeError("Nemotron process is outside its assigned parent job/node")
+    elif not job_id.isdigit() or os.environ.get("SLURM_JOB_NAME") != attempt.name:
+        raise RuntimeError("The Nemotron server must run in its dedicated Slurm allocation")'''
+    assert old.count(needle)==1;native.write_text(old.replace(needle,replacement));compile(native.read_text(),str(native),'exec')
+    shutil.copytree(reference/'inputs',campaign/'inputs',ignore=shutil.ignore_patterns('__pycache__'))
+    shutil.copyfile(REPO/'skills/diffusion-models/rfd4-proteina/scripts/make_intact_followup_manifest.py',campaign/'inputs/make_intact_followup_manifest.py')
+    prepare(campaign)
+    (campaign/'data').symlink_to('inputs',target_is_directory=True)
+    cfg=yaml.safe_load((reference/'campaign.yaml').read_text());cfg=yaml.safe_load(yaml.safe_dump(cfg).replace(str(reference),str(campaign)))
+    cfg['rounds']=3;cfg['concurrency']=concurrency;cfg['tournament']['top_k']=top_k
+    cfg['synthesis_concurrency']=inference
+    # Bound each request's input separately; allow long structured reasoner output.
+    cfg['models']['reasoner']=copy.deepcopy(cfg['models']['reasoner'])
+    cfg['models']['reasoner'].setdefault('settings',{})['max_tokens']=32768
+    if nodes>20:
+        cfg['tournament'].update(initial_hypotheses=2*concurrency,new_per_round=max(6,concurrency//2),gen_batch_size=8,workers=64,max_seconds=10800)
+    if initial_hypotheses is not None:cfg['tournament']['initial_hypotheses']=initial_hypotheses
+    if new_per_round is not None:cfg['tournament']['new_per_round']=new_per_round
+    if tournament_workers is not None:cfg['tournament']['workers']=tournament_workers
+    science=nodes-inference;hpc=cfg['execution']['hpc'];hpc['allocation'].update(nodes=science,walltime=walltime)
+    hpc['inspect_roots']=[str(campaign),'/e/project1/deepwing/meigooni1/agent/software']
+    hpc['science_workers_per_gpu']=science_workers_per_gpu
+    hpc['worker_code_dir']=str(REPO)
+    hpc['server_script']=str(REPO/'skills/hpc-deployment/scripts/mcp_server.py')
+    hpc['frozen_tool_library']=True;hpc['pool_size']=min(64,max(12,concurrency*2));hpc['campaign_id']='unified-'+label+'-'+uuid.uuid4().hex[:10]
+    options=hpc['allocation']['endpoint_options']
+    options['scheduler_options']='\n'.join(line for line in options.get('scheduler_options','').splitlines() if '--reservation=' not in line)
+    if reservation:options['scheduler_options']+='\n#SBATCH --reservation='+reservation
+    options['worker_init']=options.get('worker_init','').replace('HPC_CAMPAIGN_ID=jupiter-scale20-20261113','HPC_CAMPAIGN_ID='+hpc['campaign_id'])
+    hpc['startup_timeout']=7200;cfg['execution']['setup']=cfg['execution']['setup'].replace('one separate owned Nemotron node plus nineteen scientific nodes, 76 scientific GPU slots',f'one Slurm allocation with {inference} Nemotron nodes and {science} scientific nodes, {4*science} scientific GPU slots').replace('stages_directory=data/intact-egfr-energy,','stages_directory=data/intact-egfr-energy-pathsafe,')
+    goal=(reference/'goal.md').read_text();core=goal.split('## Runtime execution observations')[0].strip();generic=goal[goal.index('INTACT MANIFEST FAST PATH'):]
+    if nodes!=20:core=core.replace('at twenty total owned Jupiter nodes',f'at {nodes} total owned Jupiter nodes')
+    a=generic.index('OPERATOR TOOL VERSION PIN:');b=generic.index('EXACT ARTIFACT NAVIGATION:')
+    generic=generic[:a]+'OPERATOR TOOL VERSION PIN: Use tool_version=1 for the three frozen registered scientific recipes. Never rewrite or register a replacement scientific pipeline. Metadata preparation uses the supplied helper scripts.\n\n'+generic[b:]
+    screen_fastpath='''SCREEN MANIFEST FAST PATH: For the standard twelve-candidate screen, prepare metadata with run_code in YOUR assigned run directory: import runpy; from pathlib import Path; runpy.run_path(str(Path.cwd().parents[1]/"data/make_campaign_manifest.py"),run_name="__main__"). This supplied helper computes the real paths, checksums and twelve independent seeds (four per condition). Never hand-transcribe those paths/checksums or print/rewrite the whole manifest through the LLM. After the preparation call SUCCEEDS, in a LATER MODEL TURN submit run_batch(tool="scale20_complete_binder_pipeline",tool_version=1,inputs_path="candidate-inputs.jsonl",gpus=1,timeout_each=5000,venv_path="/e/project1/deepwing/meigooni1/agent/software/RFD4-Proteina/.venv"). The inputs_path is relative to your assigned run directory. This prepares metadata only; evidence comes from the actual registered scientific execution. Do not duplicate a submitted/completed batch.\n\n'''
+    navigation_bound='''\n\nBOUNDED METADATA RECOVERY: Paths passed to write_files are relative to YOUR assigned run directory, or exact absolute paths returned by a tool; never remove an absolute path's leading slash. Read the returned resolved path before executing it. Use exact artifact-index paths and supplied helper entry points. Do not recursively scan campaign-wide or installed-software trees to discover a file. If two attempts at the same metadata/input preparation fail, return the concrete error and existing scientific results to the validator; do not repeat the same delegation indefinitely. A proposed custom experiment that cannot be prepared with the frozen scientific library remains untested: report that limitation and propose it for a later campaign. Do not substitute the standard control experiment as proof of a different mechanism.\n'''
+    fresh_evidence='''\n\nCURRENT-ROUND REPLICATION: For hypotheses assessable by the frozen three-arm assay, each selected round should obtain a new matched twelve-candidate screen with the supplied helper's namespaced independent seeds and eligible intact follow-ups, then review that round's results. Earlier rounds provide context and trends, rather than replacing new evidence. The rNNN- prefix of the assigned run_id identifies its round. An already submitted current-round screen must be polled and reused, never submitted twice; do not rerun successful current-round rows to fill GPU time. Unsupported custom mechanisms remain untested as the bounded metadata recovery instruction directs.\n'''
+    generic=generic.replace('If no completed screen is listed for this hypothesis,','If no completed current-round screen is listed for this hypothesis,')
+    (campaign/'goal.md').write_text(core+'\n\n## Runtime execution observations (scientific goal unchanged)\n'+screen_fastpath+generic+navigation_bound+fresh_evidence)
+    (campaign/'navigation-note.txt').write_text('Use the frozen manifest helpers and actual returned batch paths. Do not transcribe checksums. Use make_intact_followup_manifest.py with short IDs and the pathsafe energy stage. Never duplicate a submitted batch or rewrite a frozen scientific script. Infrastructure is one Slurm allocation; no agent may submit/cancel scheduler jobs.\n')
+    oldstate=json.loads((reference/'state/jnana.json').read_text());seed=[]
+    for i,h in enumerate(sorted(oldstate['hypotheses'],key=lambda h:h['created_at'])[:24]):
+        h=copy.deepcopy(h);h['hypothesis_id']=str(uuid.uuid5(uuid.NAMESPACE_URL,str(campaign)+':'+h['hypothesis_id']));h.update(elo_rating=1200,reviews=[],tournament_matches=[],tournament_wins=0,tournament_losses=0,last_tournament_time=None,created_at=time.time()+i*.001);seed.append(h)
+    state={k:{} for k in ['experiments','analyses','papers','agent_states','datasets','training_plans','evaluations']};state.update(hypotheses=seed,metadata={'research_goal':(campaign/'goal.md').read_text()},tournament_state={'matches':[]});(campaign/'state').mkdir();(campaign/'work').mkdir();write(campaign/'state/jnana.json',state)
+    (campaign/'campaign.yaml').write_text(yaml.safe_dump(cfg,sort_keys=False))
+    from loamlite.config import load
+    from loamlite.allocation import validate_campaign_paths
+    validate_campaign_paths(load(campaign/'campaign.yaml'),campaign)
+    write(campaign/'scientific-protocol.json',{'files':[{'file':str(p.relative_to(campaign/'inputs')),'sha256':hashlib.sha256(p.read_bytes()).hexdigest()} for p in [campaign/'inputs'/s for s in ['run_binder_pipeline.py','run_binder_generation.py','run_intact_egfr_followup.py','summarize_binder_pipeline.py','intact-egfr-energy/cofold.py','intact-egfr-energy/mmgbsa.py','intact-egfr-energy-pathsafe/cofold.py','intact-egfr-energy-pathsafe/mmgbsa.py']]],'thinking':'Agent roles false; tournament generation/ranking unchanged default true','native_guard_patch':'Only attached-parent ownership validation added; inference args unchanged'})
+    plan={'mode':'single-allocation','nodes':nodes,'inference_count':inference,'science_count':science,'campaign':str(campaign),'infra':str(infra),'job_root':str(job),'job_name':'loamlite-'+label+'-'+uuid.uuid4().hex[:10],'walltime':walltime,'reservation':reservation,'account':'deepwing','partition':'booster','run_mode':mode,'created_at':time.time(),'model_startup_timeout':5400,'admission':{'concurrency':concurrency,'top_k':top_k,'initial_hypotheses':cfg['tournament']['initial_hypotheses'],'new_per_round':cfg['tournament']['new_per_round']}}
+    plan['science_workers_per_gpu']=science_workers_per_gpu
+    plan['tournament_workers']=cfg['tournament']['workers'];plan['synthesis_concurrency']=cfg['synthesis_concurrency'];write(job/'plan.json',plan)
+    script=job/'job.sh';script.write_text('#!/usr/bin/env bash\nset -euo pipefail\nsource '+str(REPO/'scripts/jupiter_env.sh')+'\nexport PATH='+str(REPO/'.venv/bin')+':$PATH\nexport SLURM_EXPORT_ENV=ALL\nexport PYTHONPATH='+str(REPO)+':${PYTHONPATH:-}\nexec '+str(REPO/'.venv/bin/python')+' -u '+str(REPO/'scripts/run_single_allocation.py')+' '+str(job)+'\n');script.chmod(0o700)
+    return job
+
+def submit(root,job):
+    plan=json.loads((job/'plan.json').read_text());receipt=job/'submission.json'
+    if receipt.exists():raise RuntimeError('Submission receipt already exists; do not duplicate')
+    intent={'job_name':plan['job_name'],'job_root':str(job),'job_script_sha256':hashlib.sha256((job/'job.sh').read_bytes()).hexdigest(),'requested_at':time.time()};write(job/'submission-intent.json',intent)
+    args=['sbatch','--parsable','--export=NIL','--account=deepwing','--partition=booster','--nodes='+str(plan['nodes']),'--ntasks-per-node=1','--cpus-per-task=288','--gres=gpu:4','--exclusive','--time='+plan['walltime'],'--job-name='+plan['job_name'],'--chdir='+str(job),'--output='+str(job/'slurm-%j.log')]
+    if plan['reservation']:args.append('--reservation='+plan['reservation'])
+    if plan.get('afterany_owned_job_id'):
+        previous=plan['afterany_owned_job_id']
+        assert previous in json.loads((root/'experiment.json').read_text())['owned_job_ids']
+        receipts=[p for p in root.glob('*/submission.json') if json.loads(p.read_text())['job_id']==previous]
+        assert len(receipts)==1
+        predecessor=json.loads(receipts[0].read_text())
+        query=subprocess.run(['scontrol','show','job',previous,'-o'],capture_output=True,text=True,check=True,timeout=30).stdout
+        assert 'JobName='+predecessor['job_name']+' ' in query and 'WorkDir='+str(receipts[0].parent)+' ' in query
+        intent['afterany_owned_job_id']=previous;write(job/'submission-intent.json',intent)
+        args.append('--dependency=afterany:'+previous)
+    if plan.get('validation_job_id'):
+        validation=root/'unified-20'/'submission.json'
+        assert validation.is_file() and json.loads(validation.read_text())['job_id']==plan['validation_job_id']
+        assert plan['validation_job_id'] in json.loads((root/'experiment.json').read_text())['owned_job_ids']
+        args.append('--dependency=afterok:'+plan['validation_job_id'])
+    args.append(str(job/'job.sh'));p=subprocess.run(args,capture_output=True,text=True,timeout=120,check=True);job_id=p.stdout.strip().split(';')[0];assert job_id.isdigit();write(receipt,{'job_id':job_id,'submitted_at':time.time(),'job_name':plan['job_name'],'script_sha256':intent['job_script_sha256']})
+    e=json.loads((root/'experiment.json').read_text());e['owned_job_ids']=list(dict.fromkeys(e['owned_job_ids']+[job_id]));write(root/'experiment.json',e);print(json.dumps({'job_id':job_id,'nodes':plan['nodes'],'inference':plan['inference_count'],'science':plan['science_count'],'job_root':str(job),'reservation':plan['reservation']}),flush=True)
+
+if __name__=='__main__':
+    p=argparse.ArgumentParser();p.add_argument('root',type=lambda p:Path(p).resolve());p.add_argument('--nodes',type=int,required=True);p.add_argument('--inference',type=int,required=True);p.add_argument('--label',required=True);p.add_argument('--mode',choices=['smoke','campaign'],default='campaign');p.add_argument('--walltime',default='02:00:00');p.add_argument('--reservation',default='');p.add_argument('--concurrency',type=int,default=12);p.add_argument('--top-k',type=int);p.add_argument('--initial-hypotheses',type=int);p.add_argument('--new-per-round',type=int);p.add_argument('--tournament-workers',type=int);p.add_argument('--science-workers-per-gpu',type=int,default=1);p.add_argument('--submit',action='store_true');a=p.parse_args();j=stage(a.root,a.nodes,a.inference,a.label,a.mode,a.walltime,a.reservation,a.concurrency,top_k=a.top_k,initial_hypotheses=a.initial_hypotheses,new_per_round=a.new_per_round,tournament_workers=a.tournament_workers,science_workers_per_gpu=a.science_workers_per_gpu);print('Staged '+str(j),flush=True)
+    if a.submit:submit(a.root,j)

@@ -1,0 +1,16 @@
+{
+  "model_dir": "${LOAM_MODEL_DIR}",
+  "checkpoint": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+  "checkpoint_revision": "fb0ee0bc6b3f70342afd8d84cb80dbadbaa8a1fe",
+  "image_digest": null,
+  "command": [
+    "${LOAM_VLLM}"
+  ],
+  "max_model_len": 131072,
+  "max_num_seqs": 16,
+  "warmup_seconds": 5400,
+  "compiler": null,
+  "account": "deepwing",
+  "reservation": "",
+  "walltime": "09:00:00"
+}

@@ -1,0 +1,20 @@
+[
+  {
+    "source": "skills/structure-prediction/protenix/SKILL.md",
+    "source_sha256": "9d59a3830406785fa62309e75cd44e4eb5f561e273fa96f11fec7ccb0f85abfd",
+    "packaged_path": "references/aurora-notes.md",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/structure-prediction/protenix/scripts/example_gb1.json",
+    "source_sha256": "9fc9a6256977bb4b3741973522ff7f9806a7acf9d588a35f2c716983ba73b9d7",
+    "packaged_path": "references/aurora-resources/scripts/example_gb1.json",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/structure-prediction/protenix/scripts/run_protenix_example.sh",
+    "source_sha256": "99e141c1b09c68b55d888310c4f7619455f8b37a64ece4dd0acd87911897ab0e",
+    "packaged_path": "references/aurora-resources/scripts/run_protenix_example.sh",
+    "kind": "historical-reference"
+  }
+]

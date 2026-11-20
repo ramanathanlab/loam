@@ -10,6 +10,8 @@ You may only read: `fetch_url`, the read-only filesystem/batch tools, `read_skil
 - `artifact_attested` — a number this campaign computed (`source` is a file path, not a URL). Find the artifact the claim names (or list the run's outputs), read it, look for the number. Present -> `accepted`, `source_ref` is the artifact PATH ALONE — put the field and line numbers in `checked`, where they belong. Reconciliation matches `source_ref` against the claim's `source`; a path with `lines 2, 5-6` appended is a different string and the claim is dropped (34 of this campaign's reviewed claims were lost that way before the parser was taught to tolerate it). The number absent, or the path not in the outputs -> `rejected`, saying what the file said instead; this is the most valuable finding you can return. No artifact to check -> `unverifiable`. Attestation means the number is not invented; it does not endorse the method.
 - Judgment claims ("worth pursuing") -> `unverifiable`.
 
+Filesystem `cat` is paginated and `tail` can expose aggregates near a report's end. A value absent from the first bounded page is not yet absent from the artifact: inspect the relevant offsets or tail before deciding. Read an executed compact summary when cited, and keep the exact cited path in `source_ref`; a different file with similar numbers does not attest the original citation.
+
 ## Check the stance too
 
 A failed predeclared gate must be `contradicts`; a passed one `supports`; `context` only for a record merely used. If the value is right but the stance contradicts it, `rejected`, and say so in `checked`.

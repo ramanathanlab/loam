@@ -1,95 +1,28 @@
 ---
 name: esmfold2
-description: Predict protein structure from a single sequence (no MSA) with ESMFold2 (ESMC-6B + folding trunk + diffusion module) on Aurora Intel XPU, writing mmCIF with pLDDT/pTM. Use for fast single-sequence folds, or protein/DNA/ligand complexes via the Python API.
+description: Use esmfold2 on Julich Jupiter ARM64 GH200 nodes with its dedicated software/esmfold2/.venv environment.
 ---
 
-# ESMFold2 on Aurora (Intel XPU)
+# esmfold2 on Jupiter
 
-Install: `/flare/FRAME-IDP/msinclair/software/esm` — the `esm` package plus a **forked
-`transformers`** that provides `transformers.models.esmfold2`. Do not edit the install directory.
-Triton / flash-attn / cuequivariance paths are CUDA-only and fall back to eager PyTorch + SDPA
-on XPU (correct, slower).
-
-## Environment
+Source `$HPC_LOAM_HOME/scripts/jupiter_env.sh` before using this recipe. Software is installed under `$LOAM_SOFTWARE_ROOT`, with a dedicated `.venv` per tool.
 
 ```bash
-REPO=/flare/FRAME-IDP/msinclair/software/esm
-PY=$REPO/.venv/bin/python
-module load frameworks                      # frameworks/2026.1.0; usually already loaded
-export ZE_AFFINITY_MASK=4                   # ONE plain tile index; "4.0" makes XPU vanish
-export PYTHONPATH="$REPO/transformers/src:$REPO:${PYTHONPATH:-}"   # the fork MUST come first
-export HF_HOME=$REPO/.hf_cache              # weights already cached
-export HF_HUB_OFFLINE=1
+source "$HPC_LOAM_HOME/scripts/jupiter_env.sh"
+REPO="$LOAM_SOFTWARE_ROOT/esmfold2"
+PY="$REPO/.venv/bin/python"
+"$PY" -c "from esm.models.esmfold2 import EsmFold2Model"
 ```
 
-Cached under `$HF_HOME/hub/`: `models--biohub--ESMFold2`, `models--biohub--ESMC-6B` (~25 GB,
-auto-loaded), plus ESMC 300M/600M. Nothing downloads.
+The installed esm 3.4.2 provides EsmFold2Model directly; the Aurora transformers fork is no longer required. Download biohub/ESMFold2 and biohub/ESMC-6B weights before offline use. ARM64 uses native PyTorch attention when the upstream x86-only flash-attention wheel is unavailable. The manual native CUDA fold passed on a real 20-residue fixture; larger complexes and production settings still require validation. Do not substitute ESMFold v1.
 
-## Example
+Run campaign scientific workloads through `run_batch(gpus=1)` after staging with `write_files`. Jupiter has four GH200 GPUs per node. Keep the CUDA_VISIBLE_DEVICES assigned by Ensemble Launcher; inside a one-GPU task use cuda:0. Write outputs to the campaign workspace. Do not use Aurora modules, ZE_AFFINITY_MASK, XPU launchers, ALCF proxies, or PBS submissions.
 
-```bash
-# Minimal runner: scripts/run_esmfold2_example.sh <out_dir> [tile]
-bash scripts/run_esmfold2_example.sh ./work 4
 
-# Equivalent direct call (production settings)
-$PY $REPO/scripts/aurora/fold_sequence.py \
-  --seq MTYKLILNGKTLKGETTTEAVDAATAEKVFKQYANDNGVDGEWTYDDATKTFTVTE \
-  --loops 20 --steps 100 --out gb1_pred.cif
-```
+## Executable reference
 
-Python API, for complexes and multiple samples:
+Read `references/smoke-workload.py` with `read_skill(name="esmfold2", file="references/smoke-workload.py")` for a concrete Jupiter workflow with output assertions. Stage its contents into the assigned workspace before execution, using this tool's Python and `--out <absolute-output-directory> --software $LOAM_SOFTWARE_ROOT`. Reduced smoke settings validate plumbing; choose campaign settings for scientific evidence.
 
-```python
-import torch
-from transformers.models.esmfold2.modeling_esmfold2 import ESMFold2Model
-from esm.models.esmfold2 import (ESMFold2InputBuilder, ProteinInput, DNAInput,
-                                 LigandInput, StructurePredictionInput)
-from esm.utils.misc import get_default_device
+## Campaign execution
 
-model = ESMFold2Model.from_pretrained("biohub/ESMFold2").to(get_default_device()).eval()
-model.set_kernel_backend(None)              # REQUIRED off-CUDA: Triton kernels are CUDA-only
-spi = StructurePredictionInput(sequences=[ProteinInput(id="A", sequence="MTYK...")])
-res = ESMFold2InputBuilder().fold(model, spi, num_loops=20, num_sampling_steps=100,
-                                 num_diffusion_samples=1)
-open("out.cif", "w").write(res.complex.to_mmcif())
-print(float(res.plddt.mean()), res.ptm, res.iptm)
-```
-
-A multi-entity example (protein + modified-base DNA + SAH ligand) is in
-`$REPO/scripts/aurora/readme_example.py`.
-
-## Arguments (`fold_sequence.py`)
-
-| flag | default | meaning |
-|---|---|---|
-| `--seq S` / `--fasta F` / `--length N` | random 48-mer | input (FASTA: **first record only**) |
-| `--loops` | 20 | trunk recycling loops |
-| `--steps` | 100 | diffusion sampling steps |
-| `--seed` | 0 | sampling seed (not honoured on XPU — see Must-know) |
-| `--chunk-size` | none | set 32/16 to cut O(L²) trunk memory on long chains |
-| `--pdb` | off | `infer_protein_as_pdb` fast path; PDB out, no pTM |
-| `--out` | pred.cif | output path |
-
-## Outputs
-
-- mmCIF via `result.complex.to_mmcif()`, all-atom coordinates.
-- `result.plddt` per-residue on a **0-1** scale (not 0-100); >0.7 is confident.
-- `result.ptm` global; `result.iptm` for interfaces (None/meaningless for a single chain).
-- A random/synthetic sequence yields pLDDT ≈ 0.2 — a useful sanity contrast.
-
-## Must-know
-
-- The forked `$REPO/transformers/src` **must** be first on `PYTHONPATH`; stock transformers lacks
-  `models.esmfold2` and you get `ImportError … models.esmfold2`.
-- Call `model.set_kernel_backend(None)` on XPU (the helper script does it).
-- `ZE_AFFINITY_MASK` must be a plain integer in FLAT mode. One tile = 64 GB.
-- **Cold start is expensive** (~90 s model load plus first-call XPU kernel JIT). Fold many
-  sequences in ONE process to amortize it; for a single one-off fold, boltz or protenix start faster.
-- Seeding uses `torch.cuda.*` RNG only, so diffusion sampling is effectively unseeded on XPU and
-  results vary run to run.
-- The CLI folds only the first FASTA record — use the Python API for complexes.
-- Memory: weights ~14 GB; L ≲ 1000 fits one tile, L ≳ 1400 may OOM → `--chunk-size 32` or 16.
-- Do not `uv pip install` into this venv; it relies on the module's torch and a plain install pulls
-  a CUDA wheel.
-- Harmless noise: missing transformer_engine / xformers / flash-attn warnings, and
-  `🚨 No checkpoint found for ESMCFor...` lines.
+Source `$HPC_LOAM_HOME/scripts/jupiter_env.sh` in a bash subprocess before activating the tool environment. Preserve the assigned `CUDA_VISIBLE_DEVICES`; use `cuda:0` within a one-GPU row. Stage scripts and inputs with `write_files`, execute real sweeps with `run_batch(gpus=1)`, poll completion, then inspect actual output files. Batch floors are configured by the deployment server; consult the campaign setup. Never pad with duplicate jobs. Keep each row within the remaining Slurm walltime.

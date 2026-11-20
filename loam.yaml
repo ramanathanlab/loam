@@ -1,0 +1,108 @@
+goal: examples/campaigns/binder-design.md
+rules:
+- examples/rules/binder-protocol.md
+- examples/rules/binder-constraint.md
+state_dir: state
+skills_dirs:
+- skills
+rounds: 3
+models:
+  reasoner:
+    model: argo:gpt-5.6-luna
+    base_url: http://127.0.0.1:50856/v1
+  validator:
+    model: nemotron-35-super-vl
+    base_url: https://inference-api.alcf.anl.gov/resource_server/tara/api/v1
+    api_key_env: ALCF_INFERENCE_TOKEN
+  reviewer:
+    model: argo:gpt-5.6-luna
+    base_url: http://127.0.0.1:50856/v1
+  code_generator:
+    model: argo:gpt-5.6-luna
+    base_url: http://127.0.0.1:50856/v1
+execution:
+  mode: hpc
+  workdir: ${LOAM_RUN_ROOT}/work
+  setup: 'Run scientific tools by sourcing the absolute environment helper ${LOAM_REPO_ROOT}/scripts/jupiter_env.sh
+    and activating the tool''s dedicated venv inside a bash subprocess. Read the relevant skill with read_skill
+    before coding. Jupiter has four GH200 CUDA GPUs per node; preserve assigned CUDA_VISIBLE_DEVICES and use cuda:0
+    in one-GPU tasks. Do not use Intel modules or XPU recipes.
+
+    Stage scripts and inputs with write_files. Use run_batch(gpus=1) for real distinct candidate sweeps; this development
+    deployment allows one-row batches, with no duplicate padding. Check pool_status and list_batches before large
+    submissions. Share the allocation across validators; do not assume exclusive use. Split long stages so each
+    row finishes within the two-hour allocation. Poll batch_status to completion and inspect actual output files
+    before reporting metrics.
+
+    Use RFD4-Proteina for backbone generation, ProteinMPNN for sequence design, Chai/Boltz/Protenix for folding,
+    and OpenMM/molecular-simulations for simulation and MM-P(G)BSA. Read the documented limitations before selecting
+    other tools. Fetch target structures once into the campaign workspace and reuse them; no Aurora target directory
+    is available.
+
+    Write outputs under ${LOAM_RUN_ROOT}/work in the dispatched hypothesis workspace. A missing
+    output is an error, not an empty result.
+
+    '
+  hpc:
+    endpoint_id: ${LOAM_GLOBUS_ENDPOINT_ID}
+    campaign_id: loam-jupiter-egfr
+    system: jupiter
+    exchange_url: https://exchange.academy-agents.org/v1
+    base_dir: ${LOAM_RUN_ROOT}
+    worker_code_dir: ${LOAM_REPO_ROOT}
+    inspect_roots:
+    - ${LOAM_RUN_ROOT}
+    - ${LOAM_SOFTWARE_ROOT}
+    pool_size: 4
+    server_script: skills/hpc-deployment/scripts/mcp_server.py
+    host: 127.0.0.1
+    port: 8010
+    startup_timeout: 86400
+    allocation:
+      account: deepwing
+      queue: booster
+      walltime: 02:00:00
+      nodes: 1
+      init_blocks: 0
+      min_blocks: 0
+      max_blocks: 1
+      max_idletime: 300
+      endpoint_options:
+        partition: booster
+        worker_init: export TMPDIR=/tmp; export HPC_LOAM_HOME=${LOAM_REPO_ROOT};
+          export LOAM_SOFTWARE_ROOT=${LOAM_SOFTWARE_ROOT}; source ${LOAM_REPO_ROOT}/scripts/jupiter_env.sh;
+          source ${LOAM_SOFTWARE_ROOT}/globus-compute/.venv/bin/activate; export PYTHONPATH=${LOAM_REPO_ROOT}/skills/hpc-deployment/scripts:${PYTHONPATH:-};
+          export HPC_MIN_BATCH_ROWS=1 HPC_MIN_BATCH_DISTINCT=1
+        scheduler_options: '#SBATCH --gres=gpu:4
+
+          '
+tournament:
+  jnana_root: ${LOAM_SOFTWARE_ROOT}/jnana-engine
+  generation:
+    model: argo:gpt-5.6-luna
+    base_url: http://127.0.0.1:50856/v1
+  ranking:
+    model: nemotron-35-super-vl
+    base_url: https://inference-api.alcf.anl.gov/resource_server/tara/api/v1
+    api_key_env: ALCF_INFERENCE_TOKEN
+  initial_hypotheses: 8
+  new_per_round: 4
+  gen_batch_size: 10
+  top_k: 2
+  scheme: swiss
+  swiss_rounds: 3
+  workers: 4
+  matches: 10
+  max_seconds: 6000
+workspace_inputs: null
+concurrency: 2
+max_code_calls: 32
+max_requests: 2000
+model_retries: 10
+timeouts:
+  tool: 6000
+  model_request: 600
+  validator: 6600
+  code_generator: 6000
+  reviewer: 900
+  reasoner: 1800

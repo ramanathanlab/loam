@@ -338,11 +338,14 @@ def test_managed_hpc_yaml_resolves_script_and_generates_canonical_environment(tm
         'HPC_LOAM_HOME': '/campaign/loam',
         'HPC_INSPECT_ROOTS': '/datasets:/campaign/results',
         'HPC_POOL_SIZE': '5',
+        'HPC_SCIENCE_WORKERS_PER_GPU': '1',
+        'HPC_GPUS_PER_NODE': '12',
         # Cold-endpoint retry bounds: config-driven, defaulted here. They are
         # NOT in HPC_ENDPOINT_CONFIG_JSON on purpose -- changing them must not
         # fork a new user endpoint, since that would forfeit a running block.
         'HPC_COLD_ENDPOINT_TIMEOUT': '300.0',
         'HPC_COLD_ENDPOINT_BACKOFF': '5.0',
+        'HPC_CLUSTER_STARTUP_TIMEOUT': '4.0',
         'HPC_ENDPOINT_CONFIG_JSON': json.dumps({
             'worker_init': 'module load tools',
             'account': 'project',
@@ -618,6 +621,57 @@ def test_mcp_submission_and_execution_are_derived_from_observed_calls(tmp_path):
     assert deps.executed_batches == {'b-1'}
 
 
+@pytest.mark.parametrize('returncode,prepared', [('0', True), ('1', False), (None, False)])
+def test_remote_cpu_preparation_never_attests_scientific_execution(tmp_path, returncode, prepared):
+    from loam.execution import Deps, OwnedMCP
+    from loam.schemas import CodeResult
+    from loam.workspace import Workspace
+
+    class Server:
+        async def call_tool(self, name, args, ctx, tool):
+            assert name == 'run_code'
+            return {'returncode': returncode, 'stdout': 'manifest metadata'}
+
+    cfg = make_cfg(tmp_path)
+    ws = Workspace(cfg, H)
+    _, run_dir = ws.open_run(1, 'prepare manifest only')
+    deps = Deps(cfg, {}, ws, 1, 'h', run_dir=run_dir)
+    asyncio.run(OwnedMCP(Server()).call_tool(
+        'run_code', {'payload': 'print("manifest metadata")'}, SimpleNamespace(deps=deps), None))
+    assert deps.prepared is prepared
+    assert not deps.submitted_batches and not deps.executed_batches
+    CodeResult(status='prepared', code='', result='metadata only')
+
+
+def test_operator_tool_names_cannot_be_replaced_or_select_an_unreviewed_version(tmp_path):
+    from loam.execution import Deps, OwnedMCP
+    from loam.workspace import Workspace
+
+    calls = []
+    class Server:
+        async def call_tool(self, name, args, ctx, tool):
+            calls.append((name, args))
+            return {'batch_id': 'b-reviewed'}
+
+    cfg = make_cfg(tmp_path)
+    cfg.execution.hpc = SimpleNamespace(base_dir=str(tmp_path))
+    (tmp_path / 'campaign-tool-registrations.json').write_text(json.dumps([
+        {'tool': 'reviewed_stage', 'version': 1, 'sha256': 'reviewed-source'}]))
+    ws = Workspace(cfg, H)
+    _, run_dir = ws.open_run(1, 'run the reviewed stage')
+    deps = Deps(cfg, {}, ws, 1, 'h', run_dir=run_dir)
+    ctx = SimpleNamespace(deps=deps)
+    wrapper = OwnedMCP(Server())
+    with pytest.raises(ToolFailed, match='operator-frozen'):
+        asyncio.run(wrapper.call_tool('register_tool', {'name': 'reviewed_stage'}, ctx, None))
+    assert not calls
+    asyncio.run(wrapper.call_tool('run_batch', {'tool': 'reviewed_stage', 'tool_version': 999}, ctx, None))
+    assert calls[-1][1]['tool_version'] == 1
+    assert ws.batch_ids() == ['b-reviewed']
+    asyncio.run(wrapper.call_tool('run_batch', {'tool': 'a_new_stage', 'tool_version': 2}, ctx, None))
+    assert calls[-1][1]['tool_version'] == 2
+
+
 def test_generation_timeout_aborts_before_ranking_or_save(tmp_path, monkeypatch):
     from loam.tournament import GenerationTimedOut, Tournament
 
@@ -625,7 +679,7 @@ def test_generation_timeout_aborts_before_ranking_or_save(tmp_path, monkeypatch)
 
     class CoScientist:
         def __init__(self, **kwargs):
-            self.memory = SimpleNamespace(save=lambda: calls.append('save'))
+            self.memory = SimpleNamespace(storage_path=None, save=lambda: calls.append('save'))
         get_all_hypotheses = lambda self: []
         set_research_goal = start = stop = generate_hypotheses = lambda self, *a, **k: None
         wait_for_completion = lambda self, timeout: False

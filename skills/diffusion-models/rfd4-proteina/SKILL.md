@@ -1,168 +1,99 @@
 ---
 name: rfd4-proteina
-description: Generate protein backbones with RFD4-Proteina (flow-matching all-atom design) on Aurora Intel XPU — monomers, protein/DNA/small-molecule binders, motif scaffolding and enzyme design — from an annotated CIF, one resident worker per tile. Use for backbone/binder generation on Aurora, including Loam run_batch fan-out across tiles.
+description: Generate protein designs and target-conditioned binders with RFD4-Proteina on Jupiter ARM64 GH200 workers, using its dedicated venv, native runtime libraries, and correct Hydra configuration groups.
 ---
 
-# RFD4-Proteina on Aurora (resident-worker route)
+# RFD4-Proteina on Jupiter
 
-Runs against a **pinned, read-only deployment** maintained by David Kastner (FRAME-IDP), delivered
-as `RFD4_Aurora_Handoff/` at the loam repo root. Requires `FRAME-IDP` group membership
-(`id -nG | tr ' ' '\n' | grep FRAME-IDP`). Do not modify, reinstall or `pip install` into it;
-report permission errors rather than changing permissions.
+Use the dedicated `software/RFD4-Proteina/.venv` through the campaign execution tools. Run all campaign scientific commands through `run_batch(gpus=1)` after staging with `write_files`; preserve Ensemble Launcher's `CUDA_VISIBLE_DEVICES` and use `cuda:0` inside a one-GPU task. Write artifacts under the assigned campaign workspace. Do not use Aurora modules, XPU settings, ALCF proxies, SSH, or scheduler submissions from a campaign agent.
 
-The adapter is single-device **by construction** (explicit `SingleDeviceStrategy` +
-`LightningEnvironment`, `num_workers=0`), so it does not deadlock when launched from an MPI/PALS
-worker — which is how Loam's `run_batch` calls it.
+## Read these packaged references
+
+These are real files inside this skill, accessible with `read_skill`:
+
+- [Protein-binder workflow](references/tasks/protein-binder.md): `read_skill(name="rfd4-proteina", file="references/tasks/protein-binder.md")`.
+- [Annotated-CIF construction](references/annotated-cif.md): `read_skill(name="rfd4-proteina", file="references/annotated-cif.md")`.
+
+Their paths are relative to this skill, not to the installed software checkout. Upstream files named within a reference must be read at the indicated checkout path through MCP; they are not implied `read_skill` paths.
+
+Absolute install: `$LOAM_SOFTWARE_ROOT/RFD4-Proteina`. For both `register_tool` and `run_batch`, `venv_path` is `$LOAM_SOFTWARE_ROOT/RFD4-Proteina/.venv`. There is no `software/` directory inside the loam checkout.
+
+Native annotated CIFs renumber the target and use condition annotation column names, not literal C_HOT/C_SEQ/C_CRDGRP strings. Read the annotated-CIF reference and the helper's `.report.json` to validate source-to-input numbering, hotspot preservation, and the requested contig.
 
 ## Environment
 
 ```bash
-RFD4_SHARE=/lus/flare/projects/FRAME-IDP/dkastner/Projects/IDeA
-RFD4_VENV="$RFD4_SHARE/envs/rfd4-xpu-2026.1.0"                # the venv ROOT
-RFD4_PYTHON="$RFD4_VENV/bin/python"                           # frameworks/2026.1.0, Lightning 2.6.6
-RFD4_ADAPTER="$RFD4_SHARE/experiments/pmd_design_20261026T070010Z/source/v34"
-RFD4_ENGINE="$RFD4_SHARE/experiments/aurora_performance_20261023T194443Z/source/rfd4_phase1"
+source "$HPC_LOAM_HOME/scripts/jupiter_env.sh"
+REPO="$LOAM_SOFTWARE_ROOT/RFD4-Proteina"
+source "$REPO/.venv/bin/activate"
+export CLUSTER=local WANDB_MODE=disabled OMP_NUM_THREADS=4
+cd "$REPO"
 ```
 
-**`run_batch(venv_path=...)` takes `$RFD4_VENV`, the ROOT — never `$RFD4_PYTHON`.**
-`hpc_agent._python()` appends `bin/python` to whatever it is given, so passing the
-interpreter yields `.../bin/python/bin/python` ("Not a directory") and every row
-fails to launch. Observed 2026-11-11: a 48-row `rfd4_generation` batch
-(`b-52527742c634`) was submitted with the interpreter path. `$RFD4_PYTHON` is for
-direct shell invocation only.
+Activate this venv explicitly before upstream shell wrappers: they otherwise preserve an unrelated active environment such as Globus's Python. Prefer absolute `.venv/bin/python` and `.venv/bin/rfd4-generate` paths. RFdiffusion3 is not an available campaign tool on this port.
 
-`scripts/run_rfd4_resident.sh` sets the full env block itself (PYTHONPATH, `ZE_AFFINITY_MASK`,
-single-threaded BLAS/OMP, `HF_HOME` + `HF_HUB_OFFLINE=1`, run-local `TMPDIR`), verifies the pinned
-adapter/engine hashes, and runs an import+tile probe before the worker. Deployed worker-visible
-copies, byte-identical to `scripts/`:
+## Correct Hydra invocation for a protein binder
 
-```
-/flare/FRAME-IDP/msinclair/loam-hpc/rfd4/rfd4_run_row.py        # run_batch row runner
-/flare/FRAME-IDP/msinclair/loam-hpc/rfd4/run_rfd4_resident.sh   # the wrapper
-```
-
-## Example
+After constructing and validating a real target-conditioned CIF, set `INPUT` and `OUT` to absolute campaign workspace paths; `OUT` must be fresh:
 
 ```bash
-# One design on one tile.  run_rfd4_resident.sh <plan.json> <fresh_run_dir> <seconds>
-echo '{"samples":[{"input":"/abs/annotated.cif","seed":101}]}' > plan.json
-ZE_AFFINITY_MASK=0 bash scripts/run_rfd4_resident.sh "$PWD/plan.json" "$PWD/run01" 900
+"$REPO/.venv/bin/rfd4-generate" \
+  inputs="$INPUT" \
+  out_dir="$OUT" \
+  recycle_strategy=medium/front_loaded \
+  num_replicates=1 \
+  batch_size=1 \
+  compile_lengths=null \
+  num_workers=0 \
+  save_chain_of_interest=true \
+  seed=42
 ```
 
-Fan out across tiles with `run_batch(gpus=1)` — one JSONL row per tile, up to the pool's
-`total_tiles` (nodes×12) concurrently:
+**Use `recycle_strategy=medium/front_loaded` exactly.** This selects the existing Hydra configuration group `configs/recycle_strategy/medium/front_loaded.yaml`, which defines the actual sampling schedule. Do not use `ppi.recycle_strategy=medium` or `+ppi.recycle_strategy=medium`: the first targets an absent field; the second adds an unused field instead of selecting the schedule. Do not blindly add `+` to a rejected override. Inspect `configs/inference.yaml` and the named group file when diagnosing configuration errors.
 
-```json
-{"id":"sat_00","input":"/abs/annotated.cif","seed":101,"seconds":900,
- "wrapper":"/flare/FRAME-IDP/msinclair/loam-hpc/rfd4/run_rfd4_resident.sh"}
-```
+The example requests one design at an explicit seed, batch size one, and eager execution. Keep the campaign's agreed settings and record effective overrides, checkpoint revision, input checksum, and output files. Do not silently substitute sampling presets or invent binder sequences/metrics.
 
-```python
-await c.call_tool("run_batch", {
-    "script_path": "/flare/FRAME-IDP/msinclair/loam-hpc/rfd4/rfd4_run_row.py",
-    "inputs_path": "<aurora>/rfd4_rows.jsonl",     # one row per tile
-    "gpus": 1, "timeout_each": 1200,
-    "tool": "rfd4_generate",            # registered with expects, see below
-    "labels": {"tool": "rfd4-proteina", "stage": "rfd4_generate"}})
-```
 
-**Register the row runner once, with its output contract**, then submit batches
-against it. Without a contract a row that exits 0 having written nothing counts as
-a success, `batch_status` withholds `ok`, and no validator may claim `executed` —
-a batch that really did produce 48 CIFs scores as nothing (observed 2026-11-11,
-`b-764d0bb44360`: 48/48 rows `rc=0`, one 1.6 MB CIF each, `ok` withheld).
+## Executable reference
 
-```python
-await c.call_tool("register_tool", {
-    "name": "rfd4_generate",
-    "script_path": "/flare/FRAME-IDP/msinclair/loam-hpc/rfd4/rfd4_run_row.py",
-    "params": {"id": "str", "input": "str", "seed": "int", "seconds": "int",
-               "wrapper": "str"},
-    "description": "RFD4-Proteina resident-worker backbone generation, one row per tile",
-    "example": {"id": "sat_00", "input": "/abs/annotated.cif", "seed": 101,
-                "seconds": 900,
-                "wrapper": "/flare/FRAME-IDP/msinclair/loam-hpc/rfd4/run_rfd4_resident.sh"},
-    "venv_path": "$RFD4_VENV",          # the ROOT
-    "skip_smoke": True,                  # needs an XPU the client node may lack
-    "expects": ["rfd4_run/predictions/**/*_generated.cif"]})
-```
+Read `references/smoke-workload.py` with `read_skill(name="rfd4-proteina", file="references/smoke-workload.py")` for a concrete Jupiter workflow with output assertions. Stage its contents into the assigned workspace before execution, using this tool's Python and `--out <absolute-output-directory> --software $LOAM_SOFTWARE_ROOT`. Reduced smoke settings validate plumbing; choose campaign settings for scientific evidence.
 
-Globs are relative to the row's **attempt** directory (the row script's cwd) and are
-checked *before* a successful attempt is promoted to the row top level, so match
-`rfd4_run/...`, not the promoted path you see on disk afterwards. `list_tools`
-shows what is already registered — register once, reuse across rounds.
+## Campaign execution
 
-## Inputs — annotated CIF
+Source `$HPC_LOAM_HOME/scripts/jupiter_env.sh` in a bash subprocess before activating the tool environment. Preserve the assigned `CUDA_VISIBLE_DEVICES`; use `cuda:0` within a one-GPU row. Stage scripts and inputs with `write_files`, execute real sweeps with `run_batch(gpus=1)`, poll completion, then inspect actual output files. Batch floors are configured by the deployment server; consult the campaign setup. Never pad with duplicate jobs. Keep each row within the remaining Slurm walltime.
 
-RFD4 inputs are **annotated CIFs** (`SA_*` columns + `pdbx_PDB_model_num` + a condition spec:
-contig `"<binder_len>, /0, <target>"` with `C_CRDGRP`/`C_SEQ`/`C_HOT`). A generic PDB does not
-encode fixed atoms, sequence constraints or ligand conditioning and will fail.
+The portable input helper is available at `$HPC_LOAM_HOME/skills/diffusion-models/rfd4-proteina/scripts/make_rfd4_input.py`. Hotspots accept comma-separated author residue IDs or inclusive ranges such as `360-386`. Validation is enabled by default; `--validate` makes this explicit.
 
-- **Build a binder input:** `scripts/make_rfd4_input.py --target <pdb> --target-chain <ch>
-  --hotspots <resids> --binder-len <N|range> --target-range <a-b> --out <cif>`, which wraps the
-  engine's `write_condition_spec_cif`. Validate a freshly built CIF on a 1-row smoke before
-  fanning out.
-- **Ready-made benchmark inputs** (matched to this engine, guaranteed valid):
-  `$RFD4_ENGINE/data/benchmarks/` — `ppi/ppi_bb_only/` (e.g. `28_HER2_AAV.cif.zst`), `monomer/`,
-  `motif_scaffolding/`, `small_molecule_binder/`, `dna_binder/`, `rna/`.
+For reusable generation stages, read `scripts/run_binder_generation.py` with `read_skill` and stage its contents in your assigned run directory. It accepts a row JSON filename with `input_cif` (absolute verified input), `seed`, and optional `binder_length` (default 60), `target_chain` (A), `binder_chain` (B). It writes only into the assigned batch-row directory and requires real, finite binder-target structures before writing `generation_manifest.json`. Register with `params={"input_cif":"str","seed":"int"}`, `skip_smoke=true`, the RFD4 venv, and `expects=["generation_manifest.json", "generation/inference_samples/*/*generated.cif"]`. Pass each hypothesis's own verified input explicitly. A previously registered tool with hard-coded input/output paths for a different hypothesis is unsuitable for reuse.
 
-## Arguments (what the wrapper passes to the adapter)
+For GPU inference stages, use `register_tool(skip_smoke=true, expects=[...])` and validate their real outputs through `run_batch(gpus=1)`. Registration smoke tests run on an unpinned submitter and have a 120-second limit; they are not a suitable place to run model inference. Preserve the batch output contract rather than dropping it to avoid a failed stage.
 
-`python -m idea.engines.rfd4_persistent --plan <plan.json> --output <dir> --device 0`
+## Bundled production pipeline
 
-| flag | default in wrapper | meaning |
-|---|---|---|
-| `--plan` | required | `{"samples":[{"input":"<cif>","seed":N}, …]}` |
-| `--output` | required | run dir (must not exist) |
-| `--device` | 0 | logical XPU index; the physical tile comes from `ZE_AFFINITY_MASK` |
-| `--precision` | `bf16-mixed` | or `32` (~1.75× slower) |
-| `--matmul` | `highest` | `highest`/`high`/`medium` |
-| `--deterministic` | on | fixed-seed execution |
-| `--recycle-strategy` | `medium/midpeak` | recycling schedule |
-| `--mode` | full | `full`/`partial`/`inverse_folding` |
-| `--compile-length N` | off | keep compilation/dynamic shapes off initially |
+`scripts/run_binder_pipeline.py` bundles one complete candidate into one assigned GPU row: the verified generation helper, target-fixed ProteinMPNN (chain B designed, A fixed), Chai with 3 recycles/200 diffusion steps/5 samples, and checked interface geometry. This avoids serial model-driven transitions between short stages. It does not reduce scientific sampling. Use it for the verified EGFR 205-residue crop and 60-residue binder; its hotspot geometry is specific to that mapped target.
 
-Internally it composes `inference_experiment=quickstart` with `num_replicates=1 batch_size=1
-num_workers=0 nn.tri_mult_backend=torch nn.attention_type=torch +idea_keep_model_on_xpu=true` —
-native eager Torch kernels, model resident on XPU.
+Each JSON row contains `id`, `condition` (`dual`, `one_region`, or `ridge`), integer `seed`, absolute `input_cif`, `input_sha256`, `target_fasta`, `generation_script`, and `generation_script_sha256`. The generation script is a frozen copy of `scripts/run_binder_generation.py`; the checksums must match the actual files. Prepare separate validated annotated inputs for each condition, preserving target geometry and sequence. Use globally distinct seeds and record them; do not reuse or pad candidates to fill slots.
 
-## Outputs
+For the operator-prepared scale campaign, `scripts/make_campaign_manifest.py` computes all row paths, checksums and twelve distinct seeds from the actual hypothesis UUID/run ID. Its frozen copy is in each hypothesis's data/. Invoke it once with `run_code` from YOUR RUN DIRECTORY using `import runpy; from pathlib import Path; runpy.run_path(str(Path.cwd().parents[1]/'data/make_campaign_manifest.py'), run_name='__main__')`. It writes `candidate-inputs.jsonl` and provenance in the assigned run and returns the exact input path. This is CPU metadata preparation; no GPU result is claimed. Submit that path to the registered bundled pipeline. This avoids repeatedly asking the model to transcribe long manifests or compute hashes itself.
 
-```
-<run_dir>/predictions/sample_NNNN/output/inference_samples/<name>/<name>_generated.cif
-<run_dir>/predictions/sample_NNNN/.../receipt.json
-<run_dir>/predictions/summary.json      # adapter/engine/checkpoint hashes, precision, device, seed, memory
-<run_dir>/{adapter_check.log,imports.log,worker.log}
-```
+After submission, call `batch_status` once to obtain the actual batch `dir`. For a bounded wait use `scripts/wait_for_batch.py`, also frozen in data/: `import runpy,json; from pathlib import Path; helper=runpy.run_path(str(Path.cwd().parents[1]/'data/wait_for_batch.py')); print(json.dumps(helper['wait_batch'](ACTUAL_BATCH_DIR, max_seconds=600, interval=15)))`. Replace ACTUAL_BATCH_DIR with the literal directory from `batch_status`. This read-only CPU helper checks real done/status files and returns immediately when every row is terminal, including failures. Then call MCP `batch_status` again to attest success. Never run an unconditional sleep loop for600seconds: small analysis batches can finish in less than a second, and even a large batch may finish early. The scientific workload and sampling budget remain unchanged.
 
-The generated CIF holds the designed binder chain plus the fixed target chain(s). The row runner
-also records `result.json {host,tile,seconds,rc,n_receipts,n_cifs}`.
+Register the bundled script with all row fields except `id` declared in `params` (`seed` is int, others str), `skip_smoke=true`, the RFD4 venv, and `expects=["summary.json", "generation_stage/generation_manifest.json", "mpnn/seqs/*.fa", "fold/pred.model_idx_*.cif", "fold/scores.model_idx_*.npz"]`. Run with `gpus=1`, the same venv, and `timeout_each=5000`. The script asserts five finite, sequence-matched complex models and native hotspot presence. It writes full provenance and stage timings in `summary.json`, plus `progress.json` for diagnosis. Resolve actual row output paths from `batch_status.dir`; successful outputs are promoted out of the attempt directory.
 
-## Must-know
+Contact counts, ipTM and target-aligned model-ensemble RMSDs remain computational observations. Report matched condition budgets and failed candidates; do not interpret these metrics as affinity or silently replace a failed pipeline with an easier tool.
 
-- **Output existence alone is not completion.** Require `rc=0` **and** `summary.json` **and** the
-  expected `receipt.json`(s) with matching input/seed identities.
-- **One independent resident worker per assigned tile** (normally 12/node). These are independent
-  samplers — never distribute one model across MPI ranks. Allocate ~4 CPUs per worker and keep
-  `OMP/MKL/OPENBLAS_NUM_THREADS=1`.
-- `ZE_AFFINITY_MASK` must be set **before** Torch import (the wrapper does this); changing it after
-  import is too late.
-- Each worker loads the model once and runs its plan serially. Do not issue concurrent calls against
-  one resident process.
-- **Set `"wrapper"` explicitly in every `run_batch` row.** The row runner's fallback chain ends at
-  `$HPC_LOAM_HOME/.../run_rfd4_resident.sh`, and `HPC_LOAM_HOME` is not set in the worker env.
-- Design count = rows × samples-per-plan, and distinct seeds are distinct designs (reusing a seed is
-  a replay). Reach a large library by fanning out across tiles, not one long serial job.
-- Size a fan-out to live free tiles (`pool_status` capacity minus in-flight work from
-  `list_batches`); each row must finish inside the block walltime.
-- Hangs after model build with an idle tile mean you are on an older stack — confirm `$RFD4_PYTHON`
-  and the adapter paths, and do not reintroduce a `sitecustomize.py` Lightning shim.
-- An import probe timeout (rc=124) is cold Lustre imports, not a hang; the probe budget is 300 s.
-- Do not enable broad CPU fallback or run on a login node to bypass the allocation check (the
-  adapter verifies the host is in `$PBS_NODEFILE`). SVD falls back to CPU by design on this Torch
-  build and is logged; that is not permission for general fallback.
-- On timeout/SIGABRT, preserve logs/seed/input and terminate only the owned process group. At most
-  one retry after a concrete diagnosis; a second unexplained failure of a config should stop and
-  report.
-- Source of truth: `RFD4_Aurora_Handoff/` at the loam repo root (`SKILL.md`,
-  `deployment_notes.md`, `rfd4-aurora-verified/`).
+`scripts/summarize_binder_pipeline.py` provides a failure-aware CPU-only summary. Its row fields are `batch_dir` (the actual owned batch output directory) and `expected_per_condition` (normally 4). Register with `expects=["analysis.json", "full_analysis.json"]`, the RFD4 venv and `skip_smoke=true`, then run with `gpus=0`. It checks terminal row status and model hashes, preserves failed candidates and reports an incomplete comparison if condition budgets were not met.
+
+## Intact EGFR context before energetic ranking
+
+The source 3NJP structure explicitly records disulfides A482–491 and A486–499 crossing the A286–490 crop. Do not treat this crop as a chemically intact EGFR construct for MM/GBSA. Screen on the crop, then re-fold selected actual designed sequences with intact canonical EGFR25–646 (622 residues) and verify target disulfides before energetic evaluation.
+
+`scripts/run_intact_egfr_followup.py` performs this later funnel stage. It accepts `id`, `seed`, `screen_summary`, `screen_summary_sha256`, `target_annotation`, `target_annotation_sha256`, `stages_directory`, `cofold_script_sha256`, and `mmgbsa_script_sha256`. Source summary paths must refer to actual completed candidate rows. The target annotation is an accession-verified UniProt P00533 JSON file retrieved once. Frozen stage scripts and their source provenance are in `references/intact-egfr-energy/`; copy them into the hypothesis's data directory before use. The reference requires a cysteine-free 60-residue binder; other binders need an independently verified binder disulfide topology.
+
+Register with the RFD4 venv, `skip_smoke=true`, and `expects=["followup-summary.json", "validation-report.json", "intact-geometry.json", "mmgbsa/report.json", "mmgbsa/FINAL_RESULTS_MMPBSA.dat"]`; run `gpus=1`, `timeout_each=5000`. Chai retains 3/200/5 sampling. OpenMM uses CUDA with ff14SB/GBn2, native target disulfides, 0.15M salt and up to 500 minimization iterations. MM/GBSA uses a single minimized frame and omits entropy and glycans. Report it as a static energy estimate, never as measured affinity or a validated binding free energy. Keep failures and ineligible chemistry explicit.
+
+The follow-up measures native hotspot contacts and target-crop-aligned binder RMSD for all five intact Chai models, and separately for the minimized energy frame. A favorable energy at another receptor site is not evidence for the intended epitope. Intact target native IDs equal the verified source-author hotspot IDs; the screen instead subtracts 285. The full target sequence slice 286–490 must equal the screen target exactly. Amber may discard chain labels when writing the minimized PDB, so the analysis verifies the complete sequence and splits residues 1–622 (target) and 623–682 (binder). The Amber topology must contain zero covalent bonds across that boundary. `followup-summary.json` distinguishes the input pose from post-minimization geometry; no new ipTM is assigned to a minimized structure.
+
+
+### Intact-follow-up metadata helper
+The campaign may provide `data/make_intact_followup_manifest.py`. Read it with `read_skill` file="scripts/make_intact_followup_manifest.py". From the assigned run directory, call its `make_manifest([absolute_per_candidate_summary_paths])` through CPU `run_code`. Supply real `summary.json` files from this hypothesis's recorded screen batch, never cohort `analysis.json` or `full_analysis.json`. It verifies candidate/model hashes, source hypothesis, binder chemistry and real annotation/stage paths, then writes the correctly checksummed JSONL for the registered intact tool. Selection and confidence gates remain the validator's responsibility; preparing metadata is not scientific evidence.

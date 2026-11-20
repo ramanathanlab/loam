@@ -1,0 +1,1777 @@
+{
+  "scope": "Measured Jupiter campaigns; sample NVML GPU busy over all allocated parent GPU-seconds, including startup, barriers, drain and absent samples as zero. Not SM utilization or FLOP efficiency.",
+  "target_50_percent_at_256_nodes_achieved": false,
+  "jobs": [
+    {
+      "label": "20a",
+      "job_id": "2946552",
+      "nodes": 20,
+      "inference": 8,
+      "science": 12,
+      "screen_trials": 723,
+      "full_context_trials": 148,
+      "overall_GPU_busy_percent": 19.440187922775102,
+      "allocated_GPU_hours": 178.35555555555555,
+      "scientific_completion_passed": false,
+      "qualified_campaign": false,
+      "case_status": "Diagnostic numerical outputs; campaign not qualified",
+      "recipe": {
+        "trial": "unified-20",
+        "job_id": "2946552",
+        "nodes": 20,
+        "account": "deepwing",
+        "partition": "booster",
+        "reservation": "",
+        "job_script_sha256": "6d8ede5bf465043f1b56bb67e92ad55b6eb90332be6e26c19c53526df848f325",
+        "inference": 8,
+        "science": 12,
+        "concurrency": 12,
+        "top_k": 48,
+        "initial_hypotheses": 96,
+        "new_per_round": 24,
+        "generation_batch_size": 4,
+        "scheme": "swiss",
+        "swiss_rounds": 1,
+        "tournament_workers": 4,
+        "synthesis_concurrency": null,
+        "science_workers_per_gpu": 1,
+        "physical_science_GPUs": 48,
+        "logical_science_worker_slots": 48,
+        "hypotheses_per_science_node": 1.0,
+        "admission_waves": 4.0,
+        "tournament_max_seconds": 2400,
+        "timeouts": {
+          "code_generator": 6600,
+          "model_request": 600,
+          "reasoner": 1800,
+          "reviewer": 1200,
+          "tool": 6000,
+          "validator": 10800
+        },
+        "model_startup_timeout": 5400,
+        "hpc_startup_timeout": 7200,
+        "mcp_init_timeout_seconds": null,
+        "controller_gc_threshold0": null,
+        "model_retries": 10,
+        "max_requests": 160,
+        "max_code_calls": 6,
+        "roles": {
+          "code_generator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reasoner": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reviewer": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "validator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          }
+        },
+        "walltime": "06:00:00",
+        "config_sha256": "1577f283df44f6e5f48d1e0f71dccbe9e40b6e766c825b04284fc86661f336b1"
+      }
+    },
+    {
+      "label": "20b",
+      "job_id": "2952205",
+      "nodes": 20,
+      "inference": 8,
+      "science": 12,
+      "screen_trials": 1304,
+      "full_context_trials": 272,
+      "overall_GPU_busy_percent": 26.662630654486993,
+      "allocated_GPU_hours": 259.24444444444447,
+      "scientific_completion_passed": true,
+      "qualified_campaign": true,
+      "case_status": "Qualified completed campaign",
+      "recipe": {
+        "trial": "unified-20b",
+        "job_id": "2952205",
+        "nodes": 20,
+        "account": "deepwing",
+        "partition": "booster",
+        "reservation": "",
+        "job_script_sha256": "34e790d0b8ee04baaa61ca2ecbcbf4572bebfba7b1db58833e7c4225840bb5e8",
+        "inference": 8,
+        "science": 12,
+        "concurrency": 12,
+        "top_k": 48,
+        "initial_hypotheses": 96,
+        "new_per_round": 24,
+        "generation_batch_size": 4,
+        "scheme": "swiss",
+        "swiss_rounds": 1,
+        "tournament_workers": 16,
+        "synthesis_concurrency": 8,
+        "science_workers_per_gpu": 1,
+        "physical_science_GPUs": 48,
+        "logical_science_worker_slots": 48,
+        "hypotheses_per_science_node": 1.0,
+        "admission_waves": 4.0,
+        "tournament_max_seconds": 2400,
+        "timeouts": {
+          "code_generator": 6600,
+          "model_request": 600,
+          "reasoner": 1800,
+          "reviewer": 1200,
+          "tool": 6000,
+          "validator": 10800
+        },
+        "model_startup_timeout": 5400,
+        "hpc_startup_timeout": 7200,
+        "mcp_init_timeout_seconds": null,
+        "controller_gc_threshold0": null,
+        "model_retries": 10,
+        "max_requests": 160,
+        "max_code_calls": 6,
+        "roles": {
+          "code_generator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reasoner": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reviewer": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "validator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          }
+        },
+        "walltime": "06:00:00",
+        "config_sha256": "450ab0395a63a4f210466f7f932b35c4578b9b96c6e4731a63a40359316fc063"
+      }
+    },
+    {
+      "label": "20c",
+      "job_id": "2957806",
+      "nodes": 20,
+      "inference": 8,
+      "science": 12,
+      "screen_trials": 1202,
+      "full_context_trials": 174,
+      "overall_GPU_busy_percent": 31.96158391538499,
+      "allocated_GPU_hours": 150.2888888888889,
+      "scientific_completion_passed": false,
+      "qualified_campaign": false,
+      "case_status": "Diagnostic numerical outputs; campaign not qualified",
+      "recipe": {
+        "trial": "unified-20c",
+        "job_id": "2957806",
+        "nodes": 20,
+        "account": "deepwing",
+        "partition": "booster",
+        "reservation": "",
+        "job_script_sha256": "7fbecf6143805c7965c14daa960f90c7a3c28283de036896ded67a0fa4cc2723",
+        "inference": 8,
+        "science": 12,
+        "concurrency": 24,
+        "top_k": 96,
+        "initial_hypotheses": 192,
+        "new_per_round": 48,
+        "generation_batch_size": 4,
+        "scheme": "swiss",
+        "swiss_rounds": 1,
+        "tournament_workers": 16,
+        "synthesis_concurrency": 8,
+        "science_workers_per_gpu": 1,
+        "physical_science_GPUs": 48,
+        "logical_science_worker_slots": 48,
+        "hypotheses_per_science_node": 2.0,
+        "admission_waves": 4.0,
+        "tournament_max_seconds": 2400,
+        "timeouts": {
+          "code_generator": 6600,
+          "model_request": 600,
+          "reasoner": 1800,
+          "reviewer": 1200,
+          "tool": 6000,
+          "validator": 10800
+        },
+        "model_startup_timeout": 5400,
+        "hpc_startup_timeout": 7200,
+        "mcp_init_timeout_seconds": null,
+        "controller_gc_threshold0": null,
+        "model_retries": 10,
+        "max_requests": 160,
+        "max_code_calls": 6,
+        "roles": {
+          "code_generator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reasoner": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reviewer": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "validator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          }
+        },
+        "walltime": "06:00:00",
+        "config_sha256": "8b23576d693603b5924c979ddb731759de378f0f814e5d54f78c2a8ada039cd9"
+      }
+    },
+    {
+      "label": "20e",
+      "job_id": "2961727",
+      "nodes": 20,
+      "inference": 8,
+      "science": 12,
+      "screen_trials": 2616,
+      "full_context_trials": 528,
+      "overall_GPU_busy_percent": 38.709988838406105,
+      "allocated_GPU_hours": 308.6,
+      "scientific_completion_passed": true,
+      "qualified_campaign": true,
+      "case_status": "Qualified completed campaign",
+      "recipe": {
+        "trial": "unified-20e",
+        "job_id": "2961727",
+        "nodes": 20,
+        "account": "deepwing",
+        "partition": "booster",
+        "reservation": "",
+        "job_script_sha256": "365e8bae756627dcb476490bfde15da99b149f9e4a13ed5e10bea2666b3e8fb6",
+        "inference": 8,
+        "science": 12,
+        "concurrency": 48,
+        "top_k": 96,
+        "initial_hypotheses": 192,
+        "new_per_round": 48,
+        "generation_batch_size": 4,
+        "scheme": "swiss",
+        "swiss_rounds": 1,
+        "tournament_workers": 16,
+        "synthesis_concurrency": 8,
+        "science_workers_per_gpu": 2,
+        "physical_science_GPUs": 48,
+        "logical_science_worker_slots": 96,
+        "hypotheses_per_science_node": 4.0,
+        "admission_waves": 2.0,
+        "tournament_max_seconds": 2400,
+        "timeouts": {
+          "code_generator": 6600,
+          "model_request": 600,
+          "reasoner": 1800,
+          "reviewer": 1200,
+          "tool": 6000,
+          "validator": 10800
+        },
+        "model_startup_timeout": 5400,
+        "hpc_startup_timeout": 7200,
+        "mcp_init_timeout_seconds": null,
+        "controller_gc_threshold0": null,
+        "model_retries": 10,
+        "max_requests": 160,
+        "max_code_calls": 6,
+        "roles": {
+          "code_generator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reasoner": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reviewer": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "validator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          }
+        },
+        "walltime": "06:00:00",
+        "config_sha256": "3548388f727fc62900d24fad5c827e86d012979d45f9171aacc87eb280beb945"
+      }
+    },
+    {
+      "label": "20f",
+      "job_id": "2967403",
+      "nodes": 20,
+      "inference": 8,
+      "science": 12,
+      "screen_trials": 3526,
+      "full_context_trials": 565,
+      "overall_GPU_busy_percent": 51.18278920314394,
+      "allocated_GPU_hours": 278.55555555555554,
+      "scientific_completion_passed": false,
+      "qualified_campaign": false,
+      "case_status": "Diagnostic numerical outputs; campaign not qualified",
+      "recipe": {
+        "trial": "unified-20f",
+        "job_id": "2967403",
+        "nodes": 20,
+        "account": "deepwing",
+        "partition": "booster",
+        "reservation": "",
+        "job_script_sha256": "27284d853f37323a7c65d809faad8bed29d9302a8e6a8b0a3f12adbe3cc42163",
+        "inference": 8,
+        "science": 12,
+        "concurrency": 48,
+        "top_k": 144,
+        "initial_hypotheses": 288,
+        "new_per_round": 72,
+        "generation_batch_size": 4,
+        "scheme": "swiss",
+        "swiss_rounds": 1,
+        "tournament_workers": 16,
+        "synthesis_concurrency": 8,
+        "science_workers_per_gpu": 2,
+        "physical_science_GPUs": 48,
+        "logical_science_worker_slots": 96,
+        "hypotheses_per_science_node": 4.0,
+        "admission_waves": 3.0,
+        "tournament_max_seconds": 2400,
+        "timeouts": {
+          "code_generator": 6600,
+          "model_request": 600,
+          "reasoner": 1800,
+          "reviewer": 1200,
+          "tool": 6000,
+          "validator": 10800
+        },
+        "model_startup_timeout": 5400,
+        "hpc_startup_timeout": 7200,
+        "mcp_init_timeout_seconds": null,
+        "controller_gc_threshold0": null,
+        "model_retries": 10,
+        "max_requests": 160,
+        "max_code_calls": 6,
+        "roles": {
+          "code_generator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reasoner": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reviewer": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "validator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          }
+        },
+        "walltime": "08:00:00",
+        "config_sha256": "1bf71329933b3a236b4445876603338b42179906a2548ed14ea2cf2b61d64110"
+      }
+    },
+    {
+      "label": "20g",
+      "job_id": "2972192",
+      "nodes": 20,
+      "inference": 8,
+      "science": 12,
+      "screen_trials": 4722,
+      "full_context_trials": 764,
+      "overall_GPU_busy_percent": 47.96340293671386,
+      "allocated_GPU_hours": 384.53333333333336,
+      "scientific_completion_passed": true,
+      "qualified_campaign": true,
+      "case_status": "Qualified completed campaign",
+      "recipe": {
+        "trial": "unified-20g",
+        "job_id": "2972192",
+        "nodes": 20,
+        "account": "deepwing",
+        "partition": "booster",
+        "reservation": "",
+        "job_script_sha256": "c02dd3ed8f3fb0dd005a892f256462b64b0108abb67f14057771bfbd8225a6c5",
+        "inference": 8,
+        "science": 12,
+        "concurrency": 48,
+        "top_k": 144,
+        "initial_hypotheses": 288,
+        "new_per_round": 72,
+        "generation_batch_size": 4,
+        "scheme": "swiss",
+        "swiss_rounds": 1,
+        "tournament_workers": 16,
+        "synthesis_concurrency": 8,
+        "science_workers_per_gpu": 2,
+        "physical_science_GPUs": 48,
+        "logical_science_worker_slots": 96,
+        "hypotheses_per_science_node": 4.0,
+        "admission_waves": 3.0,
+        "tournament_max_seconds": 2400,
+        "timeouts": {
+          "code_generator": 6600,
+          "model_request": 600,
+          "reasoner": 1800,
+          "reviewer": 1200,
+          "tool": 6000,
+          "validator": 10800
+        },
+        "model_startup_timeout": 5400,
+        "hpc_startup_timeout": 7200,
+        "mcp_init_timeout_seconds": null,
+        "controller_gc_threshold0": null,
+        "model_retries": 10,
+        "max_requests": 160,
+        "max_code_calls": 6,
+        "roles": {
+          "code_generator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reasoner": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 32768,
+            "thinking": false
+          },
+          "reviewer": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "validator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          }
+        },
+        "walltime": "08:00:00",
+        "config_sha256": "f113805648591b33e2cbdc09c5d6e785cdec15800a4709fca2966143d82abad0"
+      }
+    },
+    {
+      "label": "256a",
+      "job_id": "2976829",
+      "nodes": 256,
+      "inference": 102,
+      "science": 154,
+      "screen_trials": 16994,
+      "full_context_trials": 1870,
+      "overall_GPU_busy_percent": 24.8711274047433,
+      "allocated_GPU_hours": 2552.6044444444447,
+      "scientific_completion_passed": false,
+      "qualified_campaign": false,
+      "case_status": "Diagnostic numerical outputs; campaign not qualified",
+      "recipe": {
+        "trial": "unified-256",
+        "job_id": "2976829",
+        "nodes": 256,
+        "account": "deepwing",
+        "partition": "booster",
+        "reservation": "",
+        "job_script_sha256": "4bff7edcab74b8760b975f6d82ee6a6f53b637085a3dd8a19431aefc29a7d663",
+        "inference": 102,
+        "science": 154,
+        "concurrency": 616,
+        "top_k": 1848,
+        "initial_hypotheses": 3696,
+        "new_per_round": 924,
+        "generation_batch_size": 4,
+        "scheme": "swiss",
+        "swiss_rounds": 1,
+        "tournament_workers": 204,
+        "synthesis_concurrency": 102,
+        "science_workers_per_gpu": 2,
+        "physical_science_GPUs": 616,
+        "logical_science_worker_slots": 1232,
+        "hypotheses_per_science_node": 4.0,
+        "admission_waves": 3.0,
+        "tournament_max_seconds": 10800,
+        "timeouts": {
+          "code_generator": 6600,
+          "model_request": 600,
+          "reasoner": 1800,
+          "reviewer": 1200,
+          "tool": 6000,
+          "validator": 10800
+        },
+        "model_startup_timeout": 5400,
+        "hpc_startup_timeout": 7200,
+        "mcp_init_timeout_seconds": null,
+        "controller_gc_threshold0": null,
+        "model_retries": 10,
+        "max_requests": 160,
+        "max_code_calls": 6,
+        "roles": {
+          "code_generator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reasoner": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 32768,
+            "thinking": false
+          },
+          "reviewer": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "validator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          }
+        },
+        "walltime": "08:00:00",
+        "config_sha256": "efadb1aafd1984192e62ef03aadebeed6e991c07501d143a93e3d0ffa5d80a2e"
+      }
+    },
+    {
+      "label": "20i",
+      "job_id": "2979745",
+      "nodes": 20,
+      "inference": 8,
+      "science": 12,
+      "screen_trials": 4858,
+      "full_context_trials": 819,
+      "overall_GPU_busy_percent": 51.06377547689217,
+      "allocated_GPU_hours": 386.35555555555555,
+      "scientific_completion_passed": true,
+      "qualified_campaign": true,
+      "case_status": "Qualified completed campaign",
+      "recipe": {
+        "trial": "unified-20i",
+        "job_id": "2979745",
+        "nodes": 20,
+        "account": "deepwing",
+        "partition": "booster",
+        "reservation": "",
+        "job_script_sha256": "1ca6b99c8643c22c6b7b91d578e64db23e3bfd0b199e5616602af8b6512f8dbe",
+        "inference": 8,
+        "science": 12,
+        "concurrency": 48,
+        "top_k": 144,
+        "initial_hypotheses": 288,
+        "new_per_round": 72,
+        "generation_batch_size": 4,
+        "scheme": "swiss",
+        "swiss_rounds": 1,
+        "tournament_workers": 16,
+        "synthesis_concurrency": 8,
+        "science_workers_per_gpu": 2,
+        "physical_science_GPUs": 48,
+        "logical_science_worker_slots": 96,
+        "hypotheses_per_science_node": 4.0,
+        "admission_waves": 3.0,
+        "tournament_max_seconds": 2400,
+        "timeouts": {
+          "code_generator": 6600,
+          "model_request": 600,
+          "reasoner": 1800,
+          "reviewer": 1200,
+          "tool": 6000,
+          "validator": 10800
+        },
+        "model_startup_timeout": 5400,
+        "hpc_startup_timeout": 7200,
+        "mcp_init_timeout_seconds": null,
+        "controller_gc_threshold0": null,
+        "model_retries": 10,
+        "max_requests": 160,
+        "max_code_calls": 6,
+        "roles": {
+          "code_generator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reasoner": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 32768,
+            "thinking": false
+          },
+          "reviewer": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "validator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          }
+        },
+        "walltime": "08:00:00",
+        "config_sha256": "62ba8c29eecaa1f0a414032f1a25e013540bf28b87de87951fcf8127b37db64d"
+      }
+    },
+    {
+      "label": "256b",
+      "job_id": "2987415",
+      "nodes": 256,
+      "inference": 102,
+      "science": 154,
+      "screen_trials": 22700,
+      "full_context_trials": 2890,
+      "overall_GPU_busy_percent": 32.29987227770721,
+      "allocated_GPU_hours": 3094.471111111111,
+      "scientific_completion_passed": false,
+      "qualified_campaign": false,
+      "case_status": "Diagnostic numerical outputs; campaign not qualified",
+      "recipe": {
+        "trial": "unified-256b",
+        "job_id": "2987415",
+        "nodes": 256,
+        "account": "deepwing",
+        "partition": "booster",
+        "reservation": "",
+        "job_script_sha256": "0a84146c14a23eeee664b67dfc1e546318900105e4674a56fd3f7949525a232d",
+        "inference": 102,
+        "science": 154,
+        "concurrency": 616,
+        "top_k": 1848,
+        "initial_hypotheses": 3696,
+        "new_per_round": 924,
+        "generation_batch_size": 4,
+        "scheme": "swiss",
+        "swiss_rounds": 1,
+        "tournament_workers": 204,
+        "synthesis_concurrency": 102,
+        "science_workers_per_gpu": 2,
+        "physical_science_GPUs": 616,
+        "logical_science_worker_slots": 1232,
+        "hypotheses_per_science_node": 4.0,
+        "admission_waves": 3.0,
+        "tournament_max_seconds": 10800,
+        "timeouts": {
+          "code_generator": 6600,
+          "model_request": 600,
+          "reasoner": 1800,
+          "reviewer": 1200,
+          "tool": 6000,
+          "validator": 10800
+        },
+        "model_startup_timeout": 5400,
+        "hpc_startup_timeout": 7200,
+        "mcp_init_timeout_seconds": null,
+        "controller_gc_threshold0": null,
+        "model_retries": 10,
+        "max_requests": 160,
+        "max_code_calls": 6,
+        "roles": {
+          "code_generator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reasoner": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 32768,
+            "thinking": false
+          },
+          "reviewer": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "validator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          }
+        },
+        "walltime": "08:00:00",
+        "config_sha256": "e2b2476ac67f611c0fd80cb46272683f65d32cb722ac0b467798b02670ed76a4"
+      }
+    },
+    {
+      "label": "20j",
+      "job_id": "2991226",
+      "nodes": 20,
+      "inference": 8,
+      "science": 12,
+      "screen_trials": 5234,
+      "full_context_trials": 871,
+      "overall_GPU_busy_percent": 48.349272629871415,
+      "allocated_GPU_hours": 445.6666666666667,
+      "scientific_completion_passed": true,
+      "qualified_campaign": true,
+      "case_status": "Qualified completed campaign",
+      "recipe": {
+        "trial": "unified-20j",
+        "job_id": "2991226",
+        "nodes": 20,
+        "account": "deepwing",
+        "partition": "booster",
+        "reservation": "",
+        "job_script_sha256": "1d824e645dcafb2dba7a22bc300acdc7cd34bf322025001df2330007df519334",
+        "inference": 8,
+        "science": 12,
+        "concurrency": 48,
+        "top_k": 144,
+        "initial_hypotheses": 288,
+        "new_per_round": 72,
+        "generation_batch_size": 4,
+        "scheme": "swiss",
+        "swiss_rounds": 1,
+        "tournament_workers": 16,
+        "synthesis_concurrency": 8,
+        "science_workers_per_gpu": 2,
+        "physical_science_GPUs": 48,
+        "logical_science_worker_slots": 96,
+        "hypotheses_per_science_node": 4.0,
+        "admission_waves": 3.0,
+        "tournament_max_seconds": 2400,
+        "timeouts": {
+          "code_generator": 6600,
+          "model_request": 600,
+          "reasoner": 1800,
+          "reviewer": 1200,
+          "tool": 6000,
+          "validator": 10800
+        },
+        "model_startup_timeout": 5400,
+        "hpc_startup_timeout": 7200,
+        "mcp_init_timeout_seconds": 60,
+        "controller_gc_threshold0": 10000,
+        "model_retries": 10,
+        "max_requests": 160,
+        "max_code_calls": 6,
+        "roles": {
+          "code_generator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reasoner": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 32768,
+            "thinking": false
+          },
+          "reviewer": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "validator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          }
+        },
+        "walltime": "08:00:00",
+        "config_sha256": "ef72e26affbf57d428035938f7d880aee2b5151be79d8bc7eaef3c16ef29e565"
+      }
+    },
+    {
+      "label": "256c",
+      "job_id": "2999784",
+      "nodes": 256,
+      "inference": 102,
+      "science": 154,
+      "screen_trials": 61134,
+      "full_context_trials": 10337,
+      "overall_GPU_busy_percent": 40.5087560993584,
+      "allocated_GPU_hours": 7539.2,
+      "scientific_completion_passed": false,
+      "qualified_campaign": false,
+      "case_status": "Diagnostic numerical outputs; campaign not qualified",
+      "recipe": {
+        "trial": "unified-256c",
+        "job_id": "2999784",
+        "nodes": 256,
+        "account": "deepwing",
+        "partition": "booster",
+        "reservation": "",
+        "job_script_sha256": "30bcbc21e51210c954cf8416f188509b1f5bf446c677147963e1d018a635c854",
+        "inference": 102,
+        "science": 154,
+        "concurrency": 616,
+        "top_k": 1848,
+        "initial_hypotheses": 3696,
+        "new_per_round": 924,
+        "generation_batch_size": 4,
+        "scheme": "swiss",
+        "swiss_rounds": 1,
+        "tournament_workers": 204,
+        "synthesis_concurrency": 102,
+        "science_workers_per_gpu": 2,
+        "physical_science_GPUs": 616,
+        "logical_science_worker_slots": 1232,
+        "hypotheses_per_science_node": 4.0,
+        "admission_waves": 3.0,
+        "tournament_max_seconds": 10800,
+        "timeouts": {
+          "code_generator": 6600,
+          "model_request": 600,
+          "reasoner": 1800,
+          "reviewer": 1200,
+          "tool": 6000,
+          "validator": 10800
+        },
+        "model_startup_timeout": 5400,
+        "hpc_startup_timeout": 7200,
+        "mcp_init_timeout_seconds": 60,
+        "controller_gc_threshold0": 10000,
+        "model_retries": 10,
+        "max_requests": 160,
+        "max_code_calls": 6,
+        "roles": {
+          "code_generator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "reasoner": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 32768,
+            "thinking": false
+          },
+          "reviewer": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          },
+          "validator": {
+            "model": "nemotron-3.5-super-vl",
+            "max_tokens": 8192,
+            "thinking": false
+          }
+        },
+        "walltime": "09:00:00",
+        "config_sha256": "980668508d69f14ce465191cf371b766f0d5105e3994d21d6a47fd88b7ac1d5b"
+      }
+    }
+  ],
+  "all_owned_recipes": [
+    {
+      "trial": "unified-20",
+      "job_id": "2946552",
+      "nodes": 20,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script_sha256": "6d8ede5bf465043f1b56bb67e92ad55b6eb90332be6e26c19c53526df848f325",
+      "inference": 8,
+      "science": 12,
+      "concurrency": 12,
+      "top_k": 48,
+      "initial_hypotheses": 96,
+      "new_per_round": 24,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 4,
+      "synthesis_concurrency": null,
+      "science_workers_per_gpu": 1,
+      "physical_science_GPUs": 48,
+      "logical_science_worker_slots": 48,
+      "hypotheses_per_science_node": 1.0,
+      "admission_waves": 4.0,
+      "tournament_max_seconds": 2400,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": null,
+      "controller_gc_threshold0": null,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "06:00:00",
+      "config_sha256": "1577f283df44f6e5f48d1e0f71dccbe9e40b6e766c825b04284fc86661f336b1"
+    },
+    {
+      "trial": "unified-20b",
+      "job_id": "2952205",
+      "nodes": 20,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script_sha256": "34e790d0b8ee04baaa61ca2ecbcbf4572bebfba7b1db58833e7c4225840bb5e8",
+      "inference": 8,
+      "science": 12,
+      "concurrency": 12,
+      "top_k": 48,
+      "initial_hypotheses": 96,
+      "new_per_round": 24,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 16,
+      "synthesis_concurrency": 8,
+      "science_workers_per_gpu": 1,
+      "physical_science_GPUs": 48,
+      "logical_science_worker_slots": 48,
+      "hypotheses_per_science_node": 1.0,
+      "admission_waves": 4.0,
+      "tournament_max_seconds": 2400,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": null,
+      "controller_gc_threshold0": null,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "06:00:00",
+      "config_sha256": "450ab0395a63a4f210466f7f932b35c4578b9b96c6e4731a63a40359316fc063"
+    },
+    {
+      "trial": "unified-20c",
+      "job_id": "2957806",
+      "nodes": 20,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script_sha256": "7fbecf6143805c7965c14daa960f90c7a3c28283de036896ded67a0fa4cc2723",
+      "inference": 8,
+      "science": 12,
+      "concurrency": 24,
+      "top_k": 96,
+      "initial_hypotheses": 192,
+      "new_per_round": 48,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 16,
+      "synthesis_concurrency": 8,
+      "science_workers_per_gpu": 1,
+      "physical_science_GPUs": 48,
+      "logical_science_worker_slots": 48,
+      "hypotheses_per_science_node": 2.0,
+      "admission_waves": 4.0,
+      "tournament_max_seconds": 2400,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": null,
+      "controller_gc_threshold0": null,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "06:00:00",
+      "config_sha256": "8b23576d693603b5924c979ddb731759de378f0f814e5d54f78c2a8ada039cd9"
+    },
+    {
+      "trial": "unified-20d",
+      "job_id": "2959709",
+      "nodes": 20,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script_sha256": "3e073706b3c753d3c4043c30b1d6857a9d275e82962139dab510232a1d48baa2",
+      "inference": 8,
+      "science": 12,
+      "concurrency": 48,
+      "top_k": 96,
+      "initial_hypotheses": 192,
+      "new_per_round": 48,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 16,
+      "synthesis_concurrency": 8,
+      "science_workers_per_gpu": 2,
+      "physical_science_GPUs": 48,
+      "logical_science_worker_slots": 96,
+      "hypotheses_per_science_node": 4.0,
+      "admission_waves": 2.0,
+      "tournament_max_seconds": 2400,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": null,
+      "controller_gc_threshold0": null,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "06:00:00",
+      "config_sha256": "95c7e4e7857828c253c31c02d4309644bb6b2358cc88b4fa9762ca847f2e7b37"
+    },
+    {
+      "trial": "unified-20e",
+      "job_id": "2961727",
+      "nodes": 20,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script_sha256": "365e8bae756627dcb476490bfde15da99b149f9e4a13ed5e10bea2666b3e8fb6",
+      "inference": 8,
+      "science": 12,
+      "concurrency": 48,
+      "top_k": 96,
+      "initial_hypotheses": 192,
+      "new_per_round": 48,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 16,
+      "synthesis_concurrency": 8,
+      "science_workers_per_gpu": 2,
+      "physical_science_GPUs": 48,
+      "logical_science_worker_slots": 96,
+      "hypotheses_per_science_node": 4.0,
+      "admission_waves": 2.0,
+      "tournament_max_seconds": 2400,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": null,
+      "controller_gc_threshold0": null,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "06:00:00",
+      "config_sha256": "3548388f727fc62900d24fad5c827e86d012979d45f9171aacc87eb280beb945"
+    },
+    {
+      "trial": "unified-20f",
+      "job_id": "2967403",
+      "nodes": 20,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script_sha256": "27284d853f37323a7c65d809faad8bed29d9302a8e6a8b0a3f12adbe3cc42163",
+      "inference": 8,
+      "science": 12,
+      "concurrency": 48,
+      "top_k": 144,
+      "initial_hypotheses": 288,
+      "new_per_round": 72,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 16,
+      "synthesis_concurrency": 8,
+      "science_workers_per_gpu": 2,
+      "physical_science_GPUs": 48,
+      "logical_science_worker_slots": 96,
+      "hypotheses_per_science_node": 4.0,
+      "admission_waves": 3.0,
+      "tournament_max_seconds": 2400,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": null,
+      "controller_gc_threshold0": null,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "08:00:00",
+      "config_sha256": "1bf71329933b3a236b4445876603338b42179906a2548ed14ea2cf2b61d64110"
+    },
+    {
+      "trial": "unified-20g",
+      "job_id": "2972192",
+      "nodes": 20,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script_sha256": "c02dd3ed8f3fb0dd005a892f256462b64b0108abb67f14057771bfbd8225a6c5",
+      "inference": 8,
+      "science": 12,
+      "concurrency": 48,
+      "top_k": 144,
+      "initial_hypotheses": 288,
+      "new_per_round": 72,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 16,
+      "synthesis_concurrency": 8,
+      "science_workers_per_gpu": 2,
+      "physical_science_GPUs": 48,
+      "logical_science_worker_slots": 96,
+      "hypotheses_per_science_node": 4.0,
+      "admission_waves": 3.0,
+      "tournament_max_seconds": 2400,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": null,
+      "controller_gc_threshold0": null,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 32768,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "08:00:00",
+      "config_sha256": "f113805648591b33e2cbdc09c5d6e785cdec15800a4709fca2966143d82abad0"
+    },
+    {
+      "trial": "unified-20h",
+      "job_id": "2979527",
+      "nodes": 20,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script_sha256": "f3d0cb37c62755d3c1d62b5f8e65ac0e2ddcd4126ccbf6706914d62572e13488",
+      "inference": 8,
+      "science": 12,
+      "concurrency": 48,
+      "top_k": 144,
+      "initial_hypotheses": 288,
+      "new_per_round": 72,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 16,
+      "synthesis_concurrency": 8,
+      "science_workers_per_gpu": 2,
+      "physical_science_GPUs": 48,
+      "logical_science_worker_slots": 96,
+      "hypotheses_per_science_node": 4.0,
+      "admission_waves": 3.0,
+      "tournament_max_seconds": 2400,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": null,
+      "controller_gc_threshold0": null,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 32768,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "08:00:00",
+      "config_sha256": "82ce9a60c28da4f692abd71c341037e4e8e2ed29d822cecbf5f595ca2c20dd9c"
+    },
+    {
+      "trial": "unified-20i",
+      "job_id": "2979745",
+      "nodes": 20,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script_sha256": "1ca6b99c8643c22c6b7b91d578e64db23e3bfd0b199e5616602af8b6512f8dbe",
+      "inference": 8,
+      "science": 12,
+      "concurrency": 48,
+      "top_k": 144,
+      "initial_hypotheses": 288,
+      "new_per_round": 72,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 16,
+      "synthesis_concurrency": 8,
+      "science_workers_per_gpu": 2,
+      "physical_science_GPUs": 48,
+      "logical_science_worker_slots": 96,
+      "hypotheses_per_science_node": 4.0,
+      "admission_waves": 3.0,
+      "tournament_max_seconds": 2400,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": null,
+      "controller_gc_threshold0": null,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 32768,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "08:00:00",
+      "config_sha256": "62ba8c29eecaa1f0a414032f1a25e013540bf28b87de87951fcf8127b37db64d"
+    },
+    {
+      "trial": "unified-20j",
+      "job_id": "2991226",
+      "nodes": 20,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script_sha256": "1d824e645dcafb2dba7a22bc300acdc7cd34bf322025001df2330007df519334",
+      "inference": 8,
+      "science": 12,
+      "concurrency": 48,
+      "top_k": 144,
+      "initial_hypotheses": 288,
+      "new_per_round": 72,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 16,
+      "synthesis_concurrency": 8,
+      "science_workers_per_gpu": 2,
+      "physical_science_GPUs": 48,
+      "logical_science_worker_slots": 96,
+      "hypotheses_per_science_node": 4.0,
+      "admission_waves": 3.0,
+      "tournament_max_seconds": 2400,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": 60,
+      "controller_gc_threshold0": 10000,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 32768,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "08:00:00",
+      "config_sha256": "ef72e26affbf57d428035938f7d880aee2b5151be79d8bc7eaef3c16ef29e565"
+    },
+    {
+      "trial": "unified-256",
+      "job_id": "2976829",
+      "nodes": 256,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script_sha256": "4bff7edcab74b8760b975f6d82ee6a6f53b637085a3dd8a19431aefc29a7d663",
+      "inference": 102,
+      "science": 154,
+      "concurrency": 616,
+      "top_k": 1848,
+      "initial_hypotheses": 3696,
+      "new_per_round": 924,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 204,
+      "synthesis_concurrency": 102,
+      "science_workers_per_gpu": 2,
+      "physical_science_GPUs": 616,
+      "logical_science_worker_slots": 1232,
+      "hypotheses_per_science_node": 4.0,
+      "admission_waves": 3.0,
+      "tournament_max_seconds": 10800,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": null,
+      "controller_gc_threshold0": null,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 32768,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "08:00:00",
+      "config_sha256": "efadb1aafd1984192e62ef03aadebeed6e991c07501d143a93e3d0ffa5d80a2e"
+    },
+    {
+      "trial": "unified-256b",
+      "job_id": "2987415",
+      "nodes": 256,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script_sha256": "0a84146c14a23eeee664b67dfc1e546318900105e4674a56fd3f7949525a232d",
+      "inference": 102,
+      "science": 154,
+      "concurrency": 616,
+      "top_k": 1848,
+      "initial_hypotheses": 3696,
+      "new_per_round": 924,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 204,
+      "synthesis_concurrency": 102,
+      "science_workers_per_gpu": 2,
+      "physical_science_GPUs": 616,
+      "logical_science_worker_slots": 1232,
+      "hypotheses_per_science_node": 4.0,
+      "admission_waves": 3.0,
+      "tournament_max_seconds": 10800,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": null,
+      "controller_gc_threshold0": null,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 32768,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "08:00:00",
+      "config_sha256": "e2b2476ac67f611c0fd80cb46272683f65d32cb722ac0b467798b02670ed76a4"
+    },
+    {
+      "trial": "unified-256c",
+      "job_id": "2999784",
+      "nodes": 256,
+      "account": "deepwing",
+      "partition": "booster",
+      "reservation": "",
+      "job_script_sha256": "30bcbc21e51210c954cf8416f188509b1f5bf446c677147963e1d018a635c854",
+      "inference": 102,
+      "science": 154,
+      "concurrency": 616,
+      "top_k": 1848,
+      "initial_hypotheses": 3696,
+      "new_per_round": 924,
+      "generation_batch_size": 4,
+      "scheme": "swiss",
+      "swiss_rounds": 1,
+      "tournament_workers": 204,
+      "synthesis_concurrency": 102,
+      "science_workers_per_gpu": 2,
+      "physical_science_GPUs": 616,
+      "logical_science_worker_slots": 1232,
+      "hypotheses_per_science_node": 4.0,
+      "admission_waves": 3.0,
+      "tournament_max_seconds": 10800,
+      "timeouts": {
+        "code_generator": 6600,
+        "model_request": 600,
+        "reasoner": 1800,
+        "reviewer": 1200,
+        "tool": 6000,
+        "validator": 10800
+      },
+      "model_startup_timeout": 5400,
+      "hpc_startup_timeout": 7200,
+      "mcp_init_timeout_seconds": 60,
+      "controller_gc_threshold0": 10000,
+      "model_retries": 10,
+      "max_requests": 160,
+      "max_code_calls": 6,
+      "roles": {
+        "code_generator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "reasoner": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 32768,
+          "thinking": false
+        },
+        "reviewer": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        },
+        "validator": {
+          "model": "nemotron-3.5-super-vl",
+          "max_tokens": 8192,
+          "thinking": false
+        }
+      },
+      "walltime": "09:00:00",
+      "config_sha256": "980668508d69f14ce465191cf371b766f0d5105e3994d21d6a47fd88b7ac1d5b"
+    }
+  ],
+  "all_owned_allocated_GPU_hours": 15614.453333333333,
+  "owned_job_costs": [
+    {
+      "job_id": "2946552",
+      "allocated_GPU_hours": 178.35555555555555
+    },
+    {
+      "job_id": "2952205",
+      "allocated_GPU_hours": 259.24444444444447
+    },
+    {
+      "job_id": "2957806",
+      "allocated_GPU_hours": 150.2888888888889
+    },
+    {
+      "job_id": "2959709",
+      "allocated_GPU_hours": 28.91111111111111
+    },
+    {
+      "job_id": "2961727",
+      "allocated_GPU_hours": 308.6
+    },
+    {
+      "job_id": "2967403",
+      "allocated_GPU_hours": 278.55555555555554
+    },
+    {
+      "job_id": "2972192",
+      "allocated_GPU_hours": 384.53333333333336
+    },
+    {
+      "job_id": "2976829",
+      "allocated_GPU_hours": 2552.6044444444447
+    },
+    {
+      "job_id": "2979527",
+      "allocated_GPU_hours": 7.666666666666667
+    },
+    {
+      "job_id": "2979745",
+      "allocated_GPU_hours": 386.35555555555555
+    },
+    {
+      "job_id": "2987415",
+      "allocated_GPU_hours": 3094.471111111111
+    },
+    {
+      "job_id": "2991226",
+      "allocated_GPU_hours": 445.6666666666667
+    },
+    {
+      "job_id": "2999784",
+      "allocated_GPU_hours": 7539.2
+    }
+  ]
+}

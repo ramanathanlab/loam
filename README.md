@@ -5,17 +5,18 @@
 <h1 align="center">loam</h1>
 
 <p align="center">
-  <strong>Long-horizon Orchestration of Agents and Molecules</strong><br/>
-  Hypothesis-driven computational science campaigns on <code>pydantic-ai</code>
+  <strong>Hypothesis-driven computational science campaigns on <code>pydantic-ai</code></strong>
 </p>
 
 ---
 
-**loam** is a deterministic engine for hypothesis-driven scientific campaigns, built on [`pydantic-ai`](https://ai.pydantic.dev/). It pairs **Jnana** hypothesis generation and Swiss-system Elo tournaments with parallel hypothesis validation, delegated code execution (local or multi-node HPC), independent evidence review, deterministic ledger reconciliation, and round-over-round campaign steering.
+**loam** is a minimal, deterministic re-implementation of Loam's hypothesis-driven scientific campaign loop built on [`pydantic-ai`](https://ai.pydantic.dev/). It pairs **Jnana** hypothesis generation and Swiss-system Elo tournaments with parallel hypothesis validation, delegated code execution (local or multi-node HPC), independent evidence review, deterministic ledger reconciliation, and round-over-round campaign steering.
+
+Jupiter operators: start with the [scaling recipe book](docs/scaling-recipe-book.md), [deployment guide](JUPITER.md) and [inference pool](docs/jupiter-inference-pool.md).
 
 ## Why `loam`?
 
-The scientific contracts work; coaxing an LLM orchestrator to enforce them via runtime hooks does not. `loam` keeps the scientific invariants while replacing ~9,000 lines of prompt/hook policing with two structural guarantees:
+Loam's scientific contracts work; coaxing an LLM orchestrator to enforce them via runtime hooks does not. `loam` preserves the scientific invariants while replacing ~9,000 lines of prompt/hook policing with two structural guarantees:
 
 1. **Plain Python orchestration (no LLM scheduler):** A campaign round is a fixed Python sequence—`Tournament → Validators → Reviewers → Reconcile → Steering → Reasoner`. Models never make scheduling decisions.
 2. **Strict typed boundaries & capability-scoped toolsets:** Every agent returns a strict `pydantic` model (`extra='forbid'`), automatically retried by `pydantic-ai` on schema or validation errors. Tool restrictions are enforced by construction—each role is only given the tools it is allowed to call.
@@ -73,6 +74,10 @@ Each LLM role uses a `ModelSpec` (`{model, base_url, api_key_env}`):
 - **Secrets stay out of YAML:** API keys are referenced by environment variable name via `api_key_env`; Globus Compute and Academy credentials stay in their standard external stores.
 
 ---
+
+## Jupiter deployment
+
+This checkout includes Jupiter CUDA skills, Slurm/Globus deployment support, and an integrated `launch.sh` / `loam.yaml`. See [JUPITER.md](JUPITER.md) for setup, known tool limitations, and validation. Run `./launch.sh --check` for offline configuration checks.
 
 ## Installation
 
@@ -157,7 +162,7 @@ Configured under `execution.mode`:
   - Read roles (`validator`, `reviewer`) receive `read_file` and `list_dir` confined to the hypothesis workspace.
   - `code_generator` adds `write_files` (confined to its numbered run directory) and `run_shell` (runs bash in the run directory; process group killed on timeout, **not** sandboxed—do not use for untrusted code).
 - **`mcp`** — Connects to an externally managed MCP server at `execution.mcp_url`.
-- **`hpc`** — Managed HPC deployment (`aurora` or `polaris`) via **Globus Compute → PBSPro → Academy → Ensemble Launcher**.
+- **`hpc`** — Managed HPC deployment (`aurora`, `polaris`, or `jupiter`) via **Globus Compute → PBSPro → Academy → Ensemble Launcher**.
   - `loam` translates `execution.hpc` into the deployment server's internal environment, spawns `mcp_server.py`, waits for cluster pool readiness, and tears down the allocation cleanly on exit (`SIGINT`).
   - No separate environment file or scheduler wrapper (`qsub`/`sbatch`) is needed.
 
@@ -212,7 +217,7 @@ state_dir/                                # Orchestrator-only records (written a
 
 <execution.workdir>/<id>/                 # Agent-accessible workspace (persists across rounds)
 ├── outputs/<rNNN-KK>/                    # Isolated write directory for run rNNN-KK
-└── data/                                 # Optional workspace_inputs (local mode only)
+└── data/                                 # Optional workspace_inputs (local/shared HPC)
 ```
 
 If a campaign is interrupted mid-round, restarting `python -m loam <config.yaml>` resumes cleanly after the highest completed `round-NNN.json`, replacing any partial ledger rows or round entries from the interrupted round.
@@ -248,9 +253,42 @@ loam/
 ├── steering.py        # Elo + evidence priority scoring across the hypothesis pool
 ├── skills.py          # SKILL.md discovery, prompt catalog, and read_skill helper
 └── prompts/           # Role system instructions (validator, code_generator, reviewer, reasoner)
-examples/              # Aurora EGFR binder campaign YAML, goal, and campaign rules
+examples/              # Campaign rules, portable staging assets and measured scaling recipes
 skills/                # Scientific tool skills and managed HPC deployment server
 tests/                 # Offline end-to-end round, resilience, and steering tests
 logo/                  # Project logo
 PLAN.md                # Architectural rationale, failure handling table, and design notes
 ```
+
+## Scaling and single-allocation deployment
+
+The [scaling recipe book](docs/scaling-recipe-book.md) records the measured 20-node
+and 256-node recipes, hypothesis density per physical/logical GPU, inference/science
+ratios, model settings, timeout boundaries, failed approaches and qualification limits.
+The best qualified 20-node run reached 51.06% allocation-wide sampled GPU busy; the
+best observed 256-node run reached 40.51% across three rounds and retained citation
+qualification findings. Neither figure is SM/FLOP efficiency.
+
+```bash
+export LOAM_SOFTWARE_ROOT=/shared/your/software
+export LOAM_SCIENCE_INPUTS=/shared/science/egfr/inputs
+export PYTHONPATH="$PWD:$PWD/scripts${PYTHONPATH:+:$PYTHONPATH}"
+# These commands stage fresh jobs without submitting them.
+bash examples/scaling/run-20i.sh /shared/scratch/new-experiment
+bash examples/scaling/run-256c.sh /shared/scratch/new-experiment
+.venv/bin/python scripts/recommend_scaling.py --nodes 64 --gpus-per-node 8
+```
+
+Add `--account`, `--partition`, site paths and other overrides as needed. Submission
+requires `--submit`; old run directories are never overwritten. Each job contains
+private Redis, a native vLLM replica pool, disjoint science/inference Slurm steps,
+telemetry and the controller. Source snapshots are staged from this checkout; scientific inputs are supplied
+through an external bundle, independent of old campaign directory layouts. Historical
+original launch records and measurements are in [examples/scaling/history](examples/scaling/history).
+
+The scaling changes include independent `top_k`/`concurrency`, a useful-work backlog,
+batched hypothesis generation, replica routing and vLLM continuous batching,
+bounded hierarchical synthesis, staggered rate-limit recovery, configurable MCP
+initialization, atomic/coalesced Jnana checkpoints, metadata indexing, skill caching,
+and optional controller GC tuning. Reconciliation and scientific qualification remain
+independent of utilization. See [JUPITER.md](JUPITER.md) for installation and site requirements.

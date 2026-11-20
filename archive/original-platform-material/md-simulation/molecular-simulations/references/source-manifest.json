@@ -1,0 +1,14 @@
+[
+  {
+    "source": "skills/md-simulation/molecular-simulations/SKILL.md",
+    "source_sha256": "462380ae3f02b73aaea527ec5dfb6780d44183f6a1924d86944cae6a21526df5",
+    "packaged_path": "references/aurora-notes.md",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/md-simulation/molecular-simulations/scripts/molsim_xpu_smoke.py",
+    "source_sha256": "1fb6a0e5ccd920d5c5d28df376b309d7a6d668649ce667115d7cee6144065b20",
+    "packaged_path": "references/aurora-resources/scripts/molsim_xpu_smoke.py",
+    "kind": "historical-reference"
+  }
+]

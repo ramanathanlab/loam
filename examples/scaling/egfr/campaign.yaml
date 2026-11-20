@@ -1,0 +1,113 @@
+concurrency: 616
+execution:
+  hpc:
+    allocation:
+      account: deepwing
+      endpoint_options:
+        partition: booster
+        scheduler_options: '#SBATCH --gres=gpu:4'
+      init_blocks: 0
+      max_blocks: 1
+      max_idletime: 300
+      min_blocks: 0
+      nodes: 154
+      queue: booster
+      walltime: 09:00:00
+    base_dir: ${LOAM_CAMPAIGN_DIR}
+    campaign_id: rendered-at-staging
+    endpoint_id: existing-allocation-no-globus
+    exchange_url: https://exchange.academy-agents.org/v1
+    host: 127.0.0.1
+    inspect_roots:
+    - ${LOAM_CAMPAIGN_DIR}
+    - ${LOAM_SOFTWARE_ROOT}
+    pool_size: 64
+    port: 36833
+    server_script: ${LOAM_REPO_ROOT}/skills/hpc-deployment/scripts/mcp_server.py
+    startup_timeout: 7200
+    system: jupiter
+    worker_code_dir: ${LOAM_REPO_ROOT}
+    science_workers_per_gpu: 2
+    frozen_tool_library: true
+  mode: hpc
+  setup: Use one Slurm allocation with 102 Nemotron nodes and 154 scientific nodes,
+    616 scientific GPU slots. Source ${LOAM_REPO_ROOT}/scripts/jupiter_env.sh for
+    scientific environments under ${LOAM_SOFTWARE_ROOT}. Preserve CUDA_VISIBLE_DEVICES
+    and execute one-GPU rows on cuda:0. All scientific work uses the frozen registered
+    MCP tools, not scheduler commands. Use supplied manifest helpers for actual paths,
+    hashes and hypothesis/round-namespaced seeds. Poll owned batches to terminal status
+    and retain failures. The complete screen uses twelve distinct candidates (four
+    per conditioning arm). Advance eligible actual screen binders to intact-EGFR cofold/minimization/static
+    MMGBSA with the supplied helper. These computational metrics are not measured
+    binding affinity. Never duplicate completed work or invent unavailable evidence.
+  workdir: ${LOAM_CAMPAIGN_DIR}/work
+goal: goal.md
+max_code_calls: 6
+max_history_bytes: 192000
+max_requests: 160
+model_retries: 10
+models:
+  code_generator:
+    api_key_env: LOAM_NEMOTRON_TOKEN
+    base_url: http://127.0.0.1:1/v1
+    model: nemotron-3.5-super-vl
+    settings: &id001
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+      max_tokens: 8192
+  reasoner:
+    api_key_env: LOAM_NEMOTRON_TOKEN
+    base_url: http://127.0.0.1:1/v1
+    model: nemotron-3.5-super-vl
+    settings:
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+      max_tokens: 32768
+  reviewer:
+    api_key_env: LOAM_NEMOTRON_TOKEN
+    base_url: http://127.0.0.1:1/v1
+    model: nemotron-3.5-super-vl
+    settings: *id001
+  validator:
+    api_key_env: LOAM_NEMOTRON_TOKEN
+    base_url: http://127.0.0.1:1/v1
+    model: nemotron-3.5-super-vl
+    settings: *id001
+rounds: 3
+rules:
+- ${LOAM_REPO_ROOT}/examples/rules/binder-protocol.md
+- ${LOAM_REPO_ROOT}/examples/rules/binder-constraint.md
+- ${LOAM_REPO_ROOT}/examples/rules/scaling-operations.md
+skills_dirs:
+- ${LOAM_REPO_ROOT}/skills
+state_dir: state
+timeouts:
+  code_generator: 6600
+  model_request: 600
+  reasoner: 1800
+  reviewer: 1200
+  tool: 6000
+  validator: 10800
+tournament:
+  gen_batch_size: 4
+  generation:
+    api_key_env: LOAM_NEMOTRON_TOKEN
+    base_url: http://127.0.0.1:1/v1
+    model: nemotron-3.5-super-vl
+  initial_hypotheses: 3696
+  jnana_root: ${LOAM_SOFTWARE_ROOT}/jnana-engine
+  matches: 10
+  max_seconds: 10800
+  new_per_round: 924
+  ranking:
+    api_key_env: LOAM_NEMOTRON_TOKEN
+    base_url: http://127.0.0.1:1/v1
+    model: nemotron-3.5-super-vl
+  scheme: swiss
+  swiss_rounds: 1
+  top_k: 1848
+  workers: 204
+workspace_inputs: inputs
+synthesis_concurrency: 102

@@ -1,0 +1,26 @@
+[
+  {
+    "source": "skills/analysis/pyrosetta/SKILL.md",
+    "source_sha256": "fe33c2008db0fda8917711e4b513575e26dff3c3ebc3c3a716c0f845eea12175",
+    "packaged_path": "references/aurora-notes.md",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/analysis/pyrosetta/scripts/make_leaderboard.py",
+    "source_sha256": "9a1a69bda7b1d2c5d5a9cd02aeaa1bda73e7fa8448a486336ff27d1b5ce27d48",
+    "packaged_path": "references/aurora-resources/scripts/make_leaderboard.py",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/analysis/pyrosetta/scripts/rosetta_tool.py",
+    "source_sha256": "3a8b4b64a3113c81bf79996c74a7b9f8531d520a2263c626ff8c683d8fe19957",
+    "packaged_path": "references/aurora-resources/scripts/rosetta_tool.py",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/analysis/pyrosetta/scripts/submit_energy.pbs",
+    "source_sha256": "1ccf7481a97678e789faaf8ed3ee69e4d428c1f8f01d1094175b0345566e877b",
+    "packaged_path": "references/aurora-resources/scripts/submit_energy.pbs",
+    "kind": "historical-reference"
+  }
+]

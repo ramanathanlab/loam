@@ -1,0 +1,4 @@
+# These records retain the byte-level hashes of the measured scientific inputs.
+examples/scaling/egfr/inputs/** -whitespace
+examples/scaling/history/** -whitespace
+archive/original-platform-material/** -whitespace

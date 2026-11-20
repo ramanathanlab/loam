@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source /e/project1/deepwing/meigooni1/loamlite/matts_crazy_idea/runs/jupiter-saturation-20261116T204408Z/runtime-20h/scripts/jupiter_env.sh
+export PATH=/e/project1/deepwing/meigooni1/loamlite/matts_crazy_idea/runs/jupiter-saturation-20261116T204408Z/runtime-20h/.venv/bin:$PATH
+export SLURM_EXPORT_ENV=ALL
+export PYTHONPATH=/e/project1/deepwing/meigooni1/loamlite/matts_crazy_idea/runs/jupiter-saturation-20261116T204408Z/runtime-20h:${PYTHONPATH:-}
+exec /e/project1/deepwing/meigooni1/loamlite/matts_crazy_idea/runs/jupiter-saturation-20261116T204408Z/runtime-20h/.venv/bin/python -u /e/project1/deepwing/meigooni1/loamlite/matts_crazy_idea/runs/jupiter-saturation-20261116T204408Z/runtime-20h/scripts/run_single_allocation.py /e/fscratch/deepwing/meigooni1/loamlite/jupiter-saturation-20261116T204408Z/unified-20i

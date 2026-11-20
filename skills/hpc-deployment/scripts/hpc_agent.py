@@ -11,14 +11,14 @@ Public actions are deliberately narrow:
   scripts with typed params that run_batch(tool=...) can run by name.
 
 Scheduler operations, generic shell execution, environment dumps, and file
-mutation are intentionally absent. The endpoint/Parsl provider owns allocation
-and accelerator pinning before this process starts.
+mutation are intentionally absent. The endpoint/provider or combined-job owner
+grants allocation before this process starts; Ensemble Launcher pins science GPUs.
 """
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
-from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
 import os
@@ -29,17 +29,17 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
-from contextlib import aclosing
+from contextlib import aclosing  # used only by the commented-out exchange hardening below
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
 import aiohttp
 from academy.agent import Agent, action
-from academy.exchange.cloud.client import HttpExchangeTransport
-from academy.exception import MessageTooLargeError
+from academy.exchange.cloud.client import HttpExchangeTransport  # used only by the commented-out exchange hardening below
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,8 @@ try:
     from ensemble_launcher import EnsembleLauncher
     from ensemble_launcher.config import (
         LauncherConfig,
+        MPIConfig,
+        SystemConfig,
         PolicyConfig,
         aurora_config,
         polaris_config,
@@ -59,28 +61,20 @@ except ModuleNotFoundError:
 
 _MAX_ENTRIES = 200
 _MAX_LINES = 200
-# write_files caps: large enough for a staged script + inputs JSONL, small
-# enough that this tool can't become a data-movement channel.
+# write_files bounds. A staged script and an inputs JSONL are a few kB; these
+# caps are generous for that and small enough that this tool can never become a
+# data-movement channel. Anything larger belongs inside the batch, written by
+# the row that needs it.
 _MAX_WRITE_FILES = 20
 _MAX_WRITE_BYTES = 1_000_000
 _MAX_WRITE_TOTAL_BYTES = 4_000_000
 _MAX_BYTES = 64 * 1024
 
-# Cap each stdout/stderr stream well under the exchange's 512KB message limit;
-# an oversized send 413s and kills the agent. _harden_exchange_send backstops
-# any other oversized result.
-_MAX_CODE_OUTPUT = int(os.environ.get("HPC_RUN_CODE_MAX_OUTPUT", str(128 * 1024)))
-
-# Add in-site exchange host(s) to no_proxy so their traffic bypasses the site's
-# HTTP proxy. Patched at import, before academy builds its trust_env session.
-_EXCHANGE_NO_PROXY = os.environ.get("HPC_EXCHANGE_NO_PROXY", "")
-if _EXCHANGE_NO_PROXY:
-    for _var in ("no_proxy", "NO_PROXY"):
-        _cur = [h for h in os.environ.get(_var, "").split(",") if h.strip()]
-        _add = [h.strip() for h in _EXCHANGE_NO_PROXY.split(",") if h.strip()]
-        os.environ[_var] = ",".join(dict.fromkeys(_cur + _add))
-
-# Exchange statuses to ride out rather than treat as "agent gone".
+# A dropped exchange stream must not read as "the agent is gone", and neither
+# must an exchange that is briefly overloaded. Academy retries a 5xx/429 only
+# `retries` times (seconds, in all) and then raises ClientResponseError; left
+# uncaught, that one burst killed the listener (so the agent, so el.stop() and
+# the allocation) and silently ended the heartbeat loop for good.
 _TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
@@ -101,10 +95,19 @@ def _is_transient_exchange_error(exc: BaseException) -> bool:
     return isinstance(exc, aiohttp.ClientResponseError) and exc.status in _TRANSIENT_STATUSES
 
 
-# A proxied exchange severs the long-poll stream routinely, so the give-up
-# budget is time-based (reset on every delivered message), not a retry count:
-# give up only after this long with nothing delivered at all.
-_LISTEN_GIVEUP_S = float(os.environ.get("LOAM_EXCHANGE_GIVEUP_S", "1200"))  # 20 min
+# The Academy exchange is reached over the ALCF HTTP proxy, which severs the
+# long-poll stream routinely (observed in production: repeated ClientPayloadError
+# / TransferEncodingError 400 against exchange.academy-agents.org via
+# the upstream HTTP proxy, one every few seconds). Those drops are NORMAL; they must
+# never accumulate into a false "agent lost" that tears the whole EL cluster --
+# and its PBS allocation -- down. A fixed count of consecutive retries is the
+# wrong budget: the proxy drops faster than any "healthy for N seconds" reset, so
+# the count is reached in under a minute even while the exchange is perfectly
+# alive (this is what zombied a live capacity block). So the budget is TIME-based
+# and resets on every delivered message: keep reconnecting indefinitely as long
+# as messages still flow, and give up only after the exchange has produced
+# nothing at all for this long. Env-tunable.
+_LISTEN_GIVEUP_S = float(os.environ.get("LOAM_EXCHANGE_GIVEUP_S", "1200"))  # 20 min of silence
 _LISTEN_BACKOFF_CAP = 8.0
 
 
@@ -126,9 +129,17 @@ def _listen_backoff(failures: int, cap: float = _LISTEN_BACKOFF_CAP) -> float:
 def _harden_exchange_listener() -> None:
     """Reconnect the exchange stream instead of dying on a transient drop.
 
-    Cluster lifetime is tied to agent lifetime, so a momentary network blip
-    must not kill the listener: ride out transient drops, but still propagate
-    once the exchange is persistently unreachable (the silence budget).
+    HttpExchangeTransport.listen already reconnects after each clean stream
+    expiry (the server closes it every request_timeout_s), but it reads the
+    response body *inside* the request context manager, so a truncated stream
+    raises ClientPayloadError past the reconnect loop. That kills the listener
+    task, which shuts down the agent runtime, which runs agent_on_shutdown.
+    For HpcClusterAgent that calls el.stop(), so a momentary network blip
+    tears down a live EL cluster and its allocation.
+
+    Cluster lifetime is deliberately tied to agent lifetime, so the fix is to
+    make agent death mean something: ride out blips, but still propagate once
+    the exchange is persistently unreachable and the agent really is lost.
     """
     original = HttpExchangeTransport.listen
     if getattr(original, '_hpc_hardened', False):
@@ -143,7 +154,9 @@ def _harden_exchange_listener() -> None:
                 # it must be finalized if our consumer abandons us mid-stream.
                 async with aclosing(original(self, timeout=timeout)) as stream:
                     async for message in stream:
-                        # A delivered message proves the exchange is alive; reset the budget.
+                        # A delivered message proves the exchange is alive, so
+                        # clear the failure budget: routine proxy drops between
+                        # messages never accumulate toward a false "agent lost".
                         first_failure = None
                         failures = 0
                         yield message
@@ -175,10 +188,13 @@ def _harden_exchange_listener() -> None:
 def _harden_exchange_heartbeat() -> None:
     """Skip a heartbeat the exchange could not take, instead of ending the loop.
 
-    A transient failure that escaped would end the loop for good (nothing
-    restarts it), so swallow it and let the loop's own sleep act as the retry.
-    Liveness is decided elsewhere: the listener's silence budget and the pool's
-    probes.
+    Academy's heartbeat loop only survives cancellation and a terminated
+    mailbox; any other error ends the task, and outside Academy debug mode
+    nothing restarts it. One 5xx burst therefore stopped an agent's heartbeat
+    for good, and ~90s later the exchange reported a working agent INACTIVE.
+    Swallowing a transient failure lets the loop's own sleep act as the retry.
+    Liveness is still decided elsewhere: the listener's silence budget and the
+    pool's probes.
     """
     original = HttpExchangeTransport.update_heartbeat
     if getattr(original, '_hpc_hardened', False):
@@ -197,70 +213,8 @@ def _harden_exchange_heartbeat() -> None:
     HttpExchangeTransport.update_heartbeat = update_heartbeat
 
 
-def _harden_exchange_send() -> None:
-    """Never let an oversized message kill the agent (and its EL cluster).
-
-    An oversized send (over the 512KB limit) 413s as a bare aiohttp error the
-    runtime doesn't catch, ending the agent task. Replace the action result with
-    a marker and resend, else raise MessageTooLargeError (which the runtime
-    swallows) so the agent lives. Backstops the upstream run_code output cap.
-    """
-    original = HttpExchangeTransport.send
-    if getattr(original, "_hpc_hardened", False):
-        return
-
-    async def send(self, message):
-        try:
-            await original(self, message)
-            return
-        except aiohttp.ClientResponseError as exc:
-            if exc.status != 413:
-                raise
-        body = None
-        try:
-            body = message.get_body()
-        except Exception:
-            body = getattr(message, "body", None)
-        if getattr(body, "kind", None) == "action-response":
-            try:
-                body.result = {
-                    "_loam_dropped": True,
-                    "reason": (
-                        "action result exceeded the 512KB exchange message limit and was "
-                        "dropped to keep the agent and its EL cluster alive; redirect large "
-                        "output to a file and read it with inspect_filesystem(tail)"
-                    ),
-                }
-                message.body = body
-                await original(self, message)
-                logger.warning(
-                    "exchange send: action result over the 512KB limit; "
-                    "replaced with a marker and resent (dest=%s)",
-                    message.dest,
-                )
-                return
-            except aiohttp.ClientResponseError as exc2:
-                if exc2.status != 413:
-                    raise
-            except Exception as exc2:
-                logger.warning(
-                    "exchange send: shrink-and-resend failed (%s: %s)",
-                    type(exc2).__name__, exc2,
-                )
-        logger.error(
-            "exchange send: message over the 512KB limit could not be shrunk; "
-            "dropping it so the agent survives (dest=%s)",
-            getattr(message, "dest", "?"),
-        )
-        raise MessageTooLargeError(size=-1, limit=512 * 1024)
-
-    send._hpc_hardened = True
-    HttpExchangeTransport.send = send
-
-
 _harden_exchange_listener()
 _harden_exchange_heartbeat()
-_harden_exchange_send()
 
 
 class HpcAgent(Agent):
@@ -350,24 +304,80 @@ class HpcAgent(Agent):
         )
 
 
+def _jupiter_nodes(expected: int) -> list[str] | None:
+    """Pass Slurm's actual hosts to EL, whose default discovery is PBS-only."""
+    nodelist = os.environ.get('SLURM_JOB_NODELIST') or os.environ.get('SLURM_NODELIST')
+    if not nodelist:
+        if expected > 1:
+            raise RuntimeError('Jupiter multinode launch requires SLURM_JOB_NODELIST')
+        return None
+    result = subprocess.run(['scontrol', 'show', 'hostnames', nodelist],
+                            capture_output=True, text=True, check=True, timeout=30)
+    nodes = list(dict.fromkeys(line.strip() for line in result.stdout.splitlines() if line.strip()))
+    assigned = os.environ.get('HPC_SCIENCE_NODELIST')
+    if assigned:
+        selected = subprocess.run(['scontrol', 'show', 'hostnames', assigned],
+                                  capture_output=True, text=True, check=True, timeout=30)
+        requested_subset = selected.stdout.split()
+        subset = list(dict.fromkeys(requested_subset))
+        if len(subset) != len(requested_subset) or len(subset) != expected or not set(subset) <= set(nodes):
+            raise RuntimeError('Assigned science nodes must be a unique subset of this Slurm allocation')
+        return subset
+    if len(nodes) != expected:
+        raise RuntimeError(f'Jupiter allocation contains {len(nodes)} hosts; requested {expected}')
+    return nodes
+
+
 class HpcClusterAgent(Agent):
     """Owns the lifecycle of one EL cluster; stopping this agent stops the cluster."""
     def __init__(self, base_dir: str, ckpt_dir: str, nnodes: int,
-                 system: Literal["aurora", "polaris"],
-                 task_executor_name: list[str] | None = None):
+                 system: Literal["aurora", "polaris", "jupiter"],
+                 task_executor_name: list[str] | None = None,
+                 science_workers_per_gpu: int = 1):
         super().__init__()
+        if science_workers_per_gpu not in (1, 2) or (science_workers_per_gpu > 1 and system != 'jupiter'):
+            raise ValueError('Shared GPU workers require Jupiter and a factor of one or two')
+        self.nnodes = nnodes
         self.ckpt_dir = str(Path(base_dir, ckpt_dir))
+        child_executor_name = "async_mpi"
+        mpi_config = None
         if system == "aurora":
             self.system_config = aurora_config
             gpu_selector = "ZE_AFFINITY_MASK"
         elif system == "polaris":
             self.system_config = polaris_config
             gpu_selector = "CUDA_VISIBLE_DEVICES"
+        elif system == "jupiter":
+            # Jupiter GH200: 288 Grace cores and four CUDA GPUs per node.
+            # A single-node cluster needs no MPI launcher. Multi-node clusters
+            # use srun with EL controlling per-task GPU visibility.
+            physical_gpus = int(os.environ.get('HPC_GPUS_PER_NODE', '4'))
+            physical_cpus = int(os.environ.get('HPC_CPUS_PER_NODE', '288'))
+            if physical_gpus < 1 or physical_cpus < 1:
+                raise ValueError('Physical GPU and CPU counts must be positive')
+            self.system_config = SystemConfig(
+                name=system, ncpus=physical_cpus, ngpus=physical_gpus*science_workers_per_gpu,
+                cpus=list(range(physical_cpus)), gpus=list(range(physical_gpus*science_workers_per_gpu)),
+            )
+            # EL schedules bounded logical slots. The row wrapper maps each
+            # slot to one of the four physical GPUs before running any science.
+            gpu_selector = "LOAM_EL_GPU_SLOTS" if science_workers_per_gpu > 1 else "CUDA_VISIBLE_DEVICES"
+            child_executor_name = "async_processpool" if nnodes <= 1 else "async_mpi"
+            mpi_config = MPIConfig(
+                flavor="srun",
+                # EL's copy steps omit extra_launcher_flags. Apply overlap to
+                # every nested srun, including those node-local setup calls.
+                launcher=str(Path(__file__).with_name('jupiter_srun.sh').resolve()),
+                hosts_flag="--nodelist",      # EL picks the nodes, so pass them to srun
+                hostfile_flag="--nodefile",
+                cpu_bind_method="none",        # EL's "list:" syntax isn't valid for srun
+                extra_launcher_flags=[f"--gpus-per-node={physical_gpus}", "--gpu-bind=none"],
+            )
         else:
-            raise ValueError(f"unsupported system {system!r}; expected 'aurora' or 'polaris'")
+            raise ValueError(f"unsupported system {system!r}; expected 'aurora', 'polaris' or 'jupiter'")
 
-        self.launcher_config = LauncherConfig(
-            child_executor_name="async_mpi",
+        launcher_kwargs = dict(
+            child_executor_name=child_executor_name,
             task_executor_name=task_executor_name or ["async_processpool"],
             cluster=True,
             checkpoint_dir=self.ckpt_dir,
@@ -379,16 +389,25 @@ class HpcClusterAgent(Agent):
             policy_config=PolicyConfig(nlevels=2, leaf_nodes=nnodes),
             log_dir=str(Path(base_dir, "logs")),
         )
+        if mpi_config is not None:
+            launcher_kwargs["mpi_config"] = mpi_config
+            # EL's one-shot path splits hostnames at '-', corrupting Jupiter's
+            # jpbo-... names. Separate child launches keep each full hostname.
+            launcher_kwargs["sequential_child_launch"] = True
+        self.launcher_config = LauncherConfig(**launcher_kwargs)
         self._el = None
 
     async def agent_on_startup(self):
-        # start()/stop() block (fork + sleep; terminate/join up to 30s+); run
-        # them off the event loop so the agent keeps reading its mailbox and
-        # heartbeating.
+        # EL's start() and stop() are blocking (a fork plus time.sleep; a
+        # terminate/join of up to 30s+), and this event loop also runs the
+        # exchange listener and heartbeat. Run them in a thread so the agent
+        # keeps reading its mailbox and heartbeating through both.
         def start() -> EnsembleLauncher:
+            nodes = _jupiter_nodes(self.nnodes) if self.system_config.name == 'jupiter' else None
             el = EnsembleLauncher(ensemble_file={},
                                   system_config=self.system_config,
-                                  launcher_config=self.launcher_config)
+                                  launcher_config=self.launcher_config,
+                                  Nodes=nodes)
             el.start()
             return el
 
@@ -408,30 +427,29 @@ class HpcClusterAgent(Agent):
 
 
 class HpcClientAgent(HpcAgent):
-    def __init__(self, campaign_id: str, base_dir: str, ckpt_dir: str, inspect_roots: list[str] | None = None) -> None:
+    def __init__(self, campaign_id: str, base_dir: str, ckpt_dir: str, inspect_roots: list[str] | None = None,
+                 science_workers_per_gpu: int = 1) -> None:
         super().__init__(campaign_id, base_dir, inspect_roots)
+        self.science_workers_per_gpu = science_workers_per_gpu
         self.ckpt_dir = str(Path(self.base_dir, ckpt_dir))
         self._client = None
-        # Holds each batch's futures so they stay referenced. Progress is read
-        # from disk (batch_status), not here: round-robin dispatch means the
-        # agent asking is rarely the one that submitted.
+        # Holds each batch's futures so they stay referenced. Progress is never
+        # read from here: batch_status reads disk, since round-robin dispatch
+        # and pool repair mean the agent asking is rarely the one that submitted.
         self._batches: dict[str, list] = {}
-        # Dedicated bounded pool for EL submits so they can't starve the agent's
-        # own work on the shared pool. Built in agent_on_startup, not here: a
-        # live ThreadPoolExecutor can't be pickled to the worker.
-        self._el_pool = None
 
     async def agent_on_startup(self):
         assert EL_AVAILABLE, "EL is not available"
-        # ClusterClient takes no log_dir; EL reads EL_LOGDIR, else <cwd>/logs.
-        # Pin it so the client log lands under base_dir, not the worker's cwd.
+        # ClusterClient takes no log_dir; EL resolves one from EL_LOGDIR, else
+        # <cwd>/logs. A Globus Compute worker's cwd is the endpoint's
+        # tasks_working_dir, so without this the client log lands there instead
+        # of beside the master's, which HpcClusterAgent places under base_dir.
         os.environ.setdefault("EL_LOGDIR", str(Path(self.base_dir, "logs")))
-        # ClusterClient's constructor polls the checkpoint/comm files with
-        # time.sleep (a client usually starts before the master writes them),
-        # so connect() runs in a thread to keep the listener/heartbeat alive.
-        if self._el_pool is None:
-            self._el_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="el-submit")
-
+        # ClusterClient's constructor polls the checkpoint dir and then the comm
+        # file with time.sleep, up to checkpoint_timeout each -- and a client
+        # usually starts before the new master has written them. On the event
+        # loop that froze the exchange listener and heartbeat for minutes, so
+        # the exchange saw the agent go stale while it was coming online.
         def connect() -> ClusterClient:
             client = ClusterClient(checkpoint_dir=self.ckpt_dir, checkpoint_timeout=300)
             client.start()
@@ -440,19 +458,22 @@ class HpcClientAgent(HpcAgent):
         self._client = await asyncio.to_thread(connect)
 
     async def agent_on_shutdown(self):
-        # ClusterClient's shutdown is teardown(), not stop() (that's on
-        # EnsembleLauncher); calling stop() here raises AttributeError.
+        # EL's ClusterClient shutdown method is teardown(), NOT stop(): stop()
+        # lives on EnsembleLauncher (HpcClusterAgent above uses self._el.stop())
+        # and on the pipeline objects that teardown() itself stops, so .stop()
+        # on a ClusterClient raises AttributeError on every repair/rebuild sweep.
         if self._client is not None:
             await asyncio.to_thread(self._client.teardown)  # joins threads, up to 5s each
-        if self._el_pool is not None:
-            self._el_pool.shutdown(wait=False)
 
     def _create_task(self, payload: str, workdir: str, timeout: float, venv_path: str | None = None):
         return Task(
             task_id=uuid.uuid4().hex,
             nnodes=1,
             ppn=1,
-            ngpus_per_process=1,
+            # run_code prepares metadata, polls and harvests. GPU science has
+            # an explicit resource/output contract through run_batch.
+            ngpus_per_process=0,
+            env={'LOAM_EL_GPU_SLOTS': '', 'CUDA_VISIBLE_DEVICES': ''},
             executable=_run_subprocess,
             args=(payload, workdir or self.base_dir, timeout, venv_path)
         )
@@ -462,11 +483,10 @@ class HpcClientAgent(HpcAgent):
                        timeout: float = 300.0, venv_path: str | None = None) -> dict[str, str]:
         self._inflight += 1
         try:
-            # On the dedicated EL pool, not the shared one: submit() can block
-            # on the flush lock and must not starve the agent's own work.
-            future = await asyncio.get_running_loop().run_in_executor(
-                self._el_pool, self._client.submit,
-                self._create_task(payload, workdir, timeout, venv_path),
+            # submit() takes a lock the flush thread holds while it serializes
+            # a whole buffer, so call it off the event loop.
+            future = await asyncio.to_thread(
+                self._client.submit, self._create_task(payload, workdir, timeout, venv_path)
             )
             return await asyncio.wrap_future(future)
         finally:
@@ -480,23 +500,34 @@ class HpcClientAgent(HpcAgent):
                         tool_version: int | None = None) -> dict:
         """Submit one EL task per inputs row and return without waiting.
 
-        A new batch freezes copies of the script (or tool) and inputs and
-        registers itself; an existing batch_id resumes from those copies,
-        skipping runs already finished cleanly. gpus, timeout_each and venv_path
-        are frozen on first submission and read back on resume, so the registry
-        entry wins over this call's args.
+        A new batch runs either script_path or a registered tool, and freezes
+        copies of the script and inputs and registers itself; passing an
+        existing batch_id resumes it from those copies, skipping runs that
+        already finished cleanly.
+
+        H4: gpus, timeout_each and venv_path are frozen on the first submission
+        and read back from the registry entry here, so a bare resume keeps the
+        batch's real accelerator pinning, walltime and interpreter instead of
+        silently reverting to the defaults (gpus=1, timeout=900s, system python)
+        -- which mis-pinned multi-tile folds, killed long folds at 900s, and ran
+        resumed rows under the wrong environment. The entry is the single source
+        of truth: on a new batch it holds exactly the values passed; on a resume
+        it wins over whatever this call passes.
         """
+        requested_at = time.time()
         entry, script, todo = await asyncio.to_thread(
             _prepare_batch, script_path, inputs_path, batch_id, labels,
             timeout_each, gpus, venv_path, self.base_dir, self.inspect_roots, tool, tool_version,
+            science_workers_per_gpu=self.science_workers_per_gpu,
         )
         batch_id = entry["batch_id"]
-        # Use the frozen run parameters, not this call's args; .get falls back
-        # for older batches that have no frozen field.
+        prepared_at = time.time()
+        # Use the frozen run parameters, not this call's args (H4). .get keeps
+        # pre-H4 batches (which have no frozen field) resumable on the passed args.
         timeout_each = float(entry.get("timeout_each", timeout_each))
         gpus = entry.get("gpus", gpus)
         venv_path = entry.get("venv_path", venv_path)
-        expects = entry.get("expects")  # frozen output contract, or None
+        expects = entry.get("expects")  # L3: frozen output contract, or None
         # The call style belongs to the frozen script, so resume reuses it.
         call, order = entry.get("call", "json"), entry.get("param_order")
         tasks = [
@@ -505,24 +536,42 @@ class HpcClientAgent(HpcAgent):
                 nnodes=1,
                 ppn=1,
                 ngpus_per_process=gpus,
+                env={'LOAM_EL_GPU_SLOTS': '', 'CUDA_VISIBLE_DEVICES': ''} if gpus == 0 else {},
                 executable=_run_one,
                 args=(script, row, run_dir, timeout_each, venv_path, call, order,
                       entry["script_sha256"], expects),
             )
             for run_id, row, run_dir in todo
         ]
-        # submit_batch only buffers tasks and returns futures; EL's master
-        # spreads them over nodes and GPUs.
+        # submit_batch only buffers the tasks and hands back futures; EL's
+        # master spreads them over the nodes and GPUs.
         if tasks:
-            # Off the event loop: buffering serializes inline under the flush lock.
-            self._batches[batch_id] = await asyncio.get_running_loop().run_in_executor(
-                self._el_pool, self._client.submit_batch, tasks)
+            # Off the event loop: a full buffer is serialized inline, under a
+            # lock the flush thread also holds while serializing.
+            self._batches[batch_id] = await asyncio.to_thread(self._client.submit_batch, tasks)
+        # This is acceptance into the EL client buffer, not an assertion that
+        # rows are already ready/running on the EL master. Per-row lease and
+        # process timestamps record the other end of the dispatch interval.
+        _write_json(_batch_root(self.base_dir) / batch_id / ("dispatch-" + uuid.uuid4().hex + ".json"), {
+            "requested_at": requested_at, "prepared_at": prepared_at,
+            "buffered_at": time.time(), "task_ids": [task.task_id for task in tasks],
+            "run_ids": [run_id for run_id, _, _ in todo],
+            "science_workers_per_gpu": self.science_workers_per_gpu,
+            "scope": "EL client buffer acceptance; not a direct master ready-queue measurement",
+        })
         return {
             "batch_id": batch_id,
             "total": entry["total"],
             "submitted": len(tasks),
             "already_done": entry["total"] - len(tasks),
             "labels": entry["labels"],
+            "completion": {
+                "tool": "batch_status",
+                "arguments": {"batch_id": batch_id},
+                "wait_for": "complete",
+                "accept_results_only_if": "ok",
+                "note": "The batch root has no done or status.json. Those files are inside each run_* directory. Poll batch_status instead of waiting for batch-root files.",
+            },
         }
 
 
@@ -535,8 +584,14 @@ def _safe_path(raw: str, base_dir: str, inspect_roots: list[str]) -> Path:
     path = Path(raw).expanduser().resolve(strict=True)
     roots = _roots(base_dir, inspect_roots)
     if not any(path == root or root in path.parents for root in roots):
-        # Name the roots: a caller that only learns it guessed wrong guesses
-        # again, so listing them turns a guessing loop into one corrected call.
+        # Name the roots. A caller that only learns it guessed wrong guesses
+        # again: an agent asked for `/workspace` (a container convention that
+        # does not exist here) and two other outside paths in eight seconds
+        # (2026-10-21). Each refusal was correct, but blind, so it produced
+        # another attempt -- and a run of refusals used to trip the MCP
+        # connectivity breaker, which told every agent in the process that this
+        # healthy server was unreachable. Listing the roots turns a guessing
+        # loop into one corrected call.
         allowed = ", ".join(str(root) for root in roots)
         raise ValueError(
             f"path {str(path)!r} is outside allowed inspection roots; "
@@ -552,9 +607,15 @@ def _safe_path(raw: str, base_dir: str, inspect_roots: list[str]) -> Path:
 def _safe_write_path(raw: str, base_dir: str, inspect_roots: list[str]) -> Path:
     """Resolve a path that may not exist yet, confined to the campaign's roots.
 
-    Separate from `_safe_path` (strict=True) because the file can't exist yet.
-    Writable roots exclude the /tmp `_roots` adds for reading: /tmp is per node,
-    so a script staged there is invisible to the compute nodes.
+    Separate from `_safe_path` because that one resolves `strict=True`, which a
+    file being created by definition cannot satisfy. Non-strict `resolve` still
+    expands any symlink in the EXISTING part of the path, so the containment
+    check below cannot be evaded by writing through a symlinked parent.
+
+    The writable roots are the campaign tree and the inspect roots, but NOT the
+    /tmp that `_roots` adds for reading: /tmp is per node on the cluster, so a
+    script staged there is invisible to the compute nodes run_batch fans out
+    to, and admitting it made every path under /tmp writable from a child.
     """
 
     path = Path(raw).expanduser()
@@ -580,9 +641,17 @@ def _safe_write_path(raw: str, base_dir: str, inspect_roots: list[str]) -> Path:
 def _write_files(files: Any, base_dir: str, inspect_roots: list[str]) -> dict:
     """Write {path: text} into the campaign tree, creating parent directories.
 
-    Lets a code-generator stage a batch without a `run_code` (writing isn't
-    executing). All-or-nothing: every path is validated before anything is
-    written, so a typo can't leave a half-staged batch on disk.
+    This exists so staging a batch costs no `run_code`. `run_batch` takes a
+    script_path and an inputs_path that must already exist on the cluster, and
+    with no way to create a file the only route was to run code that wrote
+    one -- which made "never run the science in run_code" impossible to obey
+    and, measurably, widely ignored. Writing is not executing: nothing here
+    runs the file, so a code-generator can stage without being handed an
+    interpreter.
+
+    All-or-nothing on validation: every path is checked before anything is
+    written, so a typo in the second file cannot leave the first one on disk
+    for `run_batch` to pick up as if staging had succeeded.
     """
 
     if not isinstance(files, Mapping) or not files:
@@ -624,12 +693,7 @@ def _clamp(limit: int) -> int:
 
 def _read_text_lines(path: Path) -> list[str]:
     if not path.is_file():
-        if path.is_dir():
-            raise ValueError(
-                f"{path} is a directory; cat/tail read files. "
-                "Use operation='ls' to list a directory."
-            )
-        raise ValueError(f"{path} is not a regular file; cat/tail read files")
+        raise ValueError("cat/tail require a regular file")
     # Read only bounded bytes so inspection cannot pull an arbitrary log.
     with path.open("rb") as handle:
         data = handle.read(_MAX_BYTES)
@@ -650,42 +714,13 @@ def _tail_lines(path: Path, count: int) -> list[str]:
     return data.decode("utf-8", errors="replace").splitlines()[-count:]
 
 
-#: Synonyms an LLM reaches for instead of ls/cat/tail; accept them so a wrong
-#: guess becomes a working call instead of a vocabulary-hiding error.
-_OP_ALIASES = {
-    "list": "ls", "listdir": "ls", "dir": "ls", "ll": "ls", "lsdir": "ls",
-    "read": "cat", "head": "cat", "view": "cat", "open": "cat",
-    "read_file": "cat", "readfile": "cat", "show": "cat", "get": "cat",
-    "follow": "tail", "last": "tail",
-}
-_OP_VALID = ("ls", "cat", "tail")
-
-
-def _normalize_operation(operation: str) -> str:
-    """Map a caller's operation onto ls/cat/tail, or fail naming all three."""
-    op = str(operation).strip().lower()
-    op = _OP_ALIASES.get(op, op)
-    if op not in _OP_VALID:
-        raise ValueError(
-            f"unknown operation {operation!r}; operation must be one of: "
-            "ls (list a directory), cat (read a file), tail (last lines of a file)"
-        )
-    return op
-
-
 def _inspect(operation: str, raw_path: str, offset: int, limit: int,
              base_dir: str, inspect_roots: list[str]) -> dict:
-    # Normalize before touching the filesystem so an unknown operation reports
-    # the valid vocabulary, not a downstream file-type error.
-    operation = _normalize_operation(operation)
     path = _safe_path(raw_path, base_dir, inspect_roots)
     limit = _clamp(limit)
     if operation == "ls":
         if not path.is_dir():
-            raise ValueError(
-                f"{path} is a file; ls lists directories. "
-                "Use operation='cat' to read a file."
-            )
+            raise ValueError("ls requires a directory")
         children = sorted(path.iterdir(), key=lambda x: x.name)
         entries = []
         for item in children[:_MAX_ENTRIES]:
@@ -716,9 +751,11 @@ def _inspect(operation: str, raw_path: str, offset: int, limit: int,
 def _copper_venv(venv_path: str) -> str:
     """Route an absolute venv path through Copper's read-only mount when enabled.
 
-    When HPC_COPPER_MOUNT is set, venv reads are served through the mount so
-    importing it doesn't hammer Lustre at scale. A no-op when Copper is off, the
-    path isn't absolute, or it's already under the mount.
+    When the worker exported ``HPC_COPPER_MOUNT`` (Copper is up on this node --
+    see ``set_env.sh``'s ``HPC_USE_COPPER`` toggle), reads of the venv are served
+    through ``/tmp/$USER/copper/<original absolute path>`` so importing it does
+    not hammer Lustre at scale. A no-op when Copper is off, when the path is not
+    absolute, or when it is already under the mount.
     """
 
     mount = os.environ.get("HPC_COPPER_MOUNT", "").strip().rstrip("/")
@@ -744,25 +781,6 @@ def _run_process(args: list[str], cwd: Path, timeout: float, **kwargs) -> tuple[
         return proc.returncode, stdout or b"", stderr or b"", True
 
 
-def _cap_stream(text: str, name: str) -> str:
-    """Bound one run_code output stream so a verbose run cannot exceed the 512KB
-    exchange message limit (which 413s the send and kills the agent)."""
-    raw = text.encode("utf-8", errors="replace")
-    if len(raw) <= _MAX_CODE_OUTPUT:
-        return text
-    half = _MAX_CODE_OUTPUT // 2
-    head = raw[:half].decode("utf-8", errors="replace")
-    tail = raw[-half:].decode("utf-8", errors="replace")
-    dropped = len(raw) - len(head.encode("utf-8")) - len(tail.encode("utf-8"))
-    return (
-        f"{head}\n"
-        f"...[{name} truncated: {dropped} of {len(raw)} bytes dropped to stay under the "
-        f"{_MAX_CODE_OUTPUT}-byte run_code output cap; the exchange rejects messages over 512KB. "
-        f"Redirect large output to a file and read it with inspect_filesystem(tail).]...\n"
-        f"{tail}"
-    )
-
-
 def _run_subprocess(payload: str, workdir: str | None, timeout: float, venv_path: str | None = None) -> dict[str, str]:
     cwd = Path(workdir or os.environ.get("HPC_BASE_DIR", ".")).resolve()
     cwd.mkdir(parents=True, exist_ok=True)
@@ -776,8 +794,8 @@ def _run_subprocess(payload: str, workdir: str | None, timeout: float, venv_path
         )
         if timed_out:
             stderr += f"\nTimed out after {timeout}s.".encode()
-        return {"stdout": _cap_stream(stdout.decode(errors="replace"), "stdout"),
-                "stderr": _cap_stream(stderr.decode(errors="replace").strip(), "stderr"),
+        return {"stdout": stdout.decode(errors="replace"),
+                "stderr": stderr.decode(errors="replace").strip(),
                 "returncode": str(-1 if timed_out else returncode)}
     finally:
         script.unlink(missing_ok=True)
@@ -810,10 +828,124 @@ def _batch_root(base_dir: str) -> Path:
     return Path(os.environ.get("HPC_BATCH_ROOT") or Path(base_dir, "batches")).resolve()
 
 
+class _RegistryIndex:
+    """Navigation index for one process that owns all registry publication.
+
+    Enable before local Academy agents start. Distributed workers and forked
+    children retain the disk implementation. Row completion and output-contract
+    checks always read their original files; this only indexes registry views.
+    """
+
+    def __init__(self):
+        self._states = {}
+        self._enable_lock = threading.RLock()
+
+    def _state(self, registry):
+        state = self._states.get(registry)
+        if state and state['pid'] == os.getpid() and state['valid']:
+            return state
+        return None
+
+    @staticmethod
+    def _supported(path, entry):
+        if not isinstance(entry, dict) or not isinstance(entry.get('batch_id'), str):
+            return False
+        labels = entry.get('labels', {})
+        return (path.stem == entry['batch_id'] and isinstance(labels, dict)
+                and (labels.get('hypothesis_id') is None
+                     or isinstance(labels['hypothesis_id'], str)))
+
+    @staticmethod
+    def _upsert(state, entry):
+        batch_id = entry['batch_id']
+        old = state['entries'].get(batch_id)
+        old_hypothesis = (old.get('labels', {}).get('hypothesis_id') if old else None)
+        hypothesis = entry.get('labels', {}).get('hypothesis_id')
+        if old_hypothesis is not None and old_hypothesis != hypothesis:
+            state['by_hypothesis'][old_hypothesis].pop(batch_id, None)
+        state['entries'][batch_id] = entry
+        if hypothesis is not None:
+            state['by_hypothesis'].setdefault(hypothesis, {}).setdefault(batch_id, None)
+
+    def enable(self, base_dir):
+        registry = _batch_root(base_dir) / 'registry'
+        with self._enable_lock:
+            if self._state(registry) is not None:
+                return True
+            state = {'pid': os.getpid(), 'valid': True, 'lock': threading.RLock(),
+                     'entries': {}, 'by_hypothesis': {}}
+            if registry.is_dir():
+                for path in registry.glob('*.json'):
+                    try:
+                        entry = json.loads(path.read_text())
+                    except (OSError, ValueError):
+                        continue  # Same unreadable/torn-entry behavior as the disk iterator.
+                    if not self._supported(path, entry):
+                        state['valid'] = False
+                        break  # Retain legacy handling rather than hide unsupported metadata.
+                    self._upsert(state, entry)
+            self._states[registry] = state
+            return state['valid']
+
+    def publish(self, tmp, path, payload):
+        state = self._state(path.parent)
+        if state is None:
+            os.replace(tmp, path)
+            return
+        # Match JSON's canonical field types, including any converted dict keys.
+        entry = json.loads(payload)
+        with state['lock']:
+            os.replace(tmp, path)
+            if self._supported(path, entry):
+                self._upsert(state, entry)
+            else:
+                state['valid'] = False
+
+    def entries(self, base_dir, hypothesis_id=None):
+        state = self._state(_batch_root(base_dir) / 'registry')
+        if state is None:
+            return None
+        with state['lock']:
+            if not state['valid']:
+                return None
+            ids = state['entries'] if hypothesis_id is None else state['by_hypothesis'].get(hypothesis_id, {})
+            return copy.deepcopy([state['entries'][key] for key in ids])
+
+    def usage(self, base_dir):
+        state = self._state(_batch_root(base_dir) / 'registry')
+        if state is None:
+            return None
+        with state['lock']:
+            if not state['valid']:
+                return None
+            uses, last_ok = {}, {}
+            for entry in state['entries'].values():
+                if not entry.get('tool'):
+                    continue
+                key = (entry['tool'], entry.get('tool_version'))
+                uses[key] = uses.get(key, 0) + 1
+                status = entry.get('last_status') or {}
+                if status.get('unfinished') == 0 and status.get('failed') == 0:
+                    if entry['created_at'] > last_ok.get(key, ('', ''))[0]:
+                        last_ok[key] = (entry['created_at'], entry['batch_id'])
+            return uses, last_ok
+
+
+_REGISTRY_INDEX = _RegistryIndex()
+
+
+def enable_registry_index(base_dir: str) -> bool:
+    """Enable only in the single-writer local control server, before launch."""
+    enabled = _REGISTRY_INDEX.enable(base_dir)
+    logger.info('Single-process registry index enabled=%s for %s', enabled, base_dir)
+    return enabled
+
+
 def _write_json(path: Path, value: dict) -> None:
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}")
-    tmp.write_text(json.dumps(value, indent=1))
-    os.replace(tmp, path)
+    payload = json.dumps(value, indent=1)
+    tmp.write_text(payload)
+    _REGISTRY_INDEX.publish(tmp, path, payload)
 
 
 def _sha256(path: Path) -> str:
@@ -824,9 +956,12 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-# A stringified null ("None", "null", ...) passes the regex above, and batch_id
-# is the RESUME key: two callers both sending "None" would silently share one
-# batch. Reject these so each gets its own.
+# A caller that stringifies a null passes the regex above cleanly: "None" is
+# alphanumeric. Observed 2026-11-11 -- an agent sent batch_id="None" and got a
+# batch directory literally named None. It works, which is the danger: batch_id
+# is the RESUME key, so the next caller doing the same thing resumes that frozen
+# script and inputs instead of creating its own batch, and two unrelated stages
+# silently merge into one.
 _NULLISH_IDS = frozenset({"none", "null", "nil", "nan", "undefined", "false", "0"})
 
 
@@ -889,9 +1024,11 @@ def _finished_ok(run_dir: Path) -> bool:
         return False
 
 
-# A task can't outlive its own `timeout`, so a lease older than timeout + this
-# margin means the owner died and the row is safe to re-dispatch. The margin
-# absorbs clock skew and the kill-to-return gap.
+# A run folder can only be legitimately owned while its task is alive, and a
+# task cannot outlive its own `timeout` (subprocess.run kills it). So a lease
+# older than timeout + this margin means the owner died and the row is safe to
+# re-dispatch. The margin absorbs clock skew and the gap between the subprocess
+# being killed and its wrapper returning.
 LEASE_STALE_MARGIN = 300.0
 
 
@@ -935,7 +1072,9 @@ def _acquire_lease(folder: Path, max_age: float) -> dict | None:
             fd = os.open(lease, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
             # A terminal run (`done` written) no longer owns its folder, so its
-            # lease is reclaimable at once; a live run is honored until stale.
+            # lease is reclaimable at once -- otherwise a just-failed row could
+            # not be re-run until its own lease aged past max_age. A live run
+            # (no done) is honored until its lease goes stale.
             if not (folder / "done").exists():
                 age = _lease_age(folder)
                 if age is not None and age < max_age:
@@ -999,12 +1138,17 @@ def _promote_outputs(attempt: Path, folder: Path) -> None:
         if item.name in _RUN_RESERVED or item.name.startswith("attempt_"):
             continue
         dest = folder / item.name
+        if item.is_symlink() and item.resolve() == dest.resolve():
+            continue
         try:
             if dest.is_dir():
                 shutil.rmtree(dest)
             elif dest.exists():
                 dest.unlink()
             shutil.move(str(item), str(dest))
+            # Native tools record absolute paths while cwd is attempt_N.
+            # Preserve those references after promoting the scientific outputs.
+            item.symlink_to(Path('..') / dest.name, target_is_directory=dest.is_dir())
         except OSError:
             continue
 
@@ -1026,6 +1170,16 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
     producing them is recorded as a failure (L3). `done` is written last, so it
     means "finished".
     """
+    logical_slot = os.environ.get('LOAM_EL_GPU_SLOTS')
+    if logical_slot:
+        physical_gpus = int(os.environ.get('HPC_GPUS_PER_NODE', '4'))
+        sharing = int(os.environ.get('HPC_SCIENCE_WORKERS_PER_GPU', '2'))
+        slots = logical_slot.split(',')
+        if physical_gpus < 1 or sharing not in (1, 2):
+            raise ValueError('Invalid physical GPU count or science sharing factor')
+        if len(slots) != 1 or not slots[0].isdigit() or not 0 <= int(slots[0]) < physical_gpus*sharing:
+            raise ValueError(f'Shared science rows require exactly one logical GPU slot in [0,{physical_gpus*sharing})')
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(int(slots[0]) % physical_gpus)
     folder = Path(run_dir)
     folder.mkdir(parents=True, exist_ok=True)
     # C3: claim the folder before touching anything. If a live task already owns
@@ -1047,10 +1201,14 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
     args = _argv(row, order) if call == "argv" else ["input.json"]
     started = time.time()
     with open(folder / "stdout.txt", "wb") as out, open(folder / "stderr.txt", "wb") as err:
-        returncode, _, _, timed_out = _run_process(
-            [python, _stage_local(script, sha), *args], attempt, timeout,
-            stdout=out, stderr=err,
-        )
+        try:
+            returncode, _, _, timed_out = _run_process(
+                [python, _stage_local(script, sha), *args], attempt, timeout,
+                stdout=out, stderr=err,
+            )
+        except OSError as exc:
+            err.write(f"Unable to start scientific task: {type(exc).__name__}: {exc}\n".encode())
+            returncode, timed_out = (127 if isinstance(exc, FileNotFoundError) else 126), False
         if timed_out:
             err.write(f"\nTimed out after {timeout}s.".encode())
             returncode = -1
@@ -1060,6 +1218,9 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
         "seconds": round(time.time() - started, 1),
         "host": socket.gethostname(),
         "gpu": _device_pin(),
+        "logical_gpu_slot": logical_slot,
+        "process_started_at": started,
+        "process_finished_at": time.time(),
     }
     # L3: enforce the tool's declared output contract on an otherwise-clean exit.
     if returncode == 0 and expects:
@@ -1073,22 +1234,58 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
     return status
 
 
-# Minimum rows for a NEW batch; enforced here since only the cluster can stat
-# the inputs file. HPC_MIN_BATCH_ROWS=1 disables (single-candidate/debug).
+# The fewest rows a NEW batch may carry. Enforced here, on the cluster, because
+# this is the only layer that can see the inputs file at all: the policy hook in
+# .loam/hooks/hypothesis_orchestration.py and mcp_server.py both run on the
+# controller process and cannot stat every worker-only path, which is how every
+# degenerate submission below got through.
+#
+# Measured on a 1024-node (12,288-device) reservation, 2026-11-09. Run
+# 2627a00e's first five run_batch calls were /dev/stdin, a laptop path named
+# test_input.jsonl, /dev/null, the literal string "dummy", and /dev/stdin again
+# -- all probes. The run before it created batches of 1, 1, 0 and 1 rows. Peak
+# utilisation was ~1 device of 12,288. A 0-row batch was created SUCCESSFULLY,
+# because `inputs.is_file()` passes for an empty file and the row loop below
+# simply does nothing, so nothing ever objected.
+#
+# Operator-controlled, not agent-controlled: run_batch takes no floor argument,
+# because an agent that could set its own would set 1. Set HPC_MIN_BATCH_ROWS=1
+# to disable (a genuine single-candidate campaign, or a debug run).
 _MIN_BATCH_ROWS = max(1, int(os.environ.get("HPC_MIN_BATCH_ROWS", "32") or 1))
 
-# Minimum DISTINCT jobs a batch must describe (ignoring identity/placement
-# keys), so padding a row count with copies can't satisfy the floor.
+# How many DISTINCT jobs a batch must describe, counting a row's parameters and
+# ignoring the keys that only name the row or say where to write.
+#
+# Why a row count alone is not enough. On 2026-11-09, once _MIN_BATCH_ROWS
+# refused 1-row batches, agents widened to exactly 32 and filled the width with
+# padding: of 352 rows dispatched across 11 batches, only 47 payloads were
+# distinct (13.4%). EIGHT of the 11 batches had all 32 rows identical once id
+# and out_dir were stripped -- and in those the stripped payload was `{}`, i.e.
+# the rows carried NO parameters at all, so the batch ran one job 32 times.
+# Three batches even shared one out_dir across all rows, so the rows overwrote
+# each other. Only one batch of the 11 was a real sweep (a 32-seed sweep).
+#
+# A row count specifies a shape and padding satisfies the shape. This checks
+# that the rows describe different WORK, which padding cannot fake: to pass,
+# whatever actually varies between jobs has to appear in the rows -- which is
+# also what makes the sweep reproducible.
 _MIN_BATCH_DISTINCT = max(1, int(os.environ.get("HPC_MIN_BATCH_DISTINCT", "2") or 1))
 
-# Max age a batch may be and still be resumable (default 12 h). Resume skips the
-# row/distinctness checks, so this stops a stale batch slipping past them. 0 off.
+# How old a batch may be and still be resumable, in seconds. Default 12 h, which
+# comfortably covers resuming across a block boundary inside one reservation
+# while refusing yesterday's work.
+#
+# Resume bypasses the row floor and the distinctness check by design (the rows
+# were validated at creation), which makes a stale batch a way around both. On
+# 2026-11-09 a child reactivated a 1-row batch created the previous day. 0
+# disables the guard.
 _MAX_RESUME_AGE_SECONDS = max(
     0.0, float(os.environ.get("HPC_MAX_RESUME_AGE_SECONDS", str(12 * 3600)) or 0.0))
 
-# Keys that identify or place a row rather than parameterise it. Rows differing
-# ONLY in these are copies of one job (run01..run32 of the same computation);
-# a deliberate replicate should carry its varying input, e.g. a seed.
+# Keys that identify or place a row rather than parameterising it. A batch whose
+# rows differ ONLY in these is 32 copies of one job: `out_dir` pointing at
+# run01..run32 is still the same computation, just filed separately. If those
+# runs are deliberate replicates, the varying input (a seed) belongs in the row.
 _ROW_IDENTITY_KEYS = frozenset({
     "id", "name", "label", "tag", "index", "idx", "row", "run", "run_id",
     "out", "outdir", "out_dir", "output", "output_dir", "outpath", "out_path",
@@ -1096,9 +1293,12 @@ _ROW_IDENTITY_KEYS = frozenset({
     "candidate", "candidate_id", "sample", "sample_id", "item", "item_id",
 })
 
-# Any key ENDING in one of these is an identifier too: a fixed allowlist of
-# names is bypassable by renaming the label (e.g. candidate_id), so match on
-# suffix as well.
+# Any key ENDING in one of these is an identifier too. A fixed set of names was
+# not enough: on 2026-11-10 a batch of 384 rows shaped {"candidate_id": "..."}
+# passed the distinctness check with 384 "distinct" payloads and every row then
+# fetched the same UniProt record and the same PDB structure -- 384 identical
+# jobs, because `candidate_id` was not in the set above. A guard that trusts an
+# allowlist of label names is bypassable by renaming the label.
 _IDENTITY_SUFFIXES = ("_id", "_name", "_label", "_tag", "_idx", "_index",
                       "_key", "_slug", "_uid", "_no", "_num")
 
@@ -1123,7 +1323,8 @@ def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: s
                    labels: dict | None, timeout_each: float, gpus: float,
                    venv_path: str | None, base_dir: str, inspect_roots: list[str],
                    tool: str | None = None,
-                   tool_version: int | None = None) -> tuple[dict, str, list]:
+                   tool_version: int | None = None, *,
+                   science_workers_per_gpu: int = 1) -> tuple[dict, str, list]:
     """Create or resume a batch on disk and list the runs still to submit.
 
     New: validate, freeze copies of script (or the tool's script) and inputs,
@@ -1136,19 +1337,45 @@ def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: s
     registry.mkdir(parents=True, exist_ok=True)
     batch_id = _check_id(batch_id or f"b-{uuid.uuid4().hex[:12]}", "batch_id")
     labels = _clean_labels(labels)
+    if science_workers_per_gpu not in (1, 2):
+        raise ValueError('science_workers_per_gpu must be one or two')
+    if science_workers_per_gpu > 1 and gpus not in (0, 1):
+        raise ValueError('Shared science mode supports only zero-GPU metadata and one-device scientific rows')
     entry_path = registry / f"{batch_id}.json"
     batch_dir = root / batch_id
 
     if entry_path.exists():
         entry = json.loads(entry_path.read_text())
+        if entry.get('science_workers_per_gpu', 1) != science_workers_per_gpu:
+            raise ValueError('Cannot resume a batch under a different GPU sharing policy')
         existing_labels = entry.get("labels") or {}
         for key in ("plan_id", "hypothesis_id"):
             if labels.get(key) and labels[key] != existing_labels.get(key):
                 raise ValueError(f"batch {batch_id} belongs to another {key}")
-        # Resume skips the row/distinctness checks, so provenance is the only
-        # guard left: a batch with no plan_id/hypothesis_id has none and is
-        # refused outright, else any hypothesis could resume it and misattribute
-        # the output (the label-conflict loop above misses an unlabelled batch).
+        # RESUME IS EXEMPT FROM THE ROW FLOOR AND THE DISTINCTNESS CHECK, because
+        # the rows were validated when the batch was created. That exemption is
+        # what lets a walltime-interrupted batch finish -- and it was also a hole:
+        # on 2026-11-09 a child reactivated b-2f95dbc8caab, a ONE-ROW batch
+        # created 2026-11-08T21:14 with `labels: {}`, bypassing both guards.
+        #
+        # The loop above only fires when the stored labels CONFLICT. An empty
+        # stored label set conflicts with nothing, so an unlabelled batch from a
+        # previous day could be resumed by any hypothesis and its output
+        # attributed to today's. The campaign contract forbids exactly this
+        # ("never reach for a convenient existing artifact ... may be stale,
+        # wrong, or from another hypothesis").
+        #
+        # The conflict loop above is not enough, and NOT for the reason it first
+        # appears. With an empty stored label set it does fire when the caller
+        # passes labels ('P1' != None). The hole is the DOCUMENTED resume form
+        # `run_batch(batch_id=...)` with NO labels: then `labels.get(key)` is
+        # falsy, the loop is skipped entirely, and any batch on disk can be
+        # reactivated by anyone. That is how b-2f95dbc8caab was resumed.
+        #
+        # So the test is a property of the BATCH, not of the call: a batch with
+        # no plan_id/hypothesis_id has no provenance and is not campaign work --
+        # every batch Loam creates is labelled by the orchestration. Refuse to
+        # resume it however the call is shaped.
         if not (existing_labels.get("plan_id") or existing_labels.get("hypothesis_id")):
             raise ValueError(
                 f"batch {batch_id} has no plan_id or hypothesis_id and cannot be resumed: it was "
@@ -1158,8 +1385,9 @@ def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: s
                 "is leftover or hand-made. Create a NEW batch with write_files + run_batch for "
                 "the work you actually need."
             )
-        # Age guard: a batch's staged script and inputs are frozen copies, so
-        # resuming an old one silently runs stale code on stale inputs.
+        # Age guard. A batch from a previous run is stale by construction: the
+        # staged script and inputs are frozen copies from whenever it was made,
+        # so resuming one silently runs yesterday's code on yesterday's inputs.
         created = str(entry.get("created_at") or "")
         if created and _MAX_RESUME_AGE_SECONDS > 0:
             try:
@@ -1182,6 +1410,10 @@ def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: s
         if bool(script_path) == bool(tool) or not inputs_path:
             raise ValueError("a new batch needs inputs_path and exactly one of script_path or tool")
         spec = _load_tool(base_dir, tool, tool_version) if tool else None
+        if spec and venv_path is None:
+            venv_path = spec.get("venv_path")
+        if venv_path and not Path(venv_path, "bin/python").is_file():
+            raise ValueError(f"venv_path has no bin/python: {venv_path}. Source jupiter_env.sh and use the installed LOAM_SOFTWARE_ROOT path; do not guess a checkout-relative software directory.")
         script = (Path(spec["dir"], "script.py") if spec
                   else _safe_path(script_path, base_dir, inspect_roots))
         inputs = _safe_path(inputs_path, base_dir, inspect_roots)
@@ -1209,7 +1441,10 @@ def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: s
                 f"{_MIN_BATCH_ROWS} candidates, say so in your Result and report the constraint "
                 "rather than padding the file."
             )
-        # Distinctness check, also BEFORE mkdir. See _MIN_BATCH_DISTINCT.
+        # Distinctness check, also BEFORE mkdir. A row count specifies a shape
+        # and padding satisfies the shape; this requires the rows to describe
+        # different work. See _MIN_BATCH_DISTINCT for the measurements that
+        # made it necessary.
         if n_rows > 1 and len(signatures) < _MIN_BATCH_DISTINCT:
             only = next(iter(signatures), "{}")
             empty = only in ("{}", "")
@@ -1241,6 +1476,7 @@ def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: s
             "inputs_sha256": _sha256(batch_dir / "inputs.jsonl"),
             "timeout_each": timeout_each,
             "gpus": gpus,
+            "science_workers_per_gpu": science_workers_per_gpu,
             "venv_path": venv_path,  # H4: frozen so a resume keeps the interpreter
         }
         if spec:
@@ -1310,9 +1546,16 @@ def _batch_status(batch_id: str, base_dir: str, max_failures: int = 5) -> dict:
     status = {"succeeded": succeeded, "failed": failed, "unfinished": unfinished, "at": _now()}
     entry["last_status"] = status
     _write_json(entry_path, entry)
-    # `expects` is the only evidence that an exit-0 row did the work (a row can
-    # exit clean while its output says it failed), so a batch without it has no
-    # success criterion and never reports ok: true.
+    # L3, enforced: `expects` is the ONLY evidence that an exit-0 row did the work.
+    # _run_one can only flag missing_outputs when the batch declared them, so a
+    # batch submitted WITHOUT `expects` has no success criterion at all and must
+    # never report ok: true -- consumers key on `ok` to claim `executed`.
+    #
+    # Observed 2026-11-11, batch b-71f5dc064c82: 32 rows exited 0 while their own
+    # stdout said {"status": "failed", "valid_manifest": false} (RFD3 rejected the
+    # contig), and with expects undeclared this function scored all 32 as
+    # succeeded and the batch ok. A funnel whose success signal can read true on a
+    # batch where every row failed is worse than one that fails loudly.
     expects_declared = bool(entry.get("expects"))
     result = {"batch_id": batch_id, "labels": entry["labels"], "total": entry["total"],
               **status, "complete": unfinished == 0,
@@ -1351,7 +1594,8 @@ def _list_batches(base_dir: str, plan_id: str | None = None,
                   hypothesis_id: str | None = None, limit: int = 50) -> list[dict]:
     """Registry entries matching the labels, newest first, using cached status."""
     found = []
-    for entry in _registry_entries(base_dir):
+    indexed = _REGISTRY_INDEX.entries(base_dir, hypothesis_id or None)
+    for entry in _registry_entries(base_dir) if indexed is None else indexed:
         entry_labels = entry.get("labels", {})
         if plan_id and entry_labels.get("plan_id") != plan_id:
             continue
@@ -1582,6 +1826,9 @@ def _register_tool(name: str, script_path: str, params: dict, description: str,
 
 def _tool_usage(base_dir: str) -> tuple[dict, dict]:
     """Batch counts and newest fully-successful batch per (tool, version)."""
+    indexed = _REGISTRY_INDEX.usage(base_dir)
+    if indexed is not None:
+        return indexed
     uses: dict[tuple, int] = {}
     last_ok: dict[tuple, tuple[str, str]] = {}
     for entry in _registry_entries(base_dir):

@@ -1,0 +1,50 @@
+concurrency: 48
+synthesis_concurrency: 8
+rounds: 3
+max_code_calls: 6
+max_history_bytes: 192000
+max_requests: 160
+model_retries: 10
+timeouts:
+  code_generator: 6600
+  model_request: 600
+  reasoner: 1800
+  reviewer: 1200
+  tool: 6000
+  validator: 10800
+models:
+  code_generator:
+    model: nemotron-3.5-super-vl
+    settings: &id001
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+      max_tokens: 8192
+  reasoner:
+    model: nemotron-3.5-super-vl
+    settings:
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+      max_tokens: 32768
+  reviewer:
+    model: nemotron-3.5-super-vl
+    settings: *id001
+  validator:
+    model: nemotron-3.5-super-vl
+    settings: *id001
+tournament:
+  gen_batch_size: 4
+  initial_hypotheses: 288
+  matches: 10
+  max_seconds: 2400
+  new_per_round: 72
+  scheme: swiss
+  swiss_rounds: 1
+  top_k: 144
+  workers: 16
+  generation:
+    model: nemotron-3.5-super-vl
+  ranking:
+    model: nemotron-3.5-super-vl
+science_workers_per_gpu: 2

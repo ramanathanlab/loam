@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from string import Template
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
@@ -26,6 +27,7 @@ class ModelSpec(ConfigModel):
     model: str
     base_url: str | None = None
     api_key_env: str | None = None
+    settings: dict[str, Any] = Field(default_factory=dict)
 
     def api_key(self, *, custom_endpoint: bool = False) -> str | None:
         key = os.environ.get(self.api_key_env) if self.api_key_env else None
@@ -36,10 +38,13 @@ class ModelSpec(ConfigModel):
             return self.model
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.openai import OpenAIProvider
+        from .rate_limits import async_http_client
 
         return OpenAIChatModel(
             self.model,
-            provider=OpenAIProvider(base_url=self.base_url, api_key=self.api_key(custom_endpoint=True)),
+            provider=OpenAIProvider(base_url=self.base_url, api_key=self.api_key(custom_endpoint=True),
+                                    http_client=async_http_client(self.base_url)),
+            settings=self.settings or None,
         )
 
     def jnana(self, max_tokens: int = 32768):
@@ -88,12 +93,16 @@ class HPCAllocation(ConfigModel):
 class HPCDeployment(ConfigModel):
     endpoint_id: NonEmptyStr
     campaign_id: NonEmptyStr
-    system: Literal['aurora', 'polaris']
+    system: Literal['aurora', 'polaris', 'jupiter']
     exchange_url: NonEmptyStr
     base_dir: str
     worker_code_dir: str
     inspect_roots: list[str]
     pool_size: PositiveInt
+    science_workers_per_gpu: Literal[1, 2] = 1
+    gpus_per_node: PositiveInt | None = None
+    cpus_per_node: PositiveInt | None = None
+    frozen_tool_library: bool = False  # operator-registered recipes only; metadata preparation remains available
     server_script: Path
     host: NonEmptyStr
     port: Annotated[int, Field(ge=1, le=65535)]
@@ -112,6 +121,10 @@ class HPCDeployment(ConfigModel):
 
     @model_validator(mode='after')
     def validate_deployment(self):
+        if self.system != 'jupiter' and (self.gpus_per_node is not None or self.cpus_per_node is not None):
+            raise ValueError('GPU/CPU count overrides currently require the Jupiter Slurm/CUDA adapter')
+        if self.science_workers_per_gpu > 1 and self.system != 'jupiter':
+            raise ValueError('Shared science GPU workers are supported only on Jupiter')
         for name in ('base_dir', 'worker_code_dir'):
             _validate_remote_path(name, getattr(self, name))
         for root in self.inspect_roots:
@@ -122,7 +135,7 @@ class HPCDeployment(ConfigModel):
         return self
 
     def environment(self) -> dict[str, str]:
-        accelerators = 12 if self.system == 'aurora' else 4
+        accelerators = self.gpus_per_node or (12 if self.system == 'aurora' else 4)
         allocation = self.allocation
         endpoint_config = {
             **allocation.endpoint_options,
@@ -138,6 +151,12 @@ class HPCDeployment(ConfigModel):
             'max_workers_per_node': accelerators,
             'base_dir': self.worker_code_dir,
         }
+        if self.system == 'jupiter':
+            for key in ('available_accelerators', 'base_dir'):
+                endpoint_config.pop(key)
+            # The pool is allocation-wide: one worker owns EL, the rest serve
+            # clients. Avoid multiplying the full pool onto every node.
+            endpoint_config['max_workers_per_node'] = (self.pool_size + allocation.nodes) // allocation.nodes
         return {
             'HPC_GLOBUS_ENDPOINT_ID': self.endpoint_id,
             'HPC_CAMPAIGN_ID': self.campaign_id,
@@ -147,8 +166,12 @@ class HPCDeployment(ConfigModel):
             'HPC_LOAM_HOME': self.worker_code_dir,
             'HPC_INSPECT_ROOTS': ':'.join(self.inspect_roots),
             'HPC_POOL_SIZE': str(self.pool_size),
+            'HPC_SCIENCE_WORKERS_PER_GPU': str(self.science_workers_per_gpu),
+            'HPC_GPUS_PER_NODE': str(accelerators),
+            **({'HPC_CPUS_PER_NODE': str(self.cpus_per_node)} if self.cpus_per_node else {}),
             'HPC_COLD_ENDPOINT_TIMEOUT': str(self.cold_endpoint_timeout),
             'HPC_COLD_ENDPOINT_BACKOFF': str(self.cold_endpoint_backoff),
+            'HPC_CLUSTER_STARTUP_TIMEOUT': str(self.startup_timeout),
             'HPC_ENDPOINT_CONFIG_JSON': json.dumps(endpoint_config, sort_keys=True, separators=(',', ':')),
             'HPC_NNODES': str(allocation.nodes),
             'HPC_MCP_TRANSPORT': 'http',
@@ -200,6 +223,7 @@ class Timeouts(ConfigModel):
 
     tool: PositiveFloat = 1800              # one tool call: a shell command, an MCP call, a fetch
     model_request: PositiveFloat = 600      # one LLM request, including the SDK's own retries
+    mcp_init: PositiveFloat = 60            # session initialization under concurrent agent fan-out
     validator: PositiveFloat = 4 * 3600     # one validator run, including the code-generators it delegates to
     code_generator: PositiveFloat = 3600
     reviewer: PositiveFloat = 1800
@@ -247,17 +271,19 @@ class Config(ConfigModel):
     execution: Execution = Execution()
     tournament: TournamentConfig
     rounds: PositiveInt = 1
-    workspace_inputs: Path | None = None   # local dir copied into every hypothesis's data/
+    workspace_inputs: Path | None = None   # shared/local dir copied into each hypothesis's data/
     concurrency: PositiveInt = 4         # validators running at once
+    synthesis_concurrency: PositiveInt = 8  # concurrent bounded evidence reductions
     max_code_calls: PositiveInt = 4      # code-generator delegations per validator
     max_requests: PositiveInt = 200      # LLM requests per agent run (pydantic-ai's default of 50 is too low)
     model_retries: PositiveInt = 8       # SDK retries per LLM request on 429/5xx/connection errors, with backoff
+    max_history_bytes: PositiveInt | None = None  # optional bounded context for local inference
     timeouts: Timeouts = Timeouts()
 
     @model_validator(mode='after')
     def validate_campaign(self):
-        if self.execution.mode != 'local' and self.workspace_inputs is not None:
-            raise ValueError('workspace_inputs is not supported in MCP or HPC mode')
+        if self.execution.mode == 'mcp' and self.workspace_inputs is not None:
+            raise ValueError('workspace_inputs requires local mode or an HPC shared filesystem')
         required = {'validator', 'code_generator', 'reviewer', 'reasoner'}
         if set(self.models) != required:
             missing = required - set(self.models)
@@ -272,10 +298,30 @@ class Config(ConfigModel):
         return '\n\n'.join(p.read_text() for p in self.rules)
 
 
+def expand_environment(value, variables: dict[str, str] | None = None):
+    """Expand configuration placeholders without evaluating shell syntax.
+
+    Defaults only describe paths; loading configuration never creates them or
+    submits work. Shell expressions such as ${PATH:-} remain for worker_init.
+    """
+    repo = Path(__file__).resolve().parents[1]
+    env = {'LOAM_REPO_ROOT': str(repo), 'LOAM_SOFTWARE_ROOT': str(repo.parent / 'software'),
+           'LOAM_RUN_ROOT': str(repo / 'runs/manual'),
+           'LOAM_CAMPAIGN_DIR': str(repo / 'runs/template/campaign'),
+           **os.environ, **(variables or {})}
+    if isinstance(value, str):
+        return Template(value).safe_substitute(env)
+    if isinstance(value, list):
+        return [expand_environment(item, variables) for item in value]
+    if isinstance(value, dict):
+        return {key: expand_environment(item, variables) for key, item in value.items()}
+    return value
+
+
 def load(path: str | Path) -> Config:
     """Load a YAML config; relative paths resolve against the config file's directory."""
     path = Path(path).resolve()
-    cfg = Config.model_validate(yaml.safe_load(path.read_text()))
+    cfg = Config.model_validate(expand_environment(yaml.safe_load(path.read_text())))
     here = path.parent
 
     def fix(p: Path) -> Path:

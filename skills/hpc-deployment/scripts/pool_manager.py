@@ -24,9 +24,15 @@ def _reraise_cancel(results: list) -> None:
             raise item
 
 
-# A multi-user endpoint forks the user endpoint on demand, and that child
-# answers the first submit with 422 ENDPOINT_NOT_ONLINE (the SDK does not retry
-# it). A cold first submit is normal for a not-yet-warm endpoint, so it must be
+# A multi-user endpoint forks the per-config user endpoint on demand, and that
+# child is not accepting tasks the instant it exists. Globus Compute answers the
+# first submit with `422 ENDPOINT_NOT_ONLINE` and the SDK does NOT retry it.
+#
+# Measured 2026-11-11: the manager logged "Creating new user endpoint" at
+# 01:55:01, our submit raised within a second, and the uep then came up and
+# queued a 4-node block that no client was attached to -- so the failure both
+# aborted the launch AND stranded an allocation. A cold first submit is the
+# normal case for an endpoint that was not already warm, so it has to be
 # retried rather than propagated; everything else still fails immediately.
 _COLD_ENDPOINT_CODE = "ENDPOINT_NOT_ONLINE"
 
@@ -34,8 +40,9 @@ _COLD_ENDPOINT_CODE = "ENDPOINT_NOT_ONLINE"
 def _is_cold_endpoint(exc: BaseException) -> bool:
     """True only for the 422 a not-yet-ready user endpoint returns on first submit.
 
-    Matched on ComputeAPIError.code with a substring fallback, so this module
-    doesn't import globus_sdk just to name one error class.
+    Matched structurally on ComputeAPIError.code where available, with a
+    substring fallback, so this module does not take a globus_sdk import just to
+    name one error class.
     """
     if getattr(exc, "code", None) == _COLD_ENDPOINT_CODE:
         return True
@@ -57,11 +64,14 @@ class CampaignPool:
         self.agent_class = agent_class
         self.campaign_id = campaign_id
         self.want = want
-        # Direct mode pins one accelerator per agent (unique non-empty pin
-        # required); cluster mode lets EL own placement, so the agent has none.
+        # Direct mode: Parsl pins one accelerator per worker and the agent runs
+        # the payload itself, so a unique non-empty pin is required. Cluster
+        # mode: EL owns placement (gpu_selector/ngpus_per_process) and the
+        # client agent only submits tasks, so it holds no accelerator at all.
         self.require_pin = require_pin
-        # Liveness probes fail fast; a fresh launch gets a longer deadline to
-        # clear scheduler wait and agent_on_startup.
+        # Liveness probes of pool members must fail fast. A freshly launched
+        # agent instead has to clear scheduler wait and agent_on_startup (the
+        # EL ClusterClient checkpoint handshake), so it gets a longer deadline.
         self.timeout_s = timeout_s
         self.startup_timeout_s = _setting(startup_timeout_s, "HPC_AGENT_STARTUP_TIMEOUT", "600")
         self._agents: list[AgentInfo] = []
@@ -133,16 +143,25 @@ class ClusterPool:
     by start() and handed out by next_agent() with no work per call; a
     background task re-probes it on an interval and repairs what died.
 
-    The cluster agent defines what "dead" means: its shutdown stops the EL
-    cluster, so losing it leaves every client bound to a cluster that no longer
-    exists. A lost cluster therefore replaces the whole pool; a lost client is
-    replaced on its own. Repairing here (not in the server) keeps the MCP server
-    and its sessions up across a cluster restart.
+    The cluster agent belongs here because it defines what "dead" means for
+    everything else. HpcClusterAgent.agent_on_shutdown stops the EL cluster,
+    so losing that agent means the cluster is gone, and every client agent is
+    then holding a ClusterClient bound to a cluster that no longer exists --
+    whether or not it still answers a probe. A lost cluster therefore replaces
+    the whole pool, while a lost client is replaced on its own. Because the
+    repair happens here rather than in the server, the MCP server and its
+    client sessions stay up across a cluster restart.
 
-    Unlike CampaignPool, repair runs on a timer rather than inside next_agent(),
-    keeping it off the request path, and there is no adoption: Manager.close()
-    shuts down every agent it launched. next_agent() keeps CampaignPool's async
-    signature so the tool bodies work with either pool; launch_one is ignored.
+    This is deliberately not CampaignPool. That class reconciles the pool
+    inside next_agent() -- probe, then exchange discovery -- under a single
+    lock, so N concurrent run_code calls each wait out the previous caller's
+    round trip and dispatch one at a time instead of overlapping. Moving the
+    same repair work onto a timer keeps it off the request path. Adoption is
+    also dropped: Manager.close() shuts down every agent it launched, and a
+    client that did survive a hard kill is bound to the previous cluster.
+
+    next_agent() keeps CampaignPool's async signature so the MCP tool bodies
+    work with either pool; launch_one is accepted and ignored.
     """
 
     def __init__(self, campaign_id: str, want: int, ckpt_dir: str | None = None,
@@ -154,9 +173,11 @@ class ClusterPool:
                  cold_endpoint_backoff_s: float | None = None):
         self.campaign_id = campaign_id
         self.want = want
-        # How long to retry a cold-endpoint (ENDPOINT_NOT_ONLINE) submit, plus
-        # the initial backoff (doubles, capped at a quarter of the window).
-        # Covers uep fork/registration only, not the PBS queue.
+        # How long to keep retrying a submit that a freshly forked user endpoint
+        # has refused with ENDPOINT_NOT_ONLINE, and the initial backoff (which
+        # doubles, capped at a quarter of the window). This covers uep fork and
+        # registration only -- NOT the PBS queue, which is waited out by the
+        # cluster agent's first probe under cluster_timeout_s.
         self.cold_endpoint_timeout_s = _setting(
             cold_endpoint_timeout_s, "HPC_COLD_ENDPOINT_TIMEOUT", "300")
         self.cold_endpoint_backoff_s = _setting(
@@ -169,13 +190,17 @@ class ClusterPool:
         self.cluster_timeout_s = _setting(cluster_timeout_s, "HPC_CLUSTER_STARTUP_TIMEOUT", "3000")
         self.probe_interval_s = _setting(probe_interval_s, "HPC_POOL_PROBE_INTERVAL", "60")
         # Liveness probes must fail fast; only a cold launch gets the long one.
-        self.probe_timeout_s = _setting(probe_timeout_s, "HPC_POOL_PROBE_TIMEOUT", "180")
-        # Consecutive strikes before a rebuild: tearing down a live cluster over
-        # one dropped probe costs a restart and maybe a fresh allocation.
+        self.probe_timeout_s = _setting(probe_timeout_s, "HPC_POOL_PROBE_TIMEOUT", "30")
+        # Tearing down a live cluster over one dropped probe costs a restart
+        # and possibly a fresh allocation, so the cluster gets consecutive
+        # strikes before a rebuild.
         self.cluster_grace = _setting(cluster_grace, "HPC_CLUSTER_PROBE_STRIKES", "3", int)
-        # Clients get strikes too: a probe can fail on a healthy agent (a severed
-        # listen stream or a 5xx burst), and replacing one on a single miss piles
-        # relaunch load onto the exchange exactly while it's struggling.
+        # Clients get strikes too. A probe can fail with the agent healthy: the
+        # exchange drops messages when a severed listen stream leaves a stale
+        # server-side reader on the mailbox, and a 5xx burst fails the send.
+        # Replacing a client on one miss turned each such blip into a mailbox
+        # registration, a GC submission and an EL handshake, piling load onto
+        # the exchange exactly while it was struggling.
         self.client_grace = _setting(client_grace, "HPC_CLIENT_PROBE_STRIKES", "3", int)
         # Consecutive failed rebuilds before self-healing gives up for good.
         self.max_restarts = _setting(max_restarts, "HPC_CLUSTER_MAX_RESTARTS", "3", int)
@@ -195,9 +220,10 @@ class ClusterPool:
         # Consecutive failed probes per client agent id; cleared on any success.
         self._client_misses: dict[str, int] = {}
         self._restart_failures = 0
-        # Caller-supplied dir seeds generation 0; later generations mint their
-        # own so a new ClusterClient can't bind the dead master's record. Old
-        # dirs are left as-is (remote HPC storage, and evidence of the failure).
+        # Caller-supplied dir seeds generation 0; every later generation mints
+        # its own so a new ClusterClient cannot bind to the dead master's
+        # record. Nothing here cleans the old dir up: it is remote HPC storage
+        # and its contents are the evidence for why the cluster died.
         self._seed_ckpt_dir = ckpt_dir
         self._ckpt_dir: str | None = None
         self._launch_cluster = None
@@ -238,7 +264,8 @@ class ClusterPool:
         """`_launch_cluster`, retrying only while the user endpoint is still cold.
 
         Bounded by cold_endpoint_timeout_s. Any other failure, and cancellation,
-        propagate on the first attempt rather than masking a misconfiguration.
+        propagate on the first attempt -- this must not become a general retry
+        that masks a real misconfiguration behind five minutes of silence.
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.cold_endpoint_timeout_s
@@ -317,9 +344,10 @@ class ClusterPool:
     async def _shutdown_all(self, agents: list[AgentInfo]) -> None:
         """Release the worker slots the replacements are about to need.
 
-        The endpoint is sized at one slot per client (+1 for the cluster), so
-        stale agents left running leave the new ones nowhere to land. Best
-        effort: the agent being replaced usually already stopped answering.
+        The endpoint is sized at one slot per client plus one for the cluster
+        agent, so leaving the old agents running would leave the new ones with
+        nowhere to land. Best effort throughout: the agent being replaced is
+        usually the one that stopped answering in the first place.
         """
         if not agents:
             return
@@ -431,9 +459,13 @@ class ClusterPool:
         shortfall = self.want - len(survivors)
         if shortfall <= 0:
             return
-        # Free the dropped agents' slots BEFORE launching replacements: a hung
-        # client still holds its slot, and with one slot per client the
-        # replacement would otherwise block the whole sweep for startup_timeout_s.
+        # M8: free the dropped agents' worker slots BEFORE launching replacements.
+        # A client that fails its probe but is still alive (hung) keeps holding
+        # its slot; the endpoint is sized at one slot per client (+1 for the
+        # cluster), so without this the replacement has nowhere to land and
+        # _launch_client blocks the whole repair sweep for startup_timeout_s
+        # (~600s) -- freezing cluster liveness for ~10 min. Best effort: the
+        # dropped agent is usually already gone, and _shutdown_all is bounded.
         if dropped:
             await self._shutdown_all(dropped)
         fresh = await self._launch_clients(shortfall)

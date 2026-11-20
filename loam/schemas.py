@@ -20,7 +20,7 @@ class Hypothesis(AgentOutput):
 
 
 class CodeResult(AgentOutput):
-    status: Literal['executed', 'submitted', 'blocked']
+    status: Literal['executed', 'submitted', 'prepared', 'blocked']
     code: str = Field(description='The complete snippet that was run or submitted.')
     result: str = Field(description='Verbatim execution output, batch id, or the blocking error.')
     artifacts: list[str] = Field(default=[], description='Paths of output files this run wrote.')

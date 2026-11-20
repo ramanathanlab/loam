@@ -1,0 +1,14 @@
+[
+  {
+    "source": "skills/foundation-language-models/genslm-esm/SKILL.md",
+    "source_sha256": "c1b4ebe09849617ce7404e8085b96c23489511ad7ce78873473dd31145f69c32",
+    "packaged_path": "references/aurora-notes.md",
+    "kind": "historical-reference"
+  },
+  {
+    "source": "skills/foundation-language-models/genslm-esm/scripts/embed_and_sae.py",
+    "source_sha256": "c63dae7b3dfaa6387553cd057eee4d1aae1332db9d3cff35fb53b1840f5e733e",
+    "packaged_path": "references/aurora-resources/scripts/embed_and_sae.py",
+    "kind": "historical-reference"
+  }
+]

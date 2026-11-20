@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai.capabilities import ProcessHistory
 
 from . import execution, skills
 from .config import Config, Role
 from .execution import Deps, Resilient
 from .schemas import Brief, CodeResult, Review, ValidationReport
+from .history import bounded_history
 
 PROMPTS = Path(__file__).parent / 'prompts'
 
@@ -27,10 +31,36 @@ class Agents:
 
     async def run(self, role: Role, prompt: str, deps: Deps | None = None):
         """Run one agent under its role's timeout and request budget; returns its typed output."""
-        result = await getattr(self, role).run(
-            prompt, deps=deps, timeout=getattr(self.cfg.timeouts, role),
-            usage_limits=UsageLimits(request_limit=self.cfg.max_requests))
-        return result.output
+        started = time.time()
+        result = None
+        error = None
+        try:
+            result = await getattr(self, role).run(
+                prompt, deps=deps, timeout=getattr(self.cfg.timeouts, role),
+                usage_limits=UsageLimits(request_limit=self.cfg.max_requests))
+            return result.output
+        except BaseException as exc:
+            error=type(exc).__name__
+            raise
+        finally:
+            # Agent wall time includes tools and nested delegations. It must
+            # not be confused with the relay's per-request inference latency.
+            try:
+                usage=result.usage if result is not None else None
+                record={'role':role,'started_at':started,'finished_at':time.time(),
+                        'seconds':time.time()-started,'error_type':error,
+                        'hypothesis_id':deps.ws.hypothesis_id if deps else None,
+                        'round':deps.round if deps else None,
+                        'run_id':Path(deps.run_dir).name if deps and deps.run_dir else None,
+                        'requests':getattr(usage,'requests',None),
+                        'input_tokens':getattr(usage,'input_tokens',None),
+                        'output_tokens':getattr(usage,'output_tokens',None),
+                        'scope':'agent wall time including tools; no prompts or credentials recorded'}
+                self.cfg.state_dir.mkdir(parents=True,exist_ok=True)
+                with (self.cfg.state_dir/'agent-timings.jsonl').open('a') as stream:
+                    stream.write(json.dumps(record)+'\n')
+            except Exception:
+                logging.getLogger('loam').exception('Could not record agent timing')
 
 
 def read_skill(ctx: RunContext[Deps], name: str, file: str | None = None) -> str:
@@ -66,6 +96,8 @@ def build(cfg: Config) -> Agents:
         return Agent(cfg.models[role].build(), name=role, output_type=output_type, deps_type=Deps,
                      instructions=[(PROMPTS / f'{role}.md').read_text(), campaign_context],
                      tools=unwrapped, toolsets=toolsets, retries=3,
+                     capabilities=([ProcessHistory(lambda messages: bounded_history(messages, cfg.max_history_bytes))]
+                                   if cfg.max_history_bytes is not None else []),
                      model_settings={'max_retries': cfg.model_retries,
                                      'request_timeout': cfg.timeouts.model_request})
 
@@ -80,7 +112,7 @@ def build(cfg: Config) -> Agents:
         ctx.deps.code_calls += 1
         run_id, run_dir = ctx.deps.ws.open_run(ctx.deps.round, instruction)
         prompt = f'HYPOTHESIS UNDER TEST:\n{ctx.deps.hypothesis}\n\nRUN {run_id}. INSTRUCTION:\n{instruction}'
-        child_deps = replace(ctx.deps, run_dir=run_dir, shell_executed=False,
+        child_deps = replace(ctx.deps, run_dir=run_dir, shell_executed=False, prepared=False,
                              submitted_batches=set(), executed_batches=set())
         try:
             result = await agents.run('code_generator', prompt, child_deps)
@@ -91,7 +123,8 @@ def build(cfg: Config) -> Agents:
                     f'Anything it wrote is under outputs/{run_id}/.')
         if cfg.execution.mode in {'mcp', 'hpc'}:
             observed = ('executed' if child_deps.executed_batches else
-                        'submitted' if child_deps.submitted_batches else 'blocked')
+                        'submitted' if child_deps.submitted_batches else
+                        'prepared' if child_deps.prepared else 'blocked')
         else:
             observed = 'executed' if child_deps.shell_executed else 'blocked'
         result = result.model_copy(update={'status': observed})

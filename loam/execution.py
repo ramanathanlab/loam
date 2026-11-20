@@ -10,10 +10,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import ipaddress
+import json
 import os
 import signal
 import socket
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
@@ -52,6 +53,7 @@ class Deps:
     code_calls: int = 0
     code_results: list = field(default_factory=list)   # every CodeResult, for the round record
     shell_executed: bool = False
+    prepared: bool = False    # successful remote CPU/file preparation, never scientific attestation
     submitted_batches: set[str] = field(default_factory=set)
     executed_batches: set[str] = field(default_factory=set)
 
@@ -85,12 +87,59 @@ class OwnedMCP(WrapperToolset[Deps]):
     async def call_tool(self, name, tool_args, ctx, tool):
         args = dict(tool_args)
         run_id = PurePosixPath(ctx.deps.run_dir).name
+        deployment = ctx.deps.cfg.execution.hpc
+        if deployment is not None and name in {'register_tool', 'run_batch'}:
+            receipt = Path(deployment.base_dir) / 'campaign-tool-registrations.json'
+            pins = {}
+            if receipt.exists():
+                for entry in json.loads(receipt.read_text()):
+                    pins.setdefault(entry['tool'], int(entry['version']))
+            requested = args.get('name') if name == 'register_tool' else args.get('tool')
+            if getattr(deployment,'frozen_tool_library',False) and (name == 'register_tool' or requested not in pins):
+                available = ', '.join(f'{key} (version {value})' for key,value in sorted(pins.items()))
+                raise ToolFailed('This campaign uses an operator-frozen scientific tool library. Use run_batch with one of: '+available+'. Prepare metadata with the supplied helpers; do not register or submit a replacement scientific script.')
+            if requested in pins:
+
+                if name == 'register_tool':
+                    raise ToolFailed(f'{requested} is operator-frozen. Reuse run_batch(tool={requested!r}, tool_version={pins[requested]}); use a different name for a genuinely new stage.')
+                args['tool_version'] = pins[requested]
         if name == 'batch_status' and args.get('batch_id') not in ctx.deps.ws.batch_ids():
             raise ToolFailed(f"batch {args.get('batch_id')!r} does not belong to this hypothesis")
         if name == 'list_batches':
             args['hypothesis_id'] = ctx.deps.ws.hypothesis_id
         if name == 'inspect_filesystem' and args.get('path'):
-            args['path'] = str(_remote_path(ctx.deps.ws.root, args['path'], allow_root=True))
+            requested = args['path']
+            try:
+                resolved = _remote_path(ctx.deps.ws.root, requested, allow_root=True)
+            except ToolFailed:
+                # Skills name installed API docs. Only code-generators may read
+                # explicitly configured roots outside the campaign tree; this
+                # never grants access to another hypothesis or orchestrator state.
+                deployment = ctx.deps.cfg.execution.hpc
+                roots = []
+                if deployment is not None:
+                    # Batch workers write under base_dir/batches, outside the
+                    # hypothesis's staging directory. Receipts confer read
+                    # access to that hypothesis's outputs for every read role.
+                    roots.extend(str(PurePosixPath(deployment.base_dir) / 'batches' / batch_id)
+                                 for batch_id in ctx.deps.ws.batch_ids()
+                                 if len(PurePosixPath(batch_id).parts) == 1
+                                 and batch_id not in {'.', '..'})
+                if ctx.deps.run_dir and deployment is not None:
+                    campaign = PurePosixPath(deployment.base_dir)
+                    roots.extend(root for root in deployment.inspect_roots
+                                 if (PurePosixPath(root) != campaign
+                                     and campaign not in PurePosixPath(root).parents
+                                     and PurePosixPath(root) not in campaign.parents))
+                for root in roots:
+                    try:
+                        resolved = _remote_path(root, requested, allow_root=True)
+                        break
+                    except ToolFailed:
+                        continue
+                else:
+                    raise ToolFailed(f'{requested} is outside this hypothesis, its recorded batches, and its permitted software roots')
+            args['path'] = str(resolved)
         if name == 'write_files':
             args['files'] = {str(_remote_path(ctx.deps.run_dir, path)): text
                              for path, text in args.get('files', {}).items()}
@@ -103,6 +152,10 @@ class OwnedMCP(WrapperToolset[Deps]):
         if name == 'run_code':
             args['workdir'] = ctx.deps.run_dir
         result = await super().call_tool(name, args, ctx, tool)
+        if name == 'write_files' and not (isinstance(result, dict) and result.get('error')):
+            ctx.deps.prepared = True
+        elif name == 'run_code' and isinstance(result, dict) and str(result.get('returncode')) == '0':
+            ctx.deps.prepared = True
         if name == 'run_batch' and isinstance(result, dict) and result.get('batch_id'):
             batch_id = str(result['batch_id'])
             ctx.deps.ws.add_batch(run_id, batch_id)
@@ -226,6 +279,12 @@ async def fetch_url(url: str, max_chars: int = 20000) -> str:
     return f'HTTP {response.status_code}\n{response.text[:max_chars]}'
 
 
+async def prepare_execution_tools(ctx, tools):
+    """Serialize side effects within one agent turn; hypothesis fan-out stays parallel."""
+    mutations={'write_files','run_code','run_batch','register_tool','run_shell'}
+    return [replace(tool,sequential=True) if tool.name in mutations else tool for tool in tools]
+
+
 def execution_tools(cfg: Config, full: bool) -> AbstractToolset[Deps]:
     """Execution tools for one role: full (code-generator) or read-only (validator, reviewer).
 
@@ -237,16 +296,16 @@ def execution_tools(cfg: Config, full: bool) -> AbstractToolset[Deps]:
 
         allowed = MCP_FULL if full else MCP_READ
         return OwnedMCP(DynamicToolset(lambda ctx: MCPToolset(
-            cfg.execution.mcp_url, read_timeout=cfg.timeouts.tool
-        ).filtered(lambda ctx, tool: tool.name in allowed), per_run_step=False))
-    return FunctionToolset([read_file, list_dir] + ([write_files, run_shell] if full else []))
+            cfg.execution.mcp_url, init_timeout=cfg.timeouts.mcp_init, read_timeout=cfg.timeouts.tool
+        ).filtered(lambda ctx, tool: tool.name in allowed), per_run_step=False)).prepared(prepare_execution_tools)
+    return FunctionToolset([read_file, list_dir] + ([write_files, run_shell] if full else [])).prepared(prepare_execution_tools)
 
 
 async def check_mcp_tools(cfg: Config) -> None:
     """Fail once at startup, not on every agent run, if the MCP server lacks a tool the roles use."""
     from pydantic_ai.mcp import MCPToolset
 
-    async with MCPToolset(cfg.execution.mcp_url) as server:
+    async with MCPToolset(cfg.execution.mcp_url, init_timeout=cfg.timeouts.mcp_init) as server:
         missing = MCP_FULL - {tool.name for tool in await server.list_tools()}
     if missing:
         raise RuntimeError(f'MCP server is missing required tools: {", ".join(sorted(missing))}')

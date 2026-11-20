@@ -61,7 +61,7 @@ execution:
     subdirectory named for the hypothesis you were dispatched for. Inspect an
     actual output file before reporting any aggregate number from it.
 
-  # Managed HPC. Loam converts this whole mapping into the server's internal
+  # Managed HPC. Loamlite converts this whole mapping into the server's internal
   # environment (SKILL.md's mapping table) and renders the allocation as
   # HPC_ENDPOINT_CONFIG_JSON. Do not add a second environment file.
   hpc:

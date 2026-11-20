@@ -6,7 +6,7 @@ Records:
 
 Files (agents read all of it; a code-generator writes into its own run dir):
     <execution.workdir>/<id>/outputs/<run>/ what that run wrote
-    <execution.workdir>/<id>/data/          campaign inputs copied in at creation (local mode)
+    <execution.workdir>/<id>/data/          campaign inputs copied at creation (local/shared HPC)
 """
 
 from __future__ import annotations
@@ -43,11 +43,11 @@ class Workspace:
         self.records = cfg.state_dir / 'hypotheses' / name
         self.remote = cfg.execution.mode in {'mcp', 'hpc'}
         self.root = posixpath.join(cfg.execution.workdir, name)
-        if not self.remote:
+        if not self.remote or cfg.workspace_inputs:
             Path(self.root).mkdir(parents=True, exist_ok=True)
         (self.records / 'runs').mkdir(parents=True, exist_ok=True)
         if not (self.records / 'experiment.json').is_file():
-            if cfg.workspace_inputs and not self.remote:
+            if cfg.workspace_inputs:
                 data = Path(self.root) / 'data'
                 staged = Path(self.root) / '.data.tmp'
                 if staged.exists():

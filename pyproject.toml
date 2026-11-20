@@ -26,7 +26,8 @@ dev = ["pytest"]
 # here the server dies with `NameError: name 'aurora_config' is not defined`
 # before any job is submitted. Only the base install is needed -- mpi4py lives
 # in EL's `hpc` extra and the launcher itself only ever runs on the worker.
-hpc = ["fastmcp", "globus-compute-sdk", "academy-py", "ensemble-launcher"]
+hpc = ["fastmcp", "globus-compute-sdk", "academy-py", "ensemble-launcher", "aiohttp>=3.9", "redis>=5"]
+reports = ["numpy", "scipy", "gemmi", "matplotlib", "Pillow", "python-pptx", "reportlab"]
 
 [build-system]
 requires = ["setuptools>=68"]

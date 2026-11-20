@@ -1,0 +1,8 @@
+PATH: ${LOAM_SOFTWARE_ROOT}/globus-compute/.venv/bin:/usr/local/bin:/usr/bin:/bin
+VIRTUAL_ENV: ${LOAM_SOFTWARE_ROOT}/globus-compute/.venv
+TMPDIR: /tmp
+PYTHONPATH: ${LOAM_REPO_ROOT}/skills/hpc-deployment/scripts
+HPC_LOAM_HOME: ${LOAM_REPO_ROOT}
+LOAM_SOFTWARE_ROOT: ${LOAM_SOFTWARE_ROOT}
+GLOBUS_COMPUTE_USER_DIR: ${GLOBUS_COMPUTE_USER_DIR}
+OMP_NUM_THREADS: '4'
