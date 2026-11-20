@@ -130,13 +130,17 @@ class SiteProfile(ConfigModel):
         return {name: value for name, value in roots.items() if value is not None}
 
     def environment(self) -> dict[str, str]:
+        """The LOAM_* variables, plus HPC_WORKER_ENV_JSON: the same set, which the HPC agents carry to
+        workers and set for every script they run. Endpoint templates may ignore a client-supplied
+        worker_init, so the agents, not worker_init, are what guarantee workers see these."""
         compact = {'sort_keys': True, 'separators': (',', ':')}
-        return {
+        variables = {
             **self.roots(),
             'LOAM_MODEL_WEIGHTS_JSON': json.dumps(self.model_weights, **compact),
             'LOAM_INFERENCE_JSON': json.dumps(
                 {name: endpoint.model_dump() for name, endpoint in self.inference.items()}, **compact),
         }
+        return {**variables, 'HPC_WORKER_ENV_JSON': json.dumps(variables, **compact)}
 
     def full_worker_init(self, snippet: str | None) -> str:
         """Export the roots on every worker, then run `snippet` (the campaign config's) or the profile's own."""

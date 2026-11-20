@@ -8,8 +8,8 @@
 # commit a filled-in profile: it holds your allocation and filesystem roots.
 #
 # Remote paths must be absolute. The roots reach the deployment environment as
-# LOAM_SOFTWARE_ROOT, LOAM_DATA_ROOT and LOAM_CACHE_ROOT, and are exported on
-# every worker, so skills refer to software only through them.
+# LOAM_SOFTWARE_ROOT, LOAM_DATA_ROOT and LOAM_CACHE_ROOT, which every script
+# loam runs on a worker sees, so skills refer to software only through them.
 
 # Used when the campaign config leaves execution.hpc.allocation.account/queue
 # out; a value set there wins.
@@ -30,7 +30,9 @@ model_weights:
 inference:
   argo: {base_url: http://127.0.0.1:61612/v1}
 
-# Run on each worker after the LOAM_* exports. A worker_init in the campaign
-# config's endpoint_options replaces this one.
+# Sent as the endpoint's worker_init, after the LOAM_* exports. Only takes
+# effect if the endpoint's template renders {{ worker_init }}; the Aurora
+# endpoints' templates do not. A worker_init in the campaign config's
+# endpoint_options replaces this one.
 worker_init: |
   module load frameworks
