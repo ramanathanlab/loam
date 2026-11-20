@@ -138,7 +138,7 @@ def lessons(record: dict) -> list[Lesson]:
     return found
 
 
-LESSONS_HEADING = ('LESSONS FROM EARLIER CAMPAIGNS (leads to check, never evidence: do not cite them; '
+LESSONS_HEADING = ('LESSONS FROM EARLIER WORK (leads to check, never evidence: do not cite them; '
                    're-derive anything you rely on in a run of your own):')
 
 

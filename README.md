@@ -72,7 +72,7 @@ Each LLM role uses a `ModelSpec` (`{model, base_url, api_key_env}`):
 - **Without `base_url`:** Accepts any native `pydantic-ai` model identifier (e.g., `anthropic:claude-sonnet-4-5`, `openai:gpt-5`, `test`).
 - **Secrets stay out of YAML:** API keys are referenced by environment variable name via `api_key_env`; Globus Compute and Academy credentials stay in their standard external stores.
 
-With the optional `memory:` block, the validator and code generator also get lessons from earlier campaigns in their prompts; no role gains a tool. See [Memory (optional)](#memory-optional).
+With the optional `memory:` block, the validator and code generator also get lessons from earlier work (earlier rounds of this campaign and earlier campaigns) in their prompts; no role gains a tool. See [Memory (optional)](#memory-optional).
 
 ---
 
