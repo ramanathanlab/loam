@@ -165,6 +165,17 @@ Configured under `execution.mode`:
   - `loam` translates `execution.hpc` into the deployment server's internal environment, spawns `mcp_server.py`, waits for cluster pool readiness, and tears down the allocation cleanly on exit (`SIGINT`).
   - No separate environment file or scheduler wrapper (`qsub`/`sbatch`) is needed.
 
+### Site Profiles (`hpc` mode)
+
+What differs between people on the same System lives in a **Site profile**, a YAML file kept outside the repo: the allocation `account` and `queue`, `software_root` (required), `data_root`, `cache_root`, `model_weights`, `inference` endpoints, and a `worker_init` snippet. Name it from the campaign config with `site_profile: <name>`, and loam reads `~/.config/loam/site-profiles/<name>.yaml` (or `$XDG_CONFIG_HOME/loam/site-profiles/`). If the config names none, `LOAM_SITE_PROFILE` may give a profile's path.
+
+- `execution.hpc.allocation.account` and `queue` come from the profile when the campaign config leaves them out; a value set in the config wins.
+- The other values reach the deployment environment as `LOAM_SOFTWARE_ROOT`, `LOAM_DATA_ROOT`, `LOAM_CACHE_ROOT`, `LOAM_MODEL_WEIGHTS_JSON` and `LOAM_INFERENCE_JSON`. The HPC agents carry the same set (as `HPC_WORKER_ENV_JSON`) and set it for every script they run on a worker: `run_code`, `run_batch` rows and `register_tool` smoke runs.
+- The roots and the profile's `worker_init` snippet (or the campaign config's `endpoint_options.worker_init`, which replaces it) are also sent as the endpoint's `worker_init`. That only takes effect on an endpoint whose template renders `{{ worker_init }}`; the Aurora endpoints do not, and ignore it. Scripts get the `LOAM_*` variables either way, from the agents.
+- A missing profile, an invalid one, or an allocation value set in neither place fails when the config loads, naming the profile and the key.
+
+Copy a redacted example from [`examples/site-profiles/`](examples/site-profiles/) (Aurora, Polaris) and fill it in. Never commit a filled-in profile.
+
 ### Role-Scoped MCP Tools (`mcp` & `hpc` modes)
 
 Every MCP call is wrapped in `OwnedMCP` (enforcing per-hypothesis workspace isolation and recording batch receipts before returning to the model) and `Resilient` (converting timeouts and tool errors into model-visible tool failures rather than crashing the agent):
@@ -328,7 +339,7 @@ loam/
 ├── steering.py        # Elo + evidence priority scoring across the hypothesis pool
 ├── skills.py          # SKILL.md discovery, prompt catalog, and read_skill helper
 └── prompts/           # Role system instructions (validator, code_generator, reviewer, reasoner)
-examples/              # Aurora EGFR binder campaign YAML, goal, and campaign rules
+examples/              # Aurora EGFR binder campaign YAML, goal, campaign rules, redacted Site profiles
 skills/                # Scientific tool skills and managed HPC deployment server
 tests/                 # Offline end-to-end round, resilience, and steering tests
 logo/                  # Project logo

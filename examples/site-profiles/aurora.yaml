@@ -1,0 +1,38 @@
+# Example Site profile for Aurora (redacted). Copy it outside the repo, fill it
+# in, and name it from a campaign config:
+#
+#   cp examples/site-profiles/aurora.yaml ~/.config/loam/site-profiles/aurora-myproject.yaml
+#   # loam.yaml:  site_profile: aurora-myproject
+#
+# or point LOAM_SITE_PROFILE at it when the campaign config names none. Never
+# commit a filled-in profile: it holds your allocation and filesystem roots.
+#
+# Remote paths must be absolute. The roots reach the deployment environment as
+# LOAM_SOFTWARE_ROOT, LOAM_DATA_ROOT and LOAM_CACHE_ROOT, which every script
+# loam runs on a worker sees, so skills refer to software only through them.
+
+# Used when the campaign config leaves execution.hpc.allocation.account/queue
+# out; a value set there wins.
+allocation:
+  account: YOUR_ALLOCATION
+  queue: prod
+
+software_root: /flare/YOUR_ALLOCATION/YOUR_USER/software   # required
+data_root: /flare/YOUR_ALLOCATION/YOUR_USER/data
+cache_root: /flare/YOUR_ALLOCATION/YOUR_USER/hf_cache
+
+# Name -> absolute path; reaches the environment as LOAM_MODEL_WEIGHTS_JSON.
+model_weights:
+  chai: /flare/YOUR_ALLOCATION/YOUR_USER/software/chai-lab/downloads
+
+# Name -> OpenAI-compatible endpoint; reaches the environment as
+# LOAM_INFERENCE_JSON. Keys are named by environment variable, never written here.
+inference:
+  argo: {base_url: http://127.0.0.1:61612/v1}
+
+# Sent as the endpoint's worker_init, after the LOAM_* exports. Only takes
+# effect if the endpoint's template renders {{ worker_init }}; the Aurora
+# endpoints' templates do not. A worker_init in the campaign config's
+# endpoint_options replaces this one.
+worker_init: |
+  module load frameworks

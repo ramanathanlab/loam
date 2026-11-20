@@ -265,12 +265,15 @@ _harden_exchange_send()
 
 
 class HpcAgent(Agent):
-    def __init__(self, campaign_id: str, base_dir: str, inspect_roots: list[str] | None = None) -> None:
+    def __init__(self, campaign_id: str, base_dir: str, inspect_roots: list[str] | None = None,
+                 worker_env: Mapping[str, str] | None = None) -> None:
         super().__init__()
         self._inflight = 0
         self.campaign_id = campaign_id
         self.base_dir = str(Path(base_dir).resolve())
         self.inspect_roots = inspect_roots or []
+        # Set for every script this agent runs; see worker_environment().
+        self.worker_env = dict(worker_env or {})
 
     @action
     async def probe(self) -> dict[str, str]:
@@ -287,7 +290,7 @@ class HpcAgent(Agent):
         self._inflight += 1
         try:
             return await asyncio.to_thread(
-                _run_subprocess, payload, workdir or self.base_dir, timeout, venv_path
+                _run_subprocess, payload, workdir or self.base_dir, timeout, venv_path, self.worker_env
             )
         finally:
             self._inflight -= 1
@@ -340,6 +343,7 @@ class HpcAgent(Agent):
         return await asyncio.to_thread(
             _register_tool, name, script_path, params, description, example, defaults,
             call, venv_path, skip_smoke, labels, expects, self.base_dir, self.inspect_roots,
+            self.worker_env,
         )
 
     @action
@@ -401,6 +405,23 @@ def discover_nodes(method: str, environ: Mapping[str, str]) -> list[str]:
     return _NODE_DISCOVERY[method](environ)
 
 
+def worker_environment(environ: Mapping[str, str]) -> dict[str, str]:
+    """Site profile variables (LOAM_SOFTWARE_ROOT, ...) to set for every script run on a worker.
+
+    Written by loam as HPC_WORKER_ENV_JSON (loam.config.SiteProfile). They travel inside the agents
+    and EL task arguments, not through the endpoint's worker_init: endpoint templates may ignore a
+    client-supplied worker_init (every Aurora endpoint checked on 2026-11-20 does). Empty without
+    a Site profile.
+    """
+    raw = environ.get("HPC_WORKER_ENV_JSON")
+    if not raw:
+        return {}
+    env = json.loads(raw)
+    if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
+        raise RuntimeError("HPC_WORKER_ENV_JSON must encode an object of strings")
+    return env
+
+
 class HpcClusterAgent(Agent):
     """Owns the lifecycle of one EL cluster; stopping this agent stops the cluster."""
     def __init__(self, base_dir: str, ckpt_dir: str, nnodes: int, spec: SystemSpec,
@@ -457,8 +478,9 @@ class HpcClusterAgent(Agent):
 
 
 class HpcClientAgent(HpcAgent):
-    def __init__(self, campaign_id: str, base_dir: str, ckpt_dir: str, inspect_roots: list[str] | None = None) -> None:
-        super().__init__(campaign_id, base_dir, inspect_roots)
+    def __init__(self, campaign_id: str, base_dir: str, ckpt_dir: str, inspect_roots: list[str] | None = None,
+                 worker_env: Mapping[str, str] | None = None) -> None:
+        super().__init__(campaign_id, base_dir, inspect_roots, worker_env)
         self.ckpt_dir = str(Path(self.base_dir, ckpt_dir))
         self._client = None
         # Holds each batch's futures so they stay referenced. Progress is read
@@ -503,7 +525,7 @@ class HpcClientAgent(HpcAgent):
             ppn=1,
             ngpus_per_process=1,
             executable=_run_subprocess,
-            args=(payload, workdir or self.base_dir, timeout, venv_path)
+            args=(payload, workdir or self.base_dir, timeout, venv_path, self.worker_env)
         )
 
     @action
@@ -556,7 +578,7 @@ class HpcClientAgent(HpcAgent):
                 ngpus_per_process=gpus,
                 executable=_run_one,
                 args=(script, row, run_dir, timeout_each, venv_path, call, order,
-                      entry["script_sha256"], expects),
+                      entry["script_sha256"], expects, self.worker_env),
             )
             for run_id, row, run_dir in todo
         ]
@@ -812,7 +834,8 @@ def _cap_stream(text: str, name: str) -> str:
     )
 
 
-def _run_subprocess(payload: str, workdir: str | None, timeout: float, venv_path: str | None = None) -> dict[str, str]:
+def _run_subprocess(payload: str, workdir: str | None, timeout: float, venv_path: str | None = None,
+                    worker_env: Mapping[str, str] | None = None) -> dict[str, str]:
     cwd = Path(workdir or os.environ.get("HPC_BASE_DIR", ".")).resolve()
     cwd.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, dir=cwd) as handle:
@@ -821,7 +844,7 @@ def _run_subprocess(payload: str, workdir: str | None, timeout: float, venv_path
     try:
         returncode, stdout, stderr, timed_out = _run_process(
             [_python(venv_path), str(script)], cwd, timeout,
-            env=os.environ.copy(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env={**os.environ, **(worker_env or {})}, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         if timed_out:
             stderr += f"\nTimed out after {timeout}s.".encode()
@@ -1061,7 +1084,7 @@ def _promote_outputs(attempt: Path, folder: Path) -> None:
 def _run_one(script: str, row: dict, run_dir: str, timeout: float,
              venv_path: str | None = None, call: str = "json",
              order: list[str] | None = None, sha: str | None = None,
-             expects: list[str] | None = None) -> dict:
+             expects: list[str] | None = None, worker_env: Mapping[str, str] | None = None) -> dict:
     """Run one batch row inside an EL task; only a small status dict returns.
 
     The script is invoked as `python script input.json` (call="json") or
@@ -1098,7 +1121,7 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
     with open(folder / "stdout.txt", "wb") as out, open(folder / "stderr.txt", "wb") as err:
         returncode, _, _, timed_out = _run_process(
             [python, _stage_local(script, sha), *args], attempt, timeout,
-            stdout=out, stderr=err,
+            env={**os.environ, **(worker_env or {})}, stdout=out, stderr=err,
         )
         if timed_out:
             err.write(f"\nTimed out after {timeout}s.".encode())
@@ -1546,7 +1569,8 @@ def _load_tool(base_dir: str, name: str, version: int | None = None) -> dict:
 def _register_tool(name: str, script_path: str, params: dict, description: str,
                    example: dict, defaults: dict | None, call: str, venv_path: str | None,
                    skip_smoke: bool, labels: dict | None, expects: list[str] | None,
-                   base_dir: str, inspect_roots: list[str]) -> dict:
+                   base_dir: str, inspect_roots: list[str],
+                   worker_env: Mapping[str, str] | None = None) -> dict:
     """Freeze a script as the next version of a tool and smoke-test it.
 
     Registering the same script with the same params, defaults and call style
@@ -1597,7 +1621,7 @@ def _register_tool(name: str, script_path: str, params: dict, description: str,
     if not skip_smoke:
         smoke_status = _run_one(str(version_dir / "script.py"), example,
                                 str(version_dir / "smoke"), _SMOKE_TIMEOUT, venv_path,
-                                call, list(params), expects=expects)
+                                call, list(params), expects=expects, worker_env=worker_env)
         if not _run_succeeded(smoke_status):
             tail = (version_dir / "smoke" / "stderr.txt").read_text(errors="replace")
             missing = smoke_status.get("missing_outputs")

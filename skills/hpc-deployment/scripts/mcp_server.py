@@ -24,7 +24,7 @@ from academy.manager import Manager
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from globus_compute_sdk import Executor
-from hpc_agent import SystemSpec, HpcAgent, HpcClientAgent, HpcClusterAgent
+from hpc_agent import SystemSpec, HpcAgent, HpcClientAgent, HpcClusterAgent, worker_environment
 from pool_manager import CampaignPool, ClusterPool
 
 import inspect as _inspect
@@ -171,6 +171,7 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
         raise ValueError("create_server(cluster=True) needs nnodes")
     # Parsed before anything is submitted, so a missing System fails for free.
     spec = SystemSpec.from_environment(os.environ)
+    worker_env = worker_environment(os.environ)  # the Site profile, carried to every worker script
 
     @asynccontextmanager
     async def lifespan(server: FastMCP):
@@ -217,11 +218,11 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
             named = {"executor": "globus", "name": f"{CAMPAIGN_ID}-agent"}
 
             async def launch_one() -> Handle:
-                return await launch(HpcAgent(CAMPAIGN_ID, BASE_DIR, INSPECT_ROOTS), **named)
+                return await launch(HpcAgent(CAMPAIGN_ID, BASE_DIR, INSPECT_ROOTS, worker_env), **named)
 
             async def launch_client(generation_ckpt_dir: str) -> Handle:
                 return await launch(HpcClientAgent(
-                    CAMPAIGN_ID, BASE_DIR, generation_ckpt_dir, INSPECT_ROOTS), **named)
+                    CAMPAIGN_ID, BASE_DIR, generation_ckpt_dir, INSPECT_ROOTS, worker_env), **named)
 
             async def launch_cluster(generation_ckpt_dir: str) -> Handle:
                 return await launch(HpcClusterAgent(BASE_DIR, generation_ckpt_dir, nnodes, spec))
