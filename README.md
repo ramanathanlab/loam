@@ -295,6 +295,20 @@ uv sync --all-extras
 
 ---
 
+## Development
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) is the source of truth for the checks; it runs on every pull request and push to `develop` and `main`:
+
+```bash
+uv sync --all-extras
+uv run pytest -q
+uvx ruff@0.14.2 check .   # version pinned by [tool.ruff] required-version in pyproject.toml
+```
+
+Judgement-call rules that ruff cannot check live in [`CODING_STANDARDS.md`](CODING_STANDARDS.md).
+
+---
+
 ## Repository Layout
 
 ```text
@@ -318,5 +332,7 @@ examples/              # Aurora EGFR binder campaign YAML, goal, and campaign ru
 skills/                # Scientific tool skills and managed HPC deployment server
 tests/                 # Offline end-to-end round, resilience, and steering tests
 logo/                  # Project logo
+.github/workflows/     # CI: pytest + ruff
+CODING_STANDARDS.md    # Judgement-call coding rules (read by /code-review)
 PLAN.md                # Architectural rationale, failure handling table, and design notes
 ```

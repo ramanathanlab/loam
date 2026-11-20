@@ -1,0 +1,22 @@
+# The source of truth for loam's checks. README "Development" points here.
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install (all extras)
+        run: uv sync --all-extras
+      - name: Tests
+        run: uv run pytest -q
+      - name: Ruff
+        # Must match [tool.ruff] required-version in pyproject.toml.
+        run: uvx ruff@0.14.2 check .

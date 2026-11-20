@@ -2,7 +2,8 @@
 """Build (tleap, explicit OPC water) + run a tiny Simulator pipeline on Intel PVC via OpenCL.
 Usage: AMBERHOME=... ZE_AFFINITY_MASK=0 python molsim_xpu_smoke.py <protein.pdb> <outdir>
 """
-import sys, time
+import sys
+import time
 from pathlib import Path
 from molecular_simulations.build import ExplicitSolvent
 from molecular_simulations.simulate import Simulator
