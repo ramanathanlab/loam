@@ -366,6 +366,7 @@ class Config(ConfigModel):
     max_code_calls: PositiveInt = 4      # code-generator delegations per validator
     max_requests: PositiveInt = 200      # LLM requests per agent run (pydantic-ai's default of 50 is too low)
     model_retries: PositiveInt = 8       # SDK retries per LLM request on 429/5xx/connection errors, with backoff
+    max_history_bytes: PositiveInt | None = None  # bound on the history each agent's model sees; None keeps it all
     timeouts: Timeouts = Timeouts()
     memory: MemoryConfig | None = None   # cross-campaign lessons; see MemoryConfig
     site_profile: NonEmptyStr | None = None  # a Site profile's name; see `load`

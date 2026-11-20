@@ -158,6 +158,11 @@ concurrency: 4                    # validators running at once; matches top_k
 max_code_calls: 3                 # code-generator delegations per validator
 max_requests: 200                 # LLM requests per agent run
 model_retries: 8                  # SDK retries per request on 429/5xx/connection errors
+# Bytes of conversation history each agent's model sees. Over the limit, an agent
+# keeps its initial task and its latest whole tool exchanges, and shortens an
+# oversized tool output with an explicit marker; files and receipts on disk are
+# unchanged. Set it for small-context local models; null keeps the full history.
+max_history_bytes: null
 
 # Seconds. A tool or model request that runs out is reported to the agent, which
 # carries on; an agent run that runs out ends only that thread, never the round.

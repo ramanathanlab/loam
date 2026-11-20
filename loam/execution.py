@@ -13,13 +13,14 @@ import ipaddress
 import os
 import signal
 import socket
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 import httpx
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.exceptions import AgentRunError, ApprovalRequired, CallDeferred, ToolFailed
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, WrapperToolset
 
 from .config import Config
@@ -228,6 +229,15 @@ async def fetch_url(url: str, max_chars: int = 20000) -> str:
     return f'HTTP {response.status_code}\n{response.text[:max_chars]}'
 
 
+SIDE_EFFECTS = (MCP_FULL - MCP_READ) | {'write_files', 'run_shell'}
+
+
+async def prepare_execution_tools(ctx: RunContext[Deps], tools: list[ToolDefinition]) -> list[ToolDefinition]:
+    """Run side-effecting tools one at a time within an agent turn, so a submission sees the files
+    written just before it; hypotheses still run in parallel."""
+    return [replace(tool, sequential=True) if tool.name in SIDE_EFFECTS else tool for tool in tools]
+
+
 def execution_tools(cfg: Config, full: bool) -> AbstractToolset[Deps]:
     """Execution tools for one role: full (code-generator) or read-only (validator, reviewer).
 
@@ -240,8 +250,8 @@ def execution_tools(cfg: Config, full: bool) -> AbstractToolset[Deps]:
         allowed = MCP_FULL if full else MCP_READ
         return OwnedMCP(DynamicToolset(lambda ctx: MCPToolset(
             cfg.execution.mcp_url, read_timeout=cfg.timeouts.tool
-        ).filtered(lambda ctx, tool: tool.name in allowed), per_run_step=False))
-    return FunctionToolset([read_file, list_dir] + ([write_files, run_shell] if full else []))
+        ).filtered(lambda ctx, tool: tool.name in allowed), per_run_step=False)).prepared(prepare_execution_tools)
+    return FunctionToolset([read_file, list_dir] + ([write_files, run_shell] if full else [])).prepared(prepare_execution_tools)
 
 
 async def check_mcp_tools(cfg: Config) -> None:
