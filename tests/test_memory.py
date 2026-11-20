@@ -43,7 +43,8 @@ def test_memory_defaults(tmp_path):
     assert memory.bank == 'loam'
     assert memory.campaign == 'alkbh1-pmd'
     assert memory.url is None
-    assert memory.instance == 'loam-memory'   # loam-owned embedded server's database
+    assert memory.instance is None                 # unset stays unset ...
+    assert memory.instance_name == 'loam-memory'   # ... and the loam-owned server's database defaults
     assert memory.recall_tokens == 1000
     assert memory.drain_timeout == 600
     assert memory.llm.base_url == ARGO and memory.embeddings.model == 'argo:text-embedding-3-small'
@@ -81,6 +82,16 @@ def test_memory_with_url_has_no_instance(tmp_path):
     assert memory.url == 'http://127.0.0.1:8888' and memory.instance is None
 
 
+def test_memory_config_round_trips_through_a_dump(tmp_path):
+    # Validation must not write the default into the model: a dumped config, given a url and
+    # validated again, would otherwise look as if the user had set `instance` alongside `url`.
+    values = with_memory(tmp_path).model_dump()
+    values['memory']['url'] = 'http://127.0.0.1:8888'
+    memory = Config.model_validate(values).memory
+    assert memory.url == 'http://127.0.0.1:8888' and memory.instance is None
+    assert with_memory(tmp_path, instance='camp-a').memory.instance_name == 'camp-a'
+
+
 def test_memory_block_loads_from_yaml(tmp_path):
     import yaml
 
@@ -91,7 +102,7 @@ def test_memory_block_loads_from_yaml(tmp_path):
     path = tmp_path / 'campaign.yaml'
     path.write_text(yaml.safe_dump(values))
     memory = load(path).memory
-    assert (memory.bank, memory.recall_tokens, memory.instance) == ('lessons', 500, 'loam-memory')
+    assert (memory.bank, memory.recall_tokens, memory.instance_name) == ('lessons', 500, 'loam-memory')
 
 
 # ---- interface --------------------------------------------------------------------------------------

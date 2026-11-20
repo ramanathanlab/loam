@@ -270,7 +270,7 @@ memory:
 | `embeddings` | *(required)* | `ModelSpec` for the embedding model; needs a `base_url` |
 | `bank` | `loam` | Memory bank id, shared by all campaigns |
 | `url` | none | An already-running Hindsight server; loam then only connects |
-| `instance` | `loam-memory` | Embedded Postgres instance of the loam-started server (not allowed with `url`) |
+| `instance` | `loam-memory` when `url` is unset | Embedded Postgres instance of the loam-started server (not allowed with `url`) |
 | `recall_tokens` | `1000` | Cap on recalled lesson text per prompt |
 | `drain_timeout` | `600` | Seconds to wait at campaign end for queued lessons to finish saving |
 | `timeout` | `60` | Seconds per memory call |

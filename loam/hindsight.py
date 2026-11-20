@@ -42,7 +42,7 @@ def _key(spec: ModelSpec, name: str) -> str:
 
 
 def _marker(cfg: MemoryConfig, marker_dir: Path) -> Path:
-    return marker_dir / f'{cfg.instance}.json'
+    return marker_dir / f'{cfg.instance_name}.json'
 
 
 def check_embedding_model(cfg: MemoryConfig, marker_dir: Path) -> None:
@@ -54,7 +54,7 @@ def check_embedding_model(cfg: MemoryConfig, marker_dir: Path) -> None:
     have, want = json.loads(marker.read_text()).get('embeddings_model'), cfg.embeddings.model
     if have != want:
         raise MemoryUnavailable(
-            f'memory instance {cfg.instance!r} was created with embedding model {have!r}, but the config '
+            f'memory instance {cfg.instance_name!r} was created with embedding model {have!r}, but the config '
             f'names {want!r}. The embedding model is fixed per database: use a new memory.instance '
             f'(or switch back to {have!r}). Marker: {marker}')
 
@@ -125,7 +125,7 @@ def server_env(cfg: MemoryConfig, port: int) -> dict[str, str]:
     """Environment for a loam-owned `hindsight-api`. Everything not in the YAML is fixed here."""
     return {
         **os.environ,
-        'HINDSIGHT_API_DATABASE_URL': f'pg0://{cfg.instance}',
+        'HINDSIGHT_API_DATABASE_URL': f'pg0://{cfg.instance_name}',
         'HINDSIGHT_API_HOST': '127.0.0.1',
         'HINDSIGHT_API_PORT': str(port),
         'HINDSIGHT_API_WORKER_ID': WORKER_ID,
@@ -195,9 +195,9 @@ class HindsightMemory:
             raise MemoryUnavailable('hindsight-api not found: install the memory extra (uv sync --all-extras)')
         url = f'http://127.0.0.1:{port}'
         self.home.mkdir(parents=True, exist_ok=True)
-        log_path = self.home / f'{cfg.instance}.server.log'
+        log_path = self.home / f'{cfg.instance_name}.server.log'
         self._log = log_path.open('a')
-        log.info('starting %s on %s (instance %r); log -> %s', exe, url, cfg.instance, log_path)
+        log.info('starting %s on %s (instance %r); log -> %s', exe, url, cfg.instance_name, log_path)
         self._proc = subprocess.Popen([exe, '--host', '127.0.0.1', '--port', str(port), '--no-access-log'],
                                       env=env, stdout=self._log, stderr=subprocess.STDOUT)
         deadline = time.monotonic() + STARTUP_TIMEOUT

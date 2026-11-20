@@ -175,7 +175,7 @@ timeouts:
 #   embeddings: {model: argo:text-embedding-3-small, base_url: http://127.0.0.1:61612/v1}
 #   bank: loam                       # one bank shared by every campaign
 #   # url: http://127.0.0.1:8888     # an already-running server (concurrent campaigns); drop `instance` then
-#   instance: loam-memory            # embedded Postgres under ~/.pg0/instances/<instance>/
+#   # instance: loam-memory          # default when url is unset; embedded Postgres under ~/.pg0/instances/<instance>/
 #   recall_tokens: 1000              # cap on recalled lesson text per prompt
 #   drain_timeout: 600               # seconds to wait at campaign end for queued retains
 #   timeout: 60                      # seconds per memory call (recall, retain submit)

@@ -26,6 +26,13 @@ def memory(**overrides) -> MemoryConfig:
         **overrides})
 
 
+def test_unset_instance_uses_the_default_database_and_marker(tmp_path):
+    cfg = memory()   # no instance: the loam-owned server's default database
+    assert hindsight.server_env(cfg, port=8123)['HINDSIGHT_API_DATABASE_URL'] == 'pg0://loam-memory'
+    hindsight.record_embedding_model(cfg, tmp_path)
+    assert (tmp_path / 'loam-memory.json').is_file()
+
+
 # ---- server environment ---------------------------------------------------------------------------
 
 def test_server_env_points_hindsight_at_the_configured_endpoints(monkeypatch):
