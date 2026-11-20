@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -284,6 +285,9 @@ def test_a_memory_that_raises_cannot_change_the_round(tmp_path):
     for name, memory in (('none', NoMemory()), ('broken', BrokenMemory())):
         record = campaign_round(make_cfg(tmp_path / name), memory, **full_round_models())
         records[name] = json.loads(json.dumps(record).replace(str(tmp_path / name), '<tmp>'))
+        # Each synthesis attempt gets its own receipt directory, so only the receipt's existence compares.
+        assert Path(record['brief'].pop('synthesis_receipt')).is_file()
+        records[name]['brief'].pop('synthesis_receipt')
     assert records['broken'] == records['none']
     assert records['none']['threads'][0]['error'] is None
 

@@ -127,6 +127,13 @@ def test_full_round(tmp_path):
     assert record['brief']['tournament_brief'] == 'retire n=1 family'
     assert (cfg.state_dir / 'rounds' / 'round-001.json').is_file()
 
+    # synthesis: the round's accepted claims, with provenance, reached the reasoner, and a receipt says so
+    receipt = Path(record['brief']['synthesis_receipt'])
+    assert receipt.is_relative_to(cfg.state_dir / 'synthesis' / 'round-001')
+    assert json.loads(receipt.read_text())['status'] == 'complete'
+    [synthesized] = json.loads((receipt.parent / 'input.json').read_text())['threads']
+    assert synthesized['accepted_claims'][0]['source'] == 'outputs/r001-01/result.json'
+
 
 def test_reconciliation_requires_a_recorded_owned_run(tmp_path):
     from loam.reconcile import accepted

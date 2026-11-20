@@ -24,6 +24,7 @@ from .execution import Deps
 from .memory import Memory, lessons, recall_block
 from .memory import from_config as memory_from_config
 from .schemas import Hypothesis, ValidationReport
+from .synthesis import synthesize
 from .tournament import GenerationTimedOut, Tournament
 from .workspace import Workspace, write_json
 
@@ -88,7 +89,7 @@ class Campaign:
 
         log.info('round %d: reasoner', n)
         table = self.steering(ranked)
-        new_brief = await self.synthesize(threads, table, brief)
+        new_brief = await self.synthesize(threads, table, brief, n)
         record = {'round': n, 'rankings': [h.model_dump() for h in ranked], 'threads': threads,
                   'steering': table, 'brief': new_brief}
         path = self.rounds_dir / f'round-{n:03d}.json'
@@ -224,7 +225,7 @@ class Campaign:
             row['summary'] = pool[row['hypothesis_id']].summary if row['hypothesis_id'] in pool else ''
         return table
 
-    async def synthesize(self, threads: list[dict], table: list[dict], previous_brief: str) -> dict:
+    async def synthesize(self, threads: list[dict], table: list[dict], previous_brief: str, n: int) -> dict:
         digest = []
         for t in threads:
             h, r = t['hypothesis'], t['report'] or {}
@@ -232,16 +233,13 @@ class Campaign:
                 'hypothesis_id': h['id'], 'summary': h['summary'], 'elo': h['elo'], 'matches': h['matches'],
                 'outcome': r.get('outcome'), 'self_reported_evidence_score': r.get('evidence_score'),
                 'next_step': r.get('next_step'), 'pending_batches': r.get('pending_batches'),
-                'accepted_claims': [{k: c[k] for k in ('claim', 'stance', 'policy', 'delta')} for c in t['accepted']],
+                'accepted_claims': t['accepted'],
                 'claims_not_accepted': len(r.get('claims', [])) - len(t['accepted']),
                 'statement_overreach': bool((t['review'] or {}).get('statement_overreach')),
                 'error': t['error'],
             })
-        prompt = (f'PREVIOUS BRIEF:\n{previous_brief or "(first round)"}\n\n'
-                  f'THIS ROUND\'S THREADS:\n{json.dumps(digest, indent=1)}\n\n'
-                  f'STEERING TABLE (whole pool, highest priority first):\n{json.dumps(table, indent=1)}')
         try:
-            return (await self.agents.run('reasoner', prompt)).model_dump()
+            return await synthesize(self.agents, self.cfg, digest, table, previous_brief, n)
         except Exception as exc:  # keep steering from the last good brief rather than losing the round
             log.exception('reasoner failed')
             return {'report': f'reasoner failed: {exc!r}', 'tournament_brief': previous_brief}

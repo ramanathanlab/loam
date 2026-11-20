@@ -387,6 +387,7 @@ class Config(ConfigModel):
     rounds: PositiveInt = 1
     workspace_inputs: Path | None = None   # local dir copied into every hypothesis's data/
     concurrency: PositiveInt = 4         # validators running at once
+    synthesis_concurrency: PositiveInt = 8  # reasoner requests at once while reducing a round; capped by concurrency
     max_code_calls: PositiveInt = 4      # code-generator delegations per validator
     max_requests: PositiveInt = 200      # LLM requests per agent run (pydantic-ai's default of 50 is too low)
     model_retries: PositiveInt = 8       # SDK retries per LLM request on 429/5xx/connection errors, with backoff

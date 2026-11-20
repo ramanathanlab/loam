@@ -155,6 +155,7 @@ tournament:
 
 workspace_inputs: null            # local mode only; must stay null in mcp mode
 concurrency: 4                    # validators running at once; matches top_k
+synthesis_concurrency: 8          # reasoner requests at once while reducing a large round; capped by concurrency
 max_code_calls: 3                 # code-generator delegations per validator
 max_requests: 200                 # LLM requests per agent run
 model_retries: 8                  # SDK retries per request on 429/5xx/connection errors
