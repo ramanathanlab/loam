@@ -7,11 +7,17 @@ prompts). No agent has a memory tool.
 Failure policy: `start` raises MemoryUnavailable when memory is configured but cannot work, so the
 campaign stops before round 1. Every other call swallows and logs its own failures: a memory outage
 never costs a round.
+
+Failure ownership: the implementation owns that policy (recall, retain and close must not raise).
+Callers still guard every call but `start` (the orchestrator's try/except, `recall_block`) as
+defence in depth against third-party backends that break the contract; the guards are not a
+licence for implementations to raise.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -39,15 +45,20 @@ class Lesson:
 
 
 class Memory(Protocol):
+    """What the orchestrator needs from a memory backend. Implementations own the failure policy
+    (see the module docstring); callers guard all but `start` only as defence in depth."""
+
     async def start(self) -> None:
-        """Make memory ready. Raises MemoryUnavailable on misconfiguration."""
+        """Make memory ready. Raises MemoryUnavailable on misconfiguration: the only call allowed to
+        raise, and callers deliberately leave it unguarded."""
 
     async def recall(self, query: str, *, kinds: Sequence[Kind] | None = None) -> str:
         """Prompt-ready lessons relevant to `query`, each labelled with its source campaign.
         Empty string when there are none, and on any failure. Never raises."""
 
     async def retain(self, lessons: Sequence[Lesson]) -> None:
-        """Queue one round's lessons. Retaining a (round, hypothesis) again replaces its lessons.
+        """Queue one round's lessons. Retaining a (round, hypothesis) again replaces its lessons, so
+        retaining the same record twice is harmless (the orchestrator does so at run start).
         Never raises."""
 
     async def close(self) -> None:
@@ -79,7 +90,13 @@ def _clip(text, cap: int = FIELD_CAP) -> str:
     return text if len(text) <= cap else text[:cap - 3] + '...'
 
 
+PATH = re.compile(r'''[^\s()\[\]{}<>'"`,;]*/[^\s()\[\]{}<>'"`,;]*''')   # any token containing '/'
+
+
 def _lesson(kind: Kind, n: int, hypothesis_id: str, text: str, run_id: str = '') -> Lesson:
+    """Paths and the run id are campaign-specific: paths become `<path>`, the run id `this run`
+    (it stays in the `run_id` field)."""
+    text = PATH.sub('<path>', text)
     if run_id:
         text = text.replace(run_id, 'this run')
     return Lesson(kind, _clip(text, LESSON_CAP), n, hypothesis_id, run_id)

@@ -243,7 +243,7 @@ Within a campaign, the brief, the ledger and each hypothesis's prior work carry 
 - **procedural lessons**: code-generator runs whose observed status was `blocked` or `crashed` (the instruction and the error), and validator reports whose outcome was `blocked` (the blocker named in `next_step`);
 - **review lessons**: claims the reviewer marked `rejected` or `unverifiable`, with the reviewer's `checked` explanation.
 
-Accepted claims, successful runs and briefs are never saved, so a finding about one target can't mislead a campaign on another. Every lesson is tagged with `campaign:<memory.campaign>`; round, hypothesis and run ids are kept as metadata, not in the lesson text. Re-running a round after a crash replaces that round's lessons instead of adding copies.
+Accepted claims, successful runs and briefs are never saved, so a finding about one target can't mislead a campaign on another. Every lesson is tagged with `campaign:<memory.campaign>`; round, hypothesis and run ids are kept as metadata, not in the lesson text, and file paths are replaced by `<path>`. Lessons are saved as one document per (round, hypothesis, kind), so saving them again replaces that document instead of adding copies. Each run starts by re-saving the last completed round's lessons, so a crash between writing a round record and saving its lessons loses nothing.
 
 **Where lessons are injected.** The orchestrator recalls them; agents have no memory tool and never write to memory.
 - **Validator:** lessons relevant to the hypothesis summary, beside its prior work.
@@ -277,15 +277,15 @@ memory:
 
 Keys are read from `api_key_env`, as for agent models; with argo-proxy, leave it out. Use `argo:text-embedding-3-small` (1536 dimensions), not `-large`: its 3072 dimensions exceed pgvector's HNSW index limit of 2000.
 
-**Server and data.** Without `url`, loam starts `hindsight-api` as a child process for the length of the run, on embedded Postgres instance `instance`, and stops it at the end after waiting up to `drain_timeout` for lessons still being saved. The data lives in `~/.pg0/instances/<instance>/` and persists across campaigns. Lessons left unsaved are picked up the next time the server starts.
+**Server and data.** Without `url`, loam starts `hindsight-api` as a child process for the length of the run, on embedded Postgres instance `instance`, and stops it at the end after waiting up to `drain_timeout` for lessons still being saved. The data lives in `~/.pg0/instances/<instance>/` and persists across campaigns. Lessons still queued when `drain_timeout` runs out resume the next time loam starts the server on the same `instance` (or, with `url`, when that same server restarts); they are not recovered anywhere else.
 
-**The embedding model is fixed per `instance`.** The vector size is set by the first embedding model used. loam records that model and refuses to start if the config names another one, checking before the server starts, since Hindsight would otherwise resize the column under the stored vectors. To switch models, set a new `instance`; it starts with an empty bank.
+**The embedding model is fixed per `instance`.** The vector size is set by the first embedding model used. loam records that model once the server first starts healthy (so a typo or a failed first start does not lock the instance) and afterwards refuses to start if the config names another one, checking before the server starts, since Hindsight would otherwise resize the column under the stored vectors. To switch models, set a new `instance`; it starts with an empty bank.
 
 **Concurrent campaigns.** Start one Hindsight server yourself and point each campaign at it with `url` (and no `instance`). loam then only connects as a client. The embedding-model guard doesn't apply, because loam doesn't own that database: keeping the embedding model consistent is up to you.
 
 **Failures.** Misconfiguration fails fast, before round 1: the extra isn't installed, a named `api_key_env` is unset, the server never becomes healthy, bank setup fails, or the embedding model doesn't match. After that, memory never costs a round: a failed recall gives the agent no lessons, a failed save is logged and dropped, and the round finishes as it would without memory.
 
-**Smoke test.** [`examples/memory_smoke.py`](examples/memory_smoke.py) is an opt-in check against real endpoints, not part of `pytest`. It starts a server on a separate instance (`loam-memory-smoke`), saves lessons synchronously and asynchronously, and recalls them:
+**Smoke test.** [`examples/memory_smoke.py`](examples/memory_smoke.py) is an opt-in check against real endpoints, not part of `pytest`. It starts a server on a separate instance (`loam-memory-smoke`), queues lessons asynchronously and waits for them to be saved, checks the embedding-model guard, and recalls the lessons:
 
 ```bash
 uv sync --all-extras
@@ -301,7 +301,8 @@ uv sync --all-extras
 loam/
 ├── __main__.py        # CLI entry point (`python -m loam <config.yaml>`)
 ├── config.py          # Strict YAML configuration models (Config, ModelSpec, Execution, HPCDeployment, MemoryConfig)
-├── memory.py          # Optional cross-campaign lesson memory (Memory interface, NoMemory, Hindsight)
+├── memory.py          # Optional cross-campaign lesson memory: Memory interface, NoMemory, lesson extraction
+├── hindsight.py       # Hindsight backend for memory: loam-owned server, embedding-model guard, retain/recall
 ├── launcher.py        # Managed HPC MCP server lifecycle
 ├── orchestrator.py    # Deterministic Python Campaign & round loop
 ├── agents.py          # Builder for validator, code_generator, reviewer, and reasoner

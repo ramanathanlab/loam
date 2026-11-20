@@ -2,10 +2,10 @@
 
 Drives `loam.hindsight.HindsightMemory` itself, on its own embedded Postgres instance kept apart from
 the real memory bank, against real model endpoints:
-  1. a different embedding model on an existing instance is refused before any server starts;
-  2. start launches `hindsight-api`, waits for health and sets up the bank;
-  3. retain queues one round's lessons (two for one hypothesis, one for another) asynchronously;
-  4. close drains the queued retains and stops the server;
+  1. start launches `hindsight-api`, waits for health, records the embedding model and sets up the bank;
+  2. retain queues one round's lessons (two for one hypothesis, one for another) asynchronously;
+  3. close drains the queued retains and stops the server;
+  4. a different embedding model on the instance is now refused before any server starts;
   5. start again on the same instance (the guard accepts the same model);
   6. recall finds the lessons, labelled with their campaign, and the kind filter keeps review
      lessons out of a procedural-only recall;
@@ -61,16 +61,7 @@ async def run(args: argparse.Namespace) -> list[str]:
     failures: list[str] = []
     cfg = config(args)
 
-    # 1. guard: only meaningful once the instance has a marker, so record it first if this is a fresh home
-    from loam.hindsight import check_embedding_model
-    check_embedding_model(cfg, args.home)
-    try:
-        await HindsightMemory(config(args, embed_model='argo:some-other-embedding'), home=args.home).start()
-        failures.append('a different embedding model was not refused')
-    except MemoryUnavailable as exc:
-        print(f'ok   guard refused a different embedding model: {str(exc)[:90]}...')
-
-    # 2-4. start, retain, drain
+    # 1-3. start, retain, drain
     mem = HindsightMemory(cfg, home=args.home)
     t = time.monotonic()
     await mem.start()
@@ -87,6 +78,13 @@ async def run(args: argparse.Namespace) -> list[str]:
         failures.append(f'{len(mem._pending)} retain(s) still pending after close')
     else:
         print(f'ok   close drained the retains and stopped the server ({time.monotonic() - t:.1f}s)')
+
+    # 4. guard: the healthy start above recorded the model, so a different one is now refused
+    try:
+        await HindsightMemory(config(args, embed_model='argo:some-other-embedding'), home=args.home).start()
+        failures.append('a different embedding model was not refused')
+    except MemoryUnavailable as exc:
+        print(f'ok   guard refused a different embedding model: {str(exc)[:90]}...')
 
     # 5-7. start again, recall
     mem = HindsightMemory(cfg, home=args.home)

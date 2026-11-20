@@ -14,8 +14,10 @@ import sys
 import time
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Literal
 
 import httpx
+from hindsight_client import Hindsight   # the `memory` extra; missing -> memory.from_config's ImportError
 
 from .config import MemoryConfig, ModelSpec
 from .memory import Kind, Lesson, MemoryUnavailable
@@ -39,21 +41,45 @@ def _key(spec: ModelSpec, name: str) -> str:
     return spec.api_key(custom_endpoint=True)   # 'none' without a key: the OpenAI client refuses ''
 
 
+def _marker(cfg: MemoryConfig, marker_dir: Path) -> Path:
+    return marker_dir / f'{cfg.instance}.json'
+
+
 def check_embedding_model(cfg: MemoryConfig, marker_dir: Path) -> None:
     """Refuse to start a loam-owned database with an embedding model other than the one it was created
     with. Must run BEFORE the server starts: Hindsight resizes the embedding column at startup."""
-    marker = marker_dir / f'{cfg.instance}.json'
-    want = cfg.embeddings.model
-    if marker.exists():
-        have = json.loads(marker.read_text()).get('embeddings_model')
-        if have != want:
-            raise MemoryUnavailable(
-                f'memory instance {cfg.instance!r} was created with embedding model {have!r}, but the config '
-                f'names {want!r}. The embedding model is fixed per database: use a new memory.instance '
-                f'(or switch back to {have!r}). Marker: {marker}')
+    marker = _marker(cfg, marker_dir)
+    if not marker.exists():
         return
-    marker_dir.mkdir(parents=True, exist_ok=True)
-    marker.write_text(json.dumps({'embeddings_model': want}) + '\n')
+    have, want = json.loads(marker.read_text()).get('embeddings_model'), cfg.embeddings.model
+    if have != want:
+        raise MemoryUnavailable(
+            f'memory instance {cfg.instance!r} was created with embedding model {have!r}, but the config '
+            f'names {want!r}. The embedding model is fixed per database: use a new memory.instance '
+            f'(or switch back to {have!r}). Marker: {marker}')
+
+
+def record_embedding_model(cfg: MemoryConfig, marker_dir: Path) -> None:
+    """Pin the instance to its embedding model. Only once the server is healthy, i.e. has sized the
+    vector column for it: a typo'd model or a failed first start must not lock the instance."""
+    marker = _marker(cfg, marker_dir)
+    if not marker.exists():
+        marker_dir.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({'embeddings_model': cfg.embeddings.model}) + '\n')
+
+
+TagKey = Literal['campaign', 'kind']
+
+
+def tag(key: TagKey, value: str) -> str:
+    """Encode a lesson tag: `campaign:<name>` or `kind:<kind>`."""
+    return f'{key}:{value}'
+
+
+def tag_value(tags: Sequence[str] | None, key: TagKey) -> str | None:
+    """Decode the first `key` tag in `tags`, or None."""
+    prefix = tag(key, '')
+    return next((t.removeprefix(prefix) for t in tags or () if t.startswith(prefix)), None)
 
 
 def retain_batches(lessons: Sequence[Lesson], campaign: str) -> list[list[dict]]:
@@ -71,7 +97,7 @@ def retain_batches(lessons: Sequence[Lesson], campaign: str) -> list[list[dict]]
         batches.append([{
             'content': '\n\n'.join(lesson.text for lesson in kind_lessons),
             'document_id': f'{campaign}:r{rnd}:{hypothesis_id}:{kind}',
-            'tags': [f'campaign:{campaign}', f'kind:{kind}'],
+            'tags': [tag('campaign', campaign), tag('kind', kind)],
             'metadata': {'round': str(rnd), 'hypothesis_id': hypothesis_id, 'kind': kind,
                          'run_id': ','.join(lesson.run_id for lesson in kind_lessons if lesson.run_id)},
             'update_mode': 'replace',
@@ -80,11 +106,7 @@ def retain_batches(lessons: Sequence[Lesson], campaign: str) -> list[list[dict]]
 
 
 def recall_tags(kinds: Sequence[Kind] | None) -> list[str] | None:
-    return [f'kind:{k}' for k in kinds] if kinds else None
-
-
-def _tag(tags: Sequence[str] | None, prefix: str) -> str | None:
-    return next((t.removeprefix(prefix) for t in tags or () if t.startswith(prefix)), None)
+    return [tag('kind', k) for k in kinds] if kinds else None
 
 
 def format_recall(results: Sequence) -> str:
@@ -92,8 +114,8 @@ def format_recall(results: Sequence) -> str:
     Hindsight may split one lesson into several facts, and metadata can be None on those."""
     lines = []
     for r in results:
-        campaign = _tag(r.tags, 'campaign:') or 'unknown campaign'
-        kind = _tag(r.tags, 'kind:')
+        campaign = tag_value(r.tags, 'campaign') or 'unknown campaign'
+        kind = tag_value(r.tags, 'kind')
         label = f'{campaign}, {kind}' if kind else campaign
         lines.append(f'- [{label}] {" ".join(r.text.split())}')
     return '\n'.join(lines)
@@ -149,8 +171,6 @@ class HindsightMemory:
             for spec, name in ((cfg.llm, 'llm'), (cfg.embeddings, 'embeddings')):
                 _key(spec, name)
             url = cfg.url.rstrip('/') if cfg.url else await self._launch()
-            from hindsight_client import Hindsight
-
             self._client = Hindsight(base_url=url, timeout=cfg.timeout)
             try:
                 await asyncio.wait_for(
@@ -188,6 +208,7 @@ class HindsightMemory:
                                             f'becoming healthy; see {log_path}')
                 with contextlib.suppress(httpx.HTTPError):
                     if (await http.get(f'{url}/health', timeout=2)).status_code == 200:
+                        record_embedding_model(cfg, self.home)
                         return url
                 await asyncio.sleep(1)
         raise MemoryUnavailable(f'hindsight-api not healthy after {STARTUP_TIMEOUT:.0f}s; see {log_path}')
@@ -206,9 +227,13 @@ class HindsightMemory:
         log.info('memory: waiting up to %.0fs for %d queued retain(s)', self.cfg.drain_timeout, len(self._pending))
         while self._pending and time.monotonic() < deadline:
             for op in list(self._pending):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
                 try:
                     status = (await asyncio.wait_for(
-                        self._client.operations.get_operation_status(self.cfg.bank, op), self.cfg.timeout)).status
+                        self._client.operations.get_operation_status(self.cfg.bank, op),
+                        min(self.cfg.timeout, remaining))).status
                 except Exception as exc:
                     log.warning('memory: status of retain %s unknown: %r', op, exc)
                     continue

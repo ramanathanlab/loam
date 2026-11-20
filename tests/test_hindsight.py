@@ -1,5 +1,9 @@
-"""Hindsight memory backend (issue #35): pure helpers only. No server, no network."""
+"""Hindsight memory backend (issue #35). No real server, no network: helpers, plus the lifecycle
+against a fake `hindsight-api` executable and a fake client."""
 
+import asyncio
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -58,15 +62,16 @@ def test_a_named_but_unset_api_key_env_is_a_misconfiguration(monkeypatch, which)
 
 # ---- embedding-model guard ------------------------------------------------------------------------
 
-def test_guard_records_the_model_on_first_use_and_accepts_it_again(tmp_path):
+def test_guard_accepts_the_recorded_model_again(tmp_path):
     cfg = memory(instance='camp-a')
 
-    hindsight.check_embedding_model(cfg, tmp_path)
+    hindsight.check_embedding_model(cfg, tmp_path)   # nothing recorded yet
+    hindsight.record_embedding_model(cfg, tmp_path)
     hindsight.check_embedding_model(cfg, tmp_path)   # same model: still fine
 
 
 def test_guard_refuses_a_different_embedding_model_for_the_same_instance(tmp_path):
-    hindsight.check_embedding_model(memory(instance='camp-a'), tmp_path)
+    hindsight.record_embedding_model(memory(instance='camp-a'), tmp_path)
     other = memory(instance='camp-a', embeddings={'model': 'argo:text-embedding-ada-002', 'base_url': ARGO})
 
     with pytest.raises(MemoryUnavailable, match='new memory.instance'):
@@ -74,7 +79,7 @@ def test_guard_refuses_a_different_embedding_model_for_the_same_instance(tmp_pat
 
 
 def test_guard_is_per_instance(tmp_path):
-    hindsight.check_embedding_model(memory(instance='camp-a'), tmp_path)
+    hindsight.record_embedding_model(memory(instance='camp-a'), tmp_path)
     other = memory(instance='camp-b', embeddings={'model': 'argo:text-embedding-ada-002', 'base_url': ARGO})
 
     hindsight.check_embedding_model(other, tmp_path)
@@ -147,3 +152,121 @@ def test_nothing_recalled_is_empty_text():
 def test_recall_filters_by_kind_tags_only_when_asked():
     assert hindsight.recall_tags(None) is None
     assert hindsight.recall_tags(['procedural']) == ['kind:procedural']
+
+
+# ---- lifecycle, offline: a fake `hindsight-api` executable and a fake client ----------------------
+
+class FakeClient:
+    """Stands in for hindsight_client.Hindsight. `status` answers every operation-status poll."""
+
+    instances: list['FakeClient'] = []
+
+    def __init__(self, base_url, timeout):
+        self.base_url, self.closed = base_url, False
+        self.status = 'completed'
+        self.operations = SimpleNamespace(get_operation_status=self._status)
+        FakeClient.instances.append(self)
+
+    async def acreate_bank(self, bank_id, **kwargs):
+        return None
+
+    async def aretain_batch(self, bank_id, items, retain_async=True):
+        return SimpleNamespace(operation_id='op-1', operation_ids=['op-1'])
+
+    async def _status(self, bank_id, operation_id):
+        if self.status == 'hang':
+            await asyncio.sleep(3600)
+        return SimpleNamespace(status=self.status)
+
+    async def aclose(self):
+        self.closed = True
+
+
+@pytest.fixture
+def fake_client(monkeypatch):
+    FakeClient.instances = []
+    monkeypatch.setattr(hindsight, 'Hindsight', FakeClient)
+    return FakeClient
+
+
+def server_exe(monkeypatch, tmp_path, script: str | None) -> Path:
+    """Make `hindsight-api` resolve to `script` (None: not installed). Each launch touches `launched`."""
+    launched = tmp_path / 'launched'
+    if script is None:
+        monkeypatch.setattr(hindsight.shutil, 'which', lambda *a, **k: None)
+        return launched
+    exe = tmp_path / 'hindsight-api'
+    exe.write_text(script.replace('LAUNCHED', str(launched)))
+    exe.chmod(0o755)
+    monkeypatch.setattr(hindsight.shutil, 'which', lambda *a, **k: str(exe))
+    return launched
+
+
+FAILS = '#!/bin/sh\ntouch LAUNCHED\nexit 3\n'
+HEALTHY = f'''#!{sys.executable}
+import http.server, pathlib, sys
+pathlib.Path('LAUNCHED').touch()
+port = int(sys.argv[sys.argv.index('--port') + 1])
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.end_headers()
+    def log_message(self, *a):
+        pass
+http.server.HTTPServer(('127.0.0.1', port), H).serve_forever()
+'''
+OTHER_EMBEDDINGS = {'model': 'argo:text-embedding-ada-002', 'base_url': ARGO}
+
+
+def start(cfg, home):
+    asyncio.run(hindsight.HindsightMemory(cfg, home=home).start())
+
+
+def test_a_server_that_never_becomes_healthy_does_not_lock_the_embedding_model(monkeypatch, tmp_path, fake_client):
+    server_exe(monkeypatch, tmp_path, FAILS)
+
+    with pytest.raises(MemoryUnavailable, match='exited'):
+        start(memory(instance='camp-a'), tmp_path / 'home')
+    # A first-use typo in the model must not pin the instance to it: another model may still start.
+    with pytest.raises(MemoryUnavailable, match='exited'):
+        start(memory(instance='camp-a', embeddings=OTHER_EMBEDDINGS), tmp_path / 'home')
+
+
+def test_a_healthy_server_locks_the_embedding_model_and_a_mismatch_never_launches(monkeypatch, tmp_path, fake_client):
+    launched = server_exe(monkeypatch, tmp_path, HEALTHY)
+
+    async def start_then_close(cfg):
+        mem = hindsight.HindsightMemory(cfg, home=tmp_path / 'home')
+        await mem.start()
+        await mem.close()
+
+    asyncio.run(start_then_close(memory(instance='camp-a')))
+    assert launched.exists()
+    launched.unlink()
+
+    with pytest.raises(MemoryUnavailable, match='new memory.instance'):
+        asyncio.run(start_then_close(memory(instance='camp-a', embeddings=OTHER_EMBEDDINGS)))
+    assert not launched.exists()   # refused BEFORE the server could resize the vector column
+
+
+def test_a_missing_server_executable_is_memory_unavailable(monkeypatch, tmp_path, fake_client):
+    server_exe(monkeypatch, tmp_path, None)
+
+    with pytest.raises(MemoryUnavailable, match='hindsight-api not found'):
+        start(memory(instance='camp-a'), tmp_path / 'home')
+
+
+def test_close_waits_at_most_drain_timeout_overall_then_releases(fake_client):
+    cfg = memory(url='http://hindsight.example:8888', timeout=30, drain_timeout=0.3)
+
+    async def run():
+        mem = hindsight.HindsightMemory(cfg)
+        await mem.start()
+        await mem.retain([Lesson('review', 'Single-seed ipTM is not a binding claim.', 1, 'h1')])
+        fake_client.instances[0].status = 'hang'   # every status poll blocks
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        await asyncio.wait_for(mem.close(), 5)
+        return loop.time() - started
+
+    assert asyncio.run(run()) < 2    # one deadline for the whole drain, not cfg.timeout per poll
+    assert fake_client.instances[0].closed

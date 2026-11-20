@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import sys
 
 import pytest
 
@@ -11,7 +12,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from loam.agents import build
 from loam.config import Config
-from loam.memory import Lesson, MemoryUnavailable
+from loam.memory import Lesson, MemoryUnavailable, NoMemory, from_config, lessons
 from loam.orchestrator import Campaign
 from test_round import H, StubTournament, make_cfg, scripted
 
@@ -96,10 +97,6 @@ def test_memory_block_loads_from_yaml(tmp_path):
 # ---- interface --------------------------------------------------------------------------------------
 
 def test_no_memory_is_a_silent_no_op(tmp_path):
-    import asyncio
-
-    from loam.memory import Lesson, NoMemory, from_config
-
     memory = from_config(make_cfg(tmp_path))
     assert isinstance(memory, NoMemory)
 
@@ -110,6 +107,14 @@ def test_no_memory_is_a_silent_no_op(tmp_path):
         await memory.close()
 
     asyncio.run(exercise())
+
+
+def test_configured_memory_without_the_extra_is_unavailable(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, 'hindsight_client', None)   # import fails, as without the extra
+    monkeypatch.delitem(sys.modules, 'loam.hindsight', raising=False)
+
+    with pytest.raises(MemoryUnavailable, match='uv sync'):
+        from_config(with_memory(tmp_path))
 
 
 # ---- campaign wiring (#36): through Campaign, with a fake memory ------------------------------------
@@ -264,14 +269,56 @@ class BrokenMemory(FakeMemory):
 
 
 def test_a_memory_that_raises_cannot_change_the_round(tmp_path):
-    from loam.memory import NoMemory
-
     records = {}
     for name, memory in (('none', NoMemory()), ('broken', BrokenMemory())):
         record = campaign_round(make_cfg(tmp_path / name), memory, **full_round_models())
         records[name] = json.loads(json.dumps(record).replace(str(tmp_path / name), '<tmp>'))
     assert records['broken'] == records['none']
     assert records['none']['threads'][0]['error'] is None
+
+
+def blocked_round(n: int, hypothesis_id: str) -> dict:
+    return {'round': n, 'rankings': [], 'steering': [], 'brief': {}, 'threads': [{
+        'hypothesis': {'id': hypothesis_id, 'summary': 's'}, 'report': None, 'review': None, 'error': None,
+        'code_results': [{'run_id': f'r{n:03d}-01', 'status': 'blocked', 'result': f'blocker of round {n}'}]}]}
+
+
+def run_campaign(cfg, memory, rounds: int) -> None:
+    asyncio.run(Campaign(cfg, agents=build(cfg), tournament=StubTournament(), memory=memory).run(rounds))
+
+
+def test_run_start_retains_the_latest_round_on_disk_again(tmp_path):
+    """A crash between writing a round record and retaining its lessons must not lose them."""
+    cfg = make_cfg(tmp_path)
+    rounds = cfg.state_dir / 'rounds'
+    rounds.mkdir(parents=True)
+    for n in (1, 2):
+        (rounds / f'round-{n:03d}.json').write_text(json.dumps(blocked_round(n, f'h{n}')))
+
+    memory = FakeMemory()
+    run_campaign(cfg, memory, rounds=0)
+
+    assert memory.calls == ['start', 'retain', 'close']
+    assert memory.retained == lessons(blocked_round(2, 'h2'))   # the latest completed round only
+
+
+def test_re_running_retains_the_same_lessons(tmp_path):
+    cfg = make_cfg(tmp_path)
+    first = FakeMemory()
+    campaign_round(cfg, first, **full_round_models())
+
+    again = FakeMemory()
+    run_campaign(cfg, again, rounds=0)
+
+    assert first.retained and again.retained == first.retained
+
+
+def test_a_failing_retain_at_run_start_does_not_stop_the_campaign(tmp_path):
+    cfg = make_cfg(tmp_path)
+    (cfg.state_dir / 'rounds').mkdir(parents=True)
+    (cfg.state_dir / 'rounds' / 'round-001.json').write_text(json.dumps(blocked_round(1, 'h1')))
+
+    run_campaign(cfg, BrokenMemory(), rounds=0)
 
 
 def test_unavailable_memory_stops_the_campaign_before_round_one(tmp_path):
@@ -294,9 +341,20 @@ def test_without_a_memory_block_prompts_are_unchanged(tmp_path):
                                             'RUN r001-01. INSTRUCTION:\nBLOCK: fold the complex with chai-1')
 
 
-def test_lesson_text_is_capped():
-    from loam.memory import lessons
+def test_lesson_text_replaces_paths_and_keeps_run_ids_in_fields():
+    record = {'round': 3, 'threads': [{
+        'hypothesis': {'id': 'h1'}, 'report': None, 'review': None, 'error': None,
+        'code_results': [{'run_id': 'r003-02', 'status': 'crashed',
+                          'instruction': 'fold outputs/r003-02/complex.fasta with chai-1',
+                          'error': 'FileNotFoundError: /scratch/u/r003-02/weights/chai1.pt (see ./logs/run.log)'}]}]}
+    [lesson] = lessons(record)
+    assert lesson.run_id == 'r003-02'
+    assert 'r003-02' not in lesson.text and '/' not in lesson.text and 'this run/' not in lesson.text
+    assert 'fold <path> with chai-1' in lesson.text
+    assert 'FileNotFoundError: <path> (see <path>)' in lesson.text
 
+
+def test_lesson_text_is_capped():
     record = {'round': 2, 'threads': [{
         'hypothesis': {'id': 'h1'}, 'report': None, 'review': None, 'error': None,
         'code_results': [{'run_id': 'r002-01', 'status': 'crashed',
