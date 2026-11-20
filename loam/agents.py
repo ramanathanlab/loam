@@ -7,11 +7,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.usage import UsageLimits
 
 from . import execution, memory, skills
 from .config import Config, Role
 from .execution import Deps, Resilient
+from .history import bounded_history
 from .schemas import Brief, CodeResult, Review, ValidationReport
 
 PROMPTS = Path(__file__).parent / 'prompts'
@@ -66,6 +68,8 @@ def build(cfg: Config) -> Agents:
         return Agent(cfg.models[role].build(), name=role, output_type=output_type, deps_type=Deps,
                      instructions=[(PROMPTS / f'{role}.md').read_text(), campaign_context],
                      tools=unwrapped, toolsets=toolsets, retries=3,
+                     capabilities=([ProcessHistory(lambda messages: bounded_history(messages, cfg.max_history_bytes))]
+                                   if cfg.max_history_bytes is not None else []),
                      model_settings={'max_retries': cfg.model_retries,
                                      'request_timeout': cfg.timeouts.model_request})
 
