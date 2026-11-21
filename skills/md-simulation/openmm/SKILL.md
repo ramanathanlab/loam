@@ -27,8 +27,8 @@ print(sim.context.getPlatform().getName())             # confirm you are on the 
 ```
 
 `Precision` is `single` | `mixed` | `double`; `mixed` is the usual choice. Never select a physical
-device by index: each System's launcher already restricts the process to one GPU, which appears as
-device 0.
+device by index: restrict the process to one GPU the way the reference file says, and that GPU
+appears as device 0.
 
 ## Inputs
 
@@ -36,8 +36,8 @@ The standard OpenMM app readers: `AmberPrmtopFile`/`AmberInpcrdFile`, `GromacsTo
 `CharmmPsfFile`, or `PDBFile` with `ForceField('amber14-all.xml', 'amber14/tip3pfx.xml')`. Build the
 scientific system from actual campaign coordinates and pass box vectors for periodic systems
 (`periodicBoxVectors=inpcrd.boxVectors`). Resolve missing atoms, parameterization, protonation and
-restraints deliberately; do not silently alter the experimental system. `openmmforcefields` is not
-installed; use the molecular-simulations skill's builders to parameterize a system.
+restraints deliberately; do not silently alter the experimental system. To parameterize a system
+with AmberTools, use the molecular-simulations skill's builders.
 
 ## Outputs
 
@@ -59,5 +59,6 @@ to the campaign workspace.
   load. It is a diagnostic, not evidence of stable production dynamics.
 - Don't `pip install` a different numpy into the tool's venv — OpenMM is tied to it and you get
   "compiled using NumPy 1.x" ABI errors.
-- A single force-field energy is not an MM/GBSA binding estimate, and no dynamics or affinity claim
-  follows from an import or a platform self-test.
+- A single force-field energy is not an MM/GBSA binding estimate. Compute the requested energy
+  method with proper complex/receptor/binder preparation, and report the force field, solvent model,
+  frames and units. No dynamics or affinity claim follows from an import or a platform self-test.

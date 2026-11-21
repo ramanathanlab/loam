@@ -67,9 +67,6 @@ it takes topology/coordinates/output arguments, not `path=...`.
   System whose GPU platform has another name, as does the upstream `examples/run_omm_locally.py`.
 - **When tleap fails, Python only shows `CalledProcessError ... exit status 31`.** Read
   `<out>/leap.log` (or `build/leap.log`) and grep for `FATAL`.
-- **Capped test peptides in the repo fail to build** (`tests/data/pdb/alanine_dipeptide.pdb`,
-  `two_chain_saltbridge.pdb`): the builder's pdb4amber/cpptraj prep mangles ACE/NME caps
-  (`FATAL: Atom .R<ACE 1>.A<N 7> does not have a type`). Use a real protein like 1L2Y to smoke-test.
 - Validate chain/residue identity, caps, disulfides, ligands, solvent and protonation of the built
   system. Importing the Python package does not verify the builders or AmberTools.
 - Ligand builders (`ComplexBuilder`, `LigandBuilder`, `LigandSolutionBuilder`) need rdkit and
@@ -77,7 +74,7 @@ it takes topology/coordinates/output arguments, not `path=...`.
 - The progress column in `prod.log` counts from the equilibration end step, so a short test shows
   >100%. Cosmetic.
 - Tiny boxes under very short equilibration shrink noticeably under the barostat — fine for a smoke
-  test, but use the agreed step counts for real runs.
+  test, but use the default step counts (or the experiment's agreed protocol) for real runs.
 - Record minimization, equilibration, production and restart settings; inspect the actual output
   files and checkpoints. Preserve failed preparations and partial stages.
 - Keep structural confidence, force-field energy and MM/GBSA estimates separate. A static

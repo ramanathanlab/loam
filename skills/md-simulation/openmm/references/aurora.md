@@ -13,9 +13,9 @@ export ZE_AFFINITY_MASK=0      # ONE tile (0-11 in FLAT mode); ALWAYS set this
 ```
 
 No `module load` or `LD_LIBRARY_PATH` is needed for the Python API. Nothing downloads — it works
-offline. Example inputs: `$LOAM_SOFTWARE_ROOT/openmm-sycl/examples/python-examples/`
-(`input.prmtop`/`input.inpcrd` is a 2269-atom solvated alanine dipeptide; also `.gro/.top`, `.pdb`,
-CHARMM psf).
+offline. `openmmforcefields` is **not** installed in this venv. Example inputs:
+`$LOAM_SOFTWARE_ROOT/openmm-sycl/examples/python-examples/` (`input.prmtop`/`input.inpcrd` is a
+2269-atom solvated alanine dipeptide; also `.gro/.top`, `.pdb`, CHARMM psf).
 
 ## Example
 
@@ -27,7 +27,8 @@ cd ~ && ZE_AFFINITY_MASK=0 \
 # Minimal MD runner: scripts/aurora/openmm_xpu_smoke.py <prmtop> <inpcrd> <steps> <out_dir>
 export ZE_AFFINITY_MASK=0
 E=$LOAM_SOFTWARE_ROOT/openmm-sycl/examples/python-examples
-$LOAM_SOFTWARE_ROOT/openmm-sycl/.venv/bin/python scripts/aurora/openmm_xpu_smoke.py \
+$LOAM_SOFTWARE_ROOT/openmm-sycl/.venv/bin/python \
+    $HPC_LOAM_HOME/skills/md-simulation/openmm/scripts/aurora/openmm_xpu_smoke.py \
     $E/input.prmtop $E/input.inpcrd 5000 ./out
 ```
 
@@ -50,9 +51,8 @@ Valid OpenCL platform properties: `Precision`, `DeviceIndex`, `OpenCLPlatformInd
   fallback, set `OPENMM_PLUGIN_DIR=<install>/build/install/lib/plugins` and add
   `<install>/build/install/lib` to `LD_LIBRARY_PATH`.
 - The `molecular-simulations` venv ships the same OpenMM 8.5 with the same three platforms.
-- Under Loam `run_batch`, reference the runner by its worker-visible copy
-  (`$HPC_LOAM_HOME/skills/md-simulation/openmm/scripts/aurora/openmm_xpu_smoke.py`) — the Aurora
-  worker cannot see a local skill directory.
+- Under Loam `run_batch`, reference the runner by its worker-visible copy (as in the example
+  above) — the Aurora worker cannot see a local skill directory.
 
 ## Resource index
 
