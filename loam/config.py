@@ -53,6 +53,15 @@ class ModelSpec(ConfigModel):
     model: str
     base_url: str | None = None
     api_key_env: str | None = None
+    # 'alcf': before round 1 (after any allocation queue wait, which can outlive a token), loam fetches
+    # a fresh ALCF inference token into api_key_env. Needs the alcf-auth extra; see loam.token_refresh.
+    token_refresh: Literal['alcf'] | None = None
+
+    @model_validator(mode='after')
+    def validate_token_refresh(self):
+        if self.token_refresh and not self.api_key_env:
+            raise ValueError('token_refresh needs api_key_env: the variable the fresh token goes into')
+        return self
 
     def api_key(self, *, custom_endpoint: bool = False) -> str | None:
         key = os.environ.get(self.api_key_env) if self.api_key_env else None

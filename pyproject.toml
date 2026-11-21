@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 loam-saturation = "loam.saturation.__main__:main"
 loam-inference-pool = "loam.inference_pool:main"
+loam-nemotron = "loam.nemotron:main"
 loam-scaling = "loam.scaling:main"
 
 [project.optional-dependencies]
@@ -40,6 +41,12 @@ hpc = ["fastmcp", "globus-compute-sdk", "academy-py", "ensemble-launcher"]
 # not a stable interface across versions.
 # `loam-inference-pool`: routes OpenAI-compatible requests across replicas (loam/inference_pool.py).
 inference-pool = ["aiohttp>=3.9"]
+# `loam-nemotron`: self-hosted Nemotron replicas as an inference pool backend (loam/nemotron.py).
+# Named for the backend, not a System (ADR 0004). Replicas also need vLLM and openssl on their nodes.
+nemotron = ["aiohttp>=3.9"]
+# `token_refresh: alcf` on a model endpoint: fetches a fresh ALCF inference token before round 1
+# (loam/token_refresh.py). Pinned to the version validated on the moeen branch.
+alcf-auth = ["alcf-tokens==0.4.0"]
 memory = ["hindsight-api-slim[embedded-db]==1.2.3", "hindsight-client==1.2.3"]
 
 [build-system]

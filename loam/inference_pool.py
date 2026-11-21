@@ -97,7 +97,7 @@ class ReplicaEndpoint:
 
     base_url: str
     token: str = field(default='', repr=False)
-    tls: ssl.SSLContext | bool | None = field(default=None, repr=False)
+    tls: ssl.SSLContext | aiohttp.Fingerprint | bool | None = field(default=None, repr=False)
     checkpoint: str | None = None
 
 
