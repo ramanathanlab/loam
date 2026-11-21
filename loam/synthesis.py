@@ -26,9 +26,8 @@ CONTEXT_BYTES = 120_000
 MAX_PROMPT_BYTES = 64_000
 MIN_PROMPT_BYTES = 16_000
 UNBOUNDED_HISTORY_BYTES = 96_000  # stands in for max_history_bytes when it is unset
-# Reserved for the reasoner's reply. Moeen's branch read the reasoner's configured max_tokens; loam's
-# ModelSpec has no per-model settings yet, so this is that branch's default.
-OUTPUT_TOKENS = 8192
+# Reserved for the reasoner's reply when its settings leave max_tokens unset.
+DEFAULT_OUTPUT_TOKENS = 8192
 MAX_LEVELS = 12
 
 
@@ -97,8 +96,9 @@ async def synthesize(agents, cfg, digest: list[dict], table: list[dict], previou
     reasoner fails or the instructions leave too little room; the caller keeps the previous brief."""
     instructions = (cfg.goal_text() + cfg.rules_text()
                     + (Path(__file__).parent / 'prompts/reasoner.md').read_text())
+    output_tokens = int(cfg.models['reasoner'].settings.get('max_tokens') or DEFAULT_OUTPUT_TOKENS)
     budget = min(MAX_PROMPT_BYTES, (cfg.max_history_bytes or UNBOUNDED_HISTORY_BYTES) // 2,
-                 CONTEXT_BYTES - size(instructions) - OUTPUT_TOKENS)
+                 CONTEXT_BYTES - size(instructions) - output_tokens)
     if budget < MIN_PROMPT_BYTES:
         raise ValueError('Campaign instructions leave too little safe synthesis context')
     directory = cfg.state_dir / 'synthesis' / f'round-{round_number:03d}' / uuid.uuid4().hex

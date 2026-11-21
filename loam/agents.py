@@ -74,7 +74,7 @@ def build(cfg: Config) -> Agents:
                      tools=unwrapped, toolsets=toolsets, retries=3,
                      capabilities=([ProcessHistory(lambda messages: bounded_history(messages, cfg.max_history_bytes))]
                                    if cfg.max_history_bytes is not None else []),
-                     model_settings={'max_retries': cfg.model_retries,
+                     model_settings={**cfg.models[role].settings, 'max_retries': cfg.model_retries,
                                      'request_timeout': cfg.timeouts.model_request})
 
     async def delegate(ctx: RunContext[Deps], instruction: str) -> str:

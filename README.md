@@ -67,10 +67,11 @@ The scientific contracts work; coaxing an LLM orchestrator to enforce them via r
 | **Reviewer** | `models.reviewer` | `read_skill`, `fetch_url`, read-only workspace/MCP tools | `Review` |
 | **Reasoner** | `models.reasoner` | *none* | `Brief` |
 
-Each LLM role uses a `ModelSpec` (`{model, base_url, api_key_env}`):
+Each LLM role uses a `ModelSpec` (`{model, base_url, api_key_env, settings}`):
 - **With `base_url`:** Connects to any OpenAI-compatible server (vLLM, ALCF/Argo proxy, LiteLLM, etc.).
 - **Without `base_url`:** Accepts any native `pydantic-ai` model identifier (e.g., `anthropic:claude-sonnet-4-5`, `openai:gpt-5`, `test`).
 - **Secrets stay out of YAML:** API keys are referenced by environment variable name via `api_key_env`; Globus Compute and Academy credentials stay in their standard external stores.
+- **Per-role settings:** `settings` is passed to that role's agent as its pydantic-ai model settings (e.g. `settings: {max_tokens: 32768}` for a reasoner that truncates). Round synthesis reserves the reasoner's `max_tokens` (8192 when unset) in every request's context budget. `model_retries` and `timeouts.model_request` override a role's `max_retries` and `request_timeout`. The tournament's `generation` and `ranking` models do not read `settings`.
 
 With the optional `memory:` block, the validator and code generator also get lessons from earlier work (earlier rounds of this campaign and earlier campaigns) in their prompts; no role gains a tool. See [Memory (optional)](#memory-optional).
 

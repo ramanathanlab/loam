@@ -10,7 +10,7 @@ import pytest
 from test_round import make_cfg
 
 from loam.schemas import Brief
-from loam.synthesis import CONTEXT_BYTES, OUTPUT_TOKENS, partition, prompt, size, synthesize
+from loam.synthesis import CONTEXT_BYTES, partition, prompt, size, synthesize
 
 
 def instructions(cfg) -> str:
@@ -108,18 +108,19 @@ def test_verbose_valid_reports_are_archived_and_compact_briefs_are_reduced(tmp_p
             assert hashlib.sha256((directory / item['full_response_file']).read_bytes()).hexdigest() == item['full_response_sha256']
 
 
-def test_output_budget_is_reserved_for_every_request(tmp_path):
+def test_configured_output_budget_is_reserved_for_every_synthesis_request(tmp_path):
     cfg = make_cfg(tmp_path)
     goal = tmp_path / 'long-goal.md'
-    goal.write_text('Scientific campaign context. ' * 2500)
+    goal.write_text('Scientific campaign context. ' * 1500)
     cfg.goal = str(goal)
     cfg.max_history_bytes = 128000
+    cfg.models['reasoner'].settings['max_tokens'] = 32768
     fixed = size(instructions(cfg))
     seen = []
 
     class Agents:
         async def run(self, role, text):
-            assert size(text) + fixed + OUTPUT_TOKENS <= CONTEXT_BYTES
+            assert size(text) + fixed + 32768 <= CONTEXT_BYTES
             seen.append(text)
             return Brief(report='Derived evidence only.', tournament_brief='Uncertainty retained.')
 
@@ -127,6 +128,35 @@ def test_output_budget_is_reserved_for_every_request(tmp_path):
     result = asyncio.run(synthesize(Agents(), cfg, digest, [], '', 1))
     assert json.loads(Path(result['synthesis_receipt']).read_text())['status'] == 'complete'
     assert len(seen) > 1
+
+
+def test_unsafe_output_allowance_is_rejected_before_any_model_call(tmp_path):
+    cfg = make_cfg(tmp_path)
+    cfg.models['reasoner'].settings['max_tokens'] = 115000
+
+    class Agents:
+        async def run(self, role, text):
+            raise AssertionError('Unsafe context reached model')
+
+    with pytest.raises(ValueError, match='too little safe synthesis context'):
+        asyncio.run(synthesize(Agents(), cfg, [{'hypothesis_id': 'h'}], [], '', 1))
+
+
+def test_an_unset_output_allowance_reserves_8192(tmp_path):
+    cfg = make_cfg(tmp_path)
+    goal = tmp_path / 'goal.md'
+    goal.write_text('Scientific campaign context. ' * 2500)
+    cfg.goal = str(goal)
+    cfg.max_history_bytes = 128000
+    assert 'max_tokens' not in cfg.models['reasoner'].settings
+
+    class Agents:
+        async def run(self, role, text):
+            return Brief(report='r', tournament_brief='b')
+
+    result = asyncio.run(synthesize(Agents(), cfg, [{'hypothesis_id': 'h'}], [], '', 1))
+    budget = json.loads(Path(result['synthesis_receipt']).read_text())['prompt_budget_bytes']
+    assert budget == CONTEXT_BYTES - size(instructions(cfg)) - 8192
 
 
 def test_instructions_leaving_too_little_context_are_rejected_before_any_model_call(tmp_path):
