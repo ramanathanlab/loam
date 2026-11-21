@@ -8,6 +8,7 @@ onto the allocation. The server itself, its configuration and its tools are real
 import asyncio
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -44,6 +45,7 @@ class Services:
 
             @classmethod
             async def from_exchange_factory(cls, **kwargs):
+                services.submitted.append(('manager', kwargs))
                 return cls()
 
             async def __aenter__(self):
@@ -54,13 +56,14 @@ class Services:
 
             async def launch(self, agent, **kwargs):
                 services.submitted.append(('agent', agent))
+                return SimpleNamespace(agent_id='agent-id')
 
         class Pool:
             def __init__(self, *args, **kwargs):
                 pass
 
             async def start(self, launch_cluster, launch_client):
-                pass
+                await launch_cluster('ckpt')
 
             async def stop(self):
                 pass
@@ -136,3 +139,43 @@ def test_a_missing_variable_stops_the_server_before_anything_is_submitted(tmp_pa
         pool_status(mcp_server.create_server(cluster=cluster, nnodes=2 if cluster else None, environ=environment))
 
     assert services.submitted == []
+
+
+def existing_allocation(tmp_path, system='polaris', **changes):
+    environment = {**hpc_environment(tmp_path, system), 'HPC_LAUNCH_MODE': 'existing'}
+    del environment['HPC_GLOBUS_ENDPOINT_ID']
+    nodefile = tmp_path / 'nodefile'
+    nodefile.write_text('node-a.hsn\nnode-b.hsn\n')
+    return {**environment, 'PBS_NODEFILE': str(nodefile), **changes}
+
+
+def test_an_existing_allocation_is_attached_to_without_globus(tmp_path, services):
+    pool_status(mcp_server.create_server(cluster=True, nnodes=2, environ=existing_allocation(tmp_path)))
+
+    kinds = [kind for kind, _ in services.submitted]
+    assert 'executor' not in kinds and 'probe' not in kinds and 'task' not in kinds
+    # Academy hosts the agents in this process, which runs inside the allocation.
+    manager = next(kwargs for kind, kwargs in services.submitted if kind == 'manager')
+    assert manager['executors'] == {'allocation': None}
+    # The cluster agent places science on the allocation's nodes, found once, up front.
+    cluster = next(agent for kind, agent in services.submitted if kind == 'agent')
+    assert cluster.nodes == ['node-a', 'node-b']
+
+
+def test_attaching_outside_an_allocation_fails_before_anything_starts(tmp_path, services):
+    environment = existing_allocation(tmp_path)
+    del environment['PBS_NODEFILE']
+
+    with pytest.raises(RuntimeError, match='not inside an allocation'):
+        mcp_server.create_server(cluster=True, nnodes=2, environ=environment)
+
+    assert services.submitted == []
+
+
+def test_globus_submission_still_launches_through_the_endpoint(tmp_path, services):
+    pool_status(mcp_server.create_server(cluster=True, nnodes=2, environ=hpc_environment(tmp_path, 'polaris')))
+
+    kinds = [kind for kind, _ in services.submitted]
+    assert 'executor' in kinds and 'probe' in kinds
+    cluster = next(agent for kind, agent in services.submitted if kind == 'agent')
+    assert cluster.nodes is None  # found by the worker the endpoint starts, inside its allocation

@@ -27,7 +27,8 @@ The user-authored loam YAML is the sole campaign settings file. Select
 
 | YAML input | Server environment generated internally by loam |
 |---|---|
-| `endpoint_id` | `HPC_GLOBUS_ENDPOINT_ID` |
+| `launch_mode` | `HPC_LAUNCH_MODE`: `globus` (default) or `existing` |
+| `endpoint_id` | `HPC_GLOBUS_ENDPOINT_ID` (Globus submission only) |
 | `pool_size` | `HPC_POOL_SIZE` |
 | `base_dir` | `HPC_BASE_DIR` |
 | `worker_code_dir` | `HPC_LOAM_HOME` |
@@ -101,6 +102,10 @@ MCP harness
   → run_code for cheap single calls; run_batch for campaign work
 
 ```
+### Attaching to an existing allocation
+
+With `launch_mode: existing` the server runs inside an allocation that is already running (the operator starts it from within the job) and nothing is submitted to Globus: Academy hosts the agents in the server's own event loop, and EL places science across the allocation's nodes. The server finds those nodes when it starts, the way `HPC_NODE_DISCOVERY` says (`PBS_NODEFILE`, or `SLURM_JOB_NODELIST`), and fails at once if neither is set, rather than falling back to the one host it is on. Their count must equal `allocation.nodes`. When the allocation is split into roles, `HPC_SCIENCE_NODELIST` (set by whoever splits it, in the scheduler's host notation) names the science share; the rest serve inference. Before starting services in it, `loam.allocation_startup` waits for fresh telemetry showing every one of the System's GPUs on every node (12 on Aurora, 4 on Polaris), and `loam.allocation` checks each process runs in its assigned job, role and host.
+
 The endpoint UUID routes the request; it does not select the queue. The endpoint's accepted user configuration is rendered by its Parsl provider into the scheduler request. In multi-user deployments, record both the manager UUID and the spawned user-endpoint UUID: they are different by design.
 
 ## Endpoint discovery and flex-scaling validation

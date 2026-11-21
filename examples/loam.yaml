@@ -72,6 +72,7 @@ execution:
   # environment (SKILL.md's mapping table) and renders the allocation as
   # HPC_ENDPOINT_CONFIG_JSON. Do not add a second environment file.
   hpc:
+    launch_mode: globus           # or existing: run inside an allocation that is already running
     endpoint_id: d83212d9-5751-4892-a78a-bd60d7232fc2
     campaign_id: campaign-lite-egfr-20261110
     system: aurora                  # selects the EL SystemConfig and ZE_AFFINITY_MASK pinning

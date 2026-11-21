@@ -344,6 +344,7 @@ def test_managed_hpc_yaml_resolves_script_and_generates_canonical_environment(tm
 
     environment = deployment.environment()
     assert environment == {
+        'HPC_LAUNCH_MODE': 'globus',
         'HPC_GLOBUS_ENDPOINT_ID': 'endpoint-uuid',
         'HPC_CAMPAIGN_ID': 'campaign-17',
         'HPC_SYSTEM': 'aurora',
