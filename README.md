@@ -246,6 +246,10 @@ If a campaign is interrupted mid-round, restarting `python -m loam <config.yaml>
    ```
    The resulting whole-pool table (`priority`, `rank_evidence_disagreement`, and `recommended_action`) guides the `reasoner` in writing the next round's `tournament_brief`.
 
+### Saturation Accounting
+
+`loam-saturation JOB --baseline BASELINE_JOB` audits a completed single-allocation job: every allocation attempt's GPU-hours from the scheduler's accounting (requeued boots included), time-weighted GPU busy from the job's telemetry, science-slot occupancy, distinct trials per allocated GPU-hour, and how many hypotheses got a reviewed, completed test. It writes `JOB/saturation-audit.json` and prints the gains over the baseline job and whether the scale-up gates pass. The job's System (`execution.hpc.system` in its campaign config) says how to read allocated time and the per-host GPU telemetry in `campaign/telemetry/*.jsonl`. A System that declares neither (`allocation_accounting`, `gpu_telemetry` in `loam/systems.py`) cannot be audited, and neither Aurora nor Polaris does yet. The node shape is the plan's `gpus_per_node`, else the System's. Samples that don't cover every GPU on the node count as unobserved. The audit never submits or changes jobs.
+
 ---
 
 ## Memory (optional)
@@ -341,6 +345,7 @@ loam/
 ├── steering.py        # Elo + evidence priority scoring across the hypothesis pool
 ├── synthesis.py       # Round synthesis: reduces threads + steering to the next brief within the context
 ├── skills.py          # SKILL.md discovery, prompt catalog, and read_skill helper
+├── saturation/        # Saturation accounting: allocated GPU-hours, GPU busy, reviewed hypothesis counts, scale-up gates (`loam-saturation`)
 └── prompts/           # Role system instructions (validator, code_generator, reviewer, reasoner)
 examples/              # Aurora EGFR binder campaign YAML, goal, campaign rules, redacted Site profiles
 skills/                # Scientific tool skills and managed HPC deployment server

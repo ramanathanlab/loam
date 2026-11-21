@@ -13,6 +13,9 @@ dependencies = [
     "jsonschema",
 ]
 
+[project.scripts]
+loam-saturation = "loam.saturation.__main__:main"
+
 [project.optional-dependencies]
 dev = ["pytest"]
 # execution.mode: hpc only. The local process starts skills/hpc-deployment's
