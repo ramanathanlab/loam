@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from .config import Config, RateLimits, TournamentConfig
+from .jnana_checkpoint import checkpointed_coscientist
 from .rate_limits import jnana_coscientist
 from .schemas import Hypothesis
 
@@ -47,10 +48,12 @@ class Tournament:
 
         from jnana.protognosis.core.coscientist import CoScientist
         periodic = importlib.import_module('jnana.protognosis.periodic_tournament')
-        # Generation and ranking both use this subclass, so their requests pass the shared gate.
+        # Generation and ranking both use this subclass, so their requests pass the shared gate and
+        # their state is checkpointed atomically (a crash leaves the last complete jnana.json to resume).
         # Ranking builds its own CoScientist from periodic's module global, patched for the call only.
-        campaign_scientist = jnana_coscientist(CoScientist, retries=self.model_retries,
-                                               timeout=self.request_timeout, limits=self.rate_limits)
+        campaign_scientist = checkpointed_coscientist(
+            jnana_coscientist(CoScientist, retries=self.model_retries,
+                              timeout=self.request_timeout, limits=self.rate_limits), interval_seconds=5)
 
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
         cs = campaign_scientist(llm_config=self.cfg.generation.jnana(), storage_path=str(self.state_file),

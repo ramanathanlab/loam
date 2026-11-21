@@ -675,7 +675,7 @@ def test_generation_timeout_aborts_before_ranking_or_save(tmp_path, monkeypatch)
 
     class CoScientist:
         def __init__(self, **kwargs):
-            self.memory = SimpleNamespace(save=lambda: calls.append('save'))
+            self.memory = SimpleNamespace(storage_path=None, save=lambda: calls.append('save'))
         def get_all_hypotheses(self):
             return []
 
