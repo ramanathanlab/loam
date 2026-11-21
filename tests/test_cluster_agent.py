@@ -333,3 +333,21 @@ def test_a_batch_resumes_only_under_the_gpu_sharing_it_started_with(tmp_path, mo
 
     with pytest.raises(ValueError, match='different GPU sharing'):
         asyncio.run(unshared.run_batch(batch_id=batch['batch_id']))
+
+
+def test_run_code_under_shared_gpus_takes_no_science_slot_and_sees_no_gpu(tmp_path, monkeypatch):
+    agent, _, _ = shared_gpu_client(tmp_path, monkeypatch, SlotCluster([]))  # no slot to hand out
+    monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '3')  # left over from an earlier task on this worker
+
+    result = asyncio.run(agent.run_code("import os; print(repr(os.environ['CUDA_VISIBLE_DEVICES']))"))
+
+    assert result['stdout'].strip() == "''", result['stderr']
+
+
+@pytest.mark.parametrize('workers', ['0', 'two'])
+def test_cluster_agent_rejects_a_malformed_science_worker_count(tmp_path, workers):
+    values, _ = hpc_config_values(tmp_path)
+    values['execution']['hpc']['system'] = 'jupiter'
+    environment = {**Config.model_validate(values).execution.hpc.environment(), 'HPC_SCIENCE_WORKERS_PER_GPU': workers}
+    with pytest.raises(RuntimeError, match='HPC_SCIENCE_WORKERS_PER_GPU'):
+        hpc_agent.SystemSpec.from_environment(environment)

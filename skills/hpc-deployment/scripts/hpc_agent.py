@@ -355,7 +355,8 @@ class HpcAgent(Agent):
         )
 
 
-# Written by loam.systems.System.environment(); this side can't import loam.
+# Written by loam (loam.systems.System.environment(), and HPCDeployment.environment() for the
+# science workers per GPU); this side can't import loam.
 _SYSTEM_ENV = ("HPC_CPU_IDS", "HPC_GPU_IDS", "HPC_GPU_PIN_VAR", "HPC_NODE_DISCOVERY", "HPC_MPI_FLAVOR",
                "HPC_SCIENCE_WORKERS_PER_GPU")
 
@@ -388,13 +389,16 @@ class SystemSpec:
             raise RuntimeError(f"unsupported HPC_NODE_DISCOVERY {environ['HPC_NODE_DISCOVERY']!r}")
         if environ["HPC_MPI_FLAVOR"] not in _LAUNCHERS:
             raise RuntimeError(f"unsupported HPC_MPI_FLAVOR {environ['HPC_MPI_FLAVOR']!r}")
+        workers = environ["HPC_SCIENCE_WORKERS_PER_GPU"]
+        if not workers.isdigit() or int(workers) < 1:
+            raise RuntimeError(f"HPC_SCIENCE_WORKERS_PER_GPU must be a positive integer, not {workers!r}")
         return cls(
             cpu_ids=tuple(json.loads(environ["HPC_CPU_IDS"])),
             gpu_ids=tuple(json.loads(environ["HPC_GPU_IDS"])),
             gpu_pin_var=environ["HPC_GPU_PIN_VAR"],
             node_discovery=environ["HPC_NODE_DISCOVERY"],
             mpi_flavor=environ["HPC_MPI_FLAVOR"],
-            science_workers_per_gpu=int(environ["HPC_SCIENCE_WORKERS_PER_GPU"]),
+            science_workers_per_gpu=int(workers),
         )
 
     def gpu_sharing(self) -> dict | None:
@@ -592,11 +596,15 @@ class HpcClientAgent(HpcAgent):
             self._el_pool.shutdown(wait=False)
 
     def _create_task(self, payload: str, workdir: str, timeout: float, venv_path: str | None = None):
+        sharing = self.gpu_sharing
         return Task(
             task_id=uuid.uuid4().hex,
             nnodes=1,
             ppn=1,
-            ngpus_per_process=1,
+            # Under shared GPUs, run_code only prepares, polls and harvests: it takes no science
+            # slot and sees no GPU. GPU science goes through run_batch.
+            ngpus_per_process=0 if sharing else 1,
+            env={_GPU_SLOT_VAR: "", sharing["pin_var"]: ""} if sharing else {},
             executable=_run_subprocess,
             args=(payload, workdir or self.base_dir, timeout, venv_path, self.worker_env)
         )

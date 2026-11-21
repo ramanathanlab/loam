@@ -81,7 +81,7 @@ Adding a System means adding a definition there, not editing these scripts.
 In direct mode, request one worker per accelerator in `HPC_GPU_IDS` and pin each
 with a distinct value of `HPC_GPU_PIN_VAR`; `pool_size` is requested nodes ×
 accelerators per node unless the endpoint exposes another count. System-specific
-pinning details live in the per-System references (`references/aurora.md`). In
+pinning details live in the per-System references (`references/aurora.md`, `references/jupiter.md`). In
 cluster mode EL owns accelerator placement and `pool_size` is the configured
 client-agent count, not the accelerator count.
 
