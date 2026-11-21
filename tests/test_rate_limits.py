@@ -184,7 +184,7 @@ def test_tournament_generation_and_ranking_clients_use_the_campaign_gate(tmp_pat
 
     class CoScientist:
         def __init__(self, **kwargs):
-            self.memory = SimpleNamespace(save=lambda: None)
+            self.memory = SimpleNamespace(storage_path=None, save=lambda: None)
             config = SimpleNamespace(provider='openai', base_url='https://tara.test/v1')
             self.llm_configs = SimpleNamespace(get_config_for_agent=lambda *args: config)
         def _get_llm_for_agent(self, agent_type, agent_id):

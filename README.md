@@ -218,6 +218,7 @@ Orchestrator state (`state_dir/`) and agent-accessible files (`<execution.workdi
 ```text
 state_dir/                                # Orchestrator-only records (written atomically)
 ├── jnana.json                            # Jnana hypothesis pool and Elo ratings
+├── jnana-checkpoint-timings.jsonl        # One row per jnana.json checkpoint: reason, duration, size
 ├── ledger.jsonl                          # Reconciled, independently verified claims
 ├── rounds/
 │   └── round-NNN.json                    # Full round record: rankings, threads, steering, brief
@@ -231,7 +232,7 @@ state_dir/                                # Orchestrator-only records (written a
 └── data/                                 # Optional workspace_inputs (local mode only)
 ```
 
-If a campaign is interrupted mid-round, restarting `python -m loam <config.yaml>` resumes cleanly after the highest completed `round-NNN.json`, replacing any partial ledger rows or round entries from the interrupted round.
+If a campaign is interrupted mid-round, restarting `python -m loam <config.yaml>` resumes cleanly after the highest completed `round-NNN.json`, replacing any partial ledger rows or round entries from the interrupted round. Within a round, Jnana's state is checkpointed atomically to `jnana.json` (at most every 5 seconds as hypotheses and matches land, and always at the end of generation), so a crash leaves the last complete checkpoint rather than a truncated file and a restart keeps the hypotheses and Elo ratings it holds. Updates since the last checkpoint can be lost. An interrupted first round generates only the hypotheses still missing from `initial_hypotheses`; a later round's restart generates a fresh `new_per_round` on top of any it had already checkpointed.
 
 ### Independent Review, Reconciliation & Steering
 
