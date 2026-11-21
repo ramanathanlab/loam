@@ -312,6 +312,13 @@ def hpc_config_values(tmp_path):
     return values, script
 
 
+def hpc_environment(tmp_path, system, site_profile=None):
+    """The deployment environment loam generates for `system` from the test HPC config."""
+    values, _ = hpc_config_values(tmp_path)
+    values['execution']['hpc']['system'] = system
+    return Config.model_validate(values, context={'site_profile': site_profile}).execution.hpc.environment()
+
+
 def test_config_requires_positive_top_level_rounds(tmp_path):
     for rounds in (0, -1):
         values = make_cfg(tmp_path).model_dump()
