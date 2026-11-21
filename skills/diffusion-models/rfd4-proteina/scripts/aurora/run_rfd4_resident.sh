@@ -1,9 +1,9 @@
 #!/bin/bash
 # RFD4-Proteina resident-worker launch on Aurora, verified under Loam's
-# run_batch / Ensemble-Launcher path. Uses David Kastner's pinned read-only
-# deployment (frameworks/2026.1.0, Lightning 2.6.6, in-code SingleDeviceStrategy)
+# run_batch / Ensemble-Launcher path. Uses the pinned read-only deployment named
+# by $RFD4_DEPLOYMENT (frameworks/2026.1.0, Lightning 2.6.6, in-code SingleDeviceStrategy)
 # -- NOT the old sitecustomize/Lightning-2.3 wrapper, which DEADLOCKS under the
-# MPI/PALS launcher. Source of truth: RFD4_Aurora_Handoff/ (dkastner, FRAME-IDP).
+# MPI/PALS launcher. Source of truth: the handoff bundled with that deployment.
 #
 # One independent sampler per assigned XPU tile; the tile comes from the
 # EL-assigned ZE_AFFINITY_MASK (fall back to 0). Do NOT distribute one model
@@ -42,7 +42,12 @@ module load frameworks/2026.1.0
 set -u
 
 # ---- pinned read-only deployment (do NOT modify; hashes verified in handoff) ----
-RFD4_SHARE=/lus/flare/projects/FRAME-IDP/dkastner/Projects/IDeA
+# $RFD4_DEPLOYMENT is the deployment the campaign uses -- possibly another user's shared one. It
+# comes from the Site profile's worker_init or the campaign's execution.setup; refuse rather than
+# guess a path.
+: "${RFD4_DEPLOYMENT:?set RFD4_DEPLOYMENT to the pinned RFD4 deployment (Site profile worker_init)}"
+RFD4_SHARE="$RFD4_DEPLOYMENT"
+[[ -d "$RFD4_SHARE" ]] || { echo "RFD4_DEPLOYMENT does not exist: $RFD4_SHARE"; exit 2; }
 RFD4_PYTHON="$RFD4_SHARE/envs/rfd4-xpu-2026.1.0/bin/python"
 RFD4_ADAPTER="$RFD4_SHARE/experiments/pmd_design_20261026T070010Z/source/v34"
 RFD4_ENGINE="$RFD4_SHARE/experiments/aurora_performance_20261023T194443Z/source/rfd4_phase1"

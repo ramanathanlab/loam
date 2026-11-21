@@ -13,7 +13,8 @@ SKILLS = Path(__file__).resolve().parent.parent / 'skills'
 CONVERTED = ['structure-prediction/chai', 'structure-prediction/boltz',
              'structure-prediction/protenix', 'structure-prediction/esmfold2',
              'md-simulation/openmm', 'md-simulation/molecular-simulations',
-             'qm/uma', 'qm/reactra']
+             'qm/uma', 'qm/reactra',
+             'diffusion-models/rfd4-proteina', 'diffusion-models/rfdiffusion3']
 
 
 @pytest.mark.parametrize('skill', CONVERTED)
@@ -42,6 +43,33 @@ def test_a_well_formed_skill_passes(tmp_path):
 def test_system_specific_or_personal_path_in_skill_md_fails(tmp_path, path):
     problems = skills.layout_problems(make_skill(tmp_path, body=f'Run `{path}/bin/tool`. Unsupported elsewhere.\n'))
     assert any(path.split('/')[1] in p for p in problems), problems
+
+
+@pytest.mark.parametrize('path', ['/flare/PROJ/me/software/chai', '/lus/flare/projects/PROJ',
+                                  '/e/project1/PROJ/me', '/Users/someone/tools'])
+def test_personal_path_in_a_bundled_file_fails(tmp_path, path):
+    skill = make_skill(tmp_path)
+    (skill / 'scripts' / 'aurora').mkdir(parents=True)
+    (skill / 'scripts' / 'aurora' / 'run.sh').write_text(f'REPO={path}\n')
+
+    problems = skills.layout_problems(skill)
+
+    assert any('scripts/aurora/run.sh' in p and path.split('/')[1] in p for p in problems), problems
+
+
+def test_compiled_bytecode_beside_a_script_is_not_scanned(tmp_path):
+    skill = make_skill(tmp_path)
+    (skill / 'scripts' / '__pycache__').mkdir(parents=True)
+    (skill / 'scripts' / '__pycache__' / 'run.cpython-312.pyc').write_bytes(b'\x00/flare/PROJ/me\x00')
+
+    assert skills.layout_problems(skill) == []
+
+
+def test_a_system_path_in_a_reference_file_passes(tmp_path):
+    skill = make_skill(tmp_path)
+    (skill / 'references' / 'aurora.md').write_text('export LD_LIBRARY_PATH=/opt/aurora/26.26.0/lib\n')
+
+    assert skills.layout_problems(skill) == []
 
 
 @pytest.mark.parametrize('line', ['#PBS -A MYPROJ', '#SBATCH --account=myproj', '#SBATCH -A myproj',

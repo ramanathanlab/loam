@@ -1,54 +1,34 @@
 ---
 name: rfdiffusion3
-description: Generate protein backbones with RFdiffusion3 (all-atom diffusion) on Aurora Intel XPU — unconditional monomers, binders with hotspots, motif/enzyme scaffolding, symmetric oligomers and partial diffusion, from a JSON spec. Use for backbone/binder generation on Aurora; for the flow-matching alternative see the rfd4-proteina skill.
+description: Generate protein backbones with RFdiffusion3 (all-atom diffusion) from a JSON spec — unconditional monomers, binders with hotspots, motif/enzyme scaffolding, symmetric oligomers and partial diffusion. Use for interactive single-device backbone generation; for backbone generation at width, and for the flow-matching alternative, see the rfd4-proteina skill.
+systems: [aurora]
 ---
 
-# RFdiffusion3 (RFD3) on Aurora (Intel XPU)
+# RFdiffusion3 (RFD3)
 
-> **UNRESOLVED under `run_batch`: rows hang, do not use this for width.**
-> Every row stalls inside `initialize()` right after
-> `foundry.utils.ddp: Intel XPU detected - using XPU accelerator`, then burns its
-> whole `timeout_each`. Measured 2026-11-11 at 48-row width: 46 rows hung with
-> leases held, 2 exited `rc=15` at 142s, no output. `trainer.strategy=xpu_single`
-> (below) removes the MPI *abort* but NOT the stall, so it makes the failure slow
-> and silent instead of fast and loud.
->
-> **For backbone generation at width use the `rfd4-proteina` skill instead.** Its
-> resident-worker route is verified under `run_batch` and produced 48/48 real
-> backbones at ~290s/row on 2026-11-11. Use RFD3 only interactively, on one tile,
-> where a stall is visible and cheap.
+## Before you run it: read the reference file for this System
 
-Install: `/flare/FRAME-IDP/msinclair/software/foundry`. Do not edit it; write outputs elsewhere.
+The install, the environment, device selection, the entrypoint and what is known to work differ per
+System. Read `references/<HPC_SYSTEM>.md` (for example
+`read_skill(name="rfdiffusion3", file="references/aurora.md")`) and follow it; it is authoritative
+over this file for anything System-specific. This skill has a reference file for **aurora** only. It
+is **unsupported** on any other System — the Jupiter port disabled it, and an installed CLI is not
+validated inference — so report the step as blocked rather than adapting Aurora's instructions, and
+use the `rfd4-proteina` skill for executable backbone generation there. Missing prerequisites are
+not a scientific refutation.
 
-## How to run
+Software is found only through Site profile variables: the checkout is under `$LOAM_SOFTWARE_ROOT`
+and checkpoints under `$FOUNDRY_CHECKPOINT_DIRS`. Never edit the checkout; write outputs elsewhere.
 
-Use `scripts/run_rfd3_api.py`. It drives the engine in-process and is the only
-supported entrypoint here.
-
-```python
-import sys; sys.path.insert(0, "<this skill>/scripts")
-from run_rfd3_api import run_design
-
-rec = run_design(spec="/abs/spec.json", out_dir="/abs/out", seed=1234, timesteps=200)
-# rec["ok"] is True only if a structure was written; rec["produced"] lists the CIFs.
-```
-
-or as a command: `python run_rfd3_api.py --spec SPEC.json --out-dir DIR [--seed N]`.
-
-One process per XPU tile. In a `run_batch` row use `gpus=1` and let the row inherit
-its pinned `ZE_AFFINITY_MASK`. Register the row script once with
-`register_tool(..., expects=["*.cif.gz"])` and submit with `tool=<name>`, so a row
-that exits clean without writing a structure is counted as the failure it is.
-
-`run_design` returns `{ok, produced, metrics, error, host, strategy_applied}` and
-appends stage markers to `<out_dir>/rfd3_stages.jsonl`, so a row killed by the
-PBS wall still shows how far it got.
+**Fan-out is a per-System question.** Under loam's `run_batch` the Aurora route is unresolved (see
+the reference file), so RFD3 is for interactive, one-device work until that is fixed. Register a row
+script with `register_tool(..., expects=["*.cif.gz"])` and submit with `tool=<name>`, so a row that
+exits clean without writing a structure is counted as the failure it is.
 
 ## Spec format
 
-Spec maps **name → design configuration**; each top-level key is an independent
-job whose name appears in the output filenames. Run a subset with
-`json_keys_subset=[key1,key2]`.
+The spec maps **name → design configuration**; each top-level key is an independent job whose name
+appears in the output filenames. Run a subset with `json_keys_subset=[key1,key2]`.
 
 ```json
 { "uncond50": { "length": "50" },
@@ -81,7 +61,8 @@ job whose name appears in the output filenames. Run a subset with
   `select_partially_buried`, `select_exposed`, `select_hbond_donor`, `select_hbond_acceptor`,
   `select_hotspots`) accept `true`/`false`, a contig string, or a `residue-range → atoms` dict
   with the shorthands `ALL`, `BKBN` (= `N,CA,C,O`), `TIP` and `""` (nothing).
-- Examples: `$FOUNDRY/models/rfd3/docs/examples/`; full field table: `models/rfd3/docs/input.md`.
+- Examples and the full field table live in the checkout: `models/rfd3/docs/examples/` and
+  `models/rfd3/docs/input.md`.
 
 ### Residue ranges must come from the structure
 
@@ -117,16 +98,12 @@ Total designs = `n_batches × diffusion_batch_size`.
 | `timesteps` | 200 | denoising steps; lower = faster/rougher |
 | `ckpt` | `rfd3` | registry alias or absolute path |
 | `seed` | 0 | reproducibility |
-| `strategy` | `xpu_single` | single-device; see Must-know |
+| `strategy` | per System | the Lightning strategy the engine is forced onto |
 
 Other engine knobs (`inference_sampler.step_scale` 1.5 — higher = less diverse, more
 designable; `gamma_0` 0.6 — lower = more designable; `low_memory_mode` for OOM;
 `dump_trajectories`, large) are set in `build_engine`. Defaults live in
 `models/rfd3/configs/inference_engine/rfdiffusion3.yaml` and `.../base.yaml`.
-
-Checkpoints in `/flare/FRAME-IDP/msinclair/software/checkpoints`: `rfd3_latest.ckpt`
-(alias `rfd3`, default), `rfd3na_1190.ckpt` (nucleic acids),
-`rf3_foundry_01_24_latest_remapped.ckpt` (RF3 prediction), `proteinmpnn_v_48_020.pt`.
 
 ## Outputs
 
@@ -141,24 +118,14 @@ sanity check on a design — and echoes the full spec including the *sampled* co
 variable-length runs are reproducible. CIF B-factors carry the sequence head's
 per-token confidence.
 
+`run_design` returns `{ok, produced, metrics, error, host, strategy_applied}` and appends stage
+markers to `<out_dir>/rfd3_stages.jsonl`, so a row killed by the scheduler's wall still shows how
+far it got. `ok` is true only when a structure was written: a clean exit that produced nothing is
+not a success.
+
 ## Must-know
 
-- **What is known about the hang.** Nothing in the inference path overrides
-  `trainer.strategy`, so it inherits DDP from the checkpoint's training config and
-  `fabric.launch()` initialises MPI. Inside a `run_batch` row (already under EL's
-  `MpiExecLauncher`) that MPI job cannot route over the Slingshot NIC, and the row
-  died with `MPIDI_OFI_handle_cq_error ... nic=cxi0: No route to host`, rc=143.
-  `run_rfd3_api.build_engine` sets `trainer.strategy=xpu_single` in the only window
-  where it is reachable — after construction, before `initialize()` — and that DOES
-  remove the `cxi0` abort. It does NOT make the row complete: it then stalls in
-  `initialize()` indefinitely. Dropping `PMI_*`/`PMIX_*`/`PALS_*` from the row
-  environment also removes the abort and also does not fix the stall.
-  Still unidentified: what `initialize()` blocks on once distributed init is
-  sidestepped — checkpoint load off Lustre and a distributed barrier are both
-  consistent with the evidence, and nobody has instrumented it. Resolve that before
-  trusting RFD3 at width again.
-- **Do not swap frameworks modules.** The venv is built against `frameworks/2026.1.0`,
-  the node default, and takes torch/lightning from it via
-  `include-system-site-packages`. Precision stays `bf16-mixed`.
-- **`set -u` + Lmod don't mix.** A wrapper with `set -euo pipefail` dies in Lmod's init;
-  use `set -eo pipefail`.
+- A generated backbone is not a validated design. Read the metrics JSON, then sequence the backbone
+  (`proteinmpnn`) and refold it (`chai`, `boltz`) before claiming anything about a design.
+- Do not swap the framework or Python environment the checkout's venv was built against; precision
+  and kernels follow from it.

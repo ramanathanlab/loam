@@ -1,0 +1,21 @@
+{
+  "purpose": "Frozen validated stage recipes; the installations they drive are unchanged.",
+  "ported_from": "the moeen branch, skills/diffusion-models/rfd4-proteina/references/intact-egfr-energy/",
+  "files": [
+    {
+      "source": "skills/diffusion-models/rfd4-proteina-jupiter/references/funnel-scripts/cofold.py (moeen branch)",
+      "copy": "skills/diffusion-models/rfd4-proteina/scripts/jupiter/intact-egfr-energy/cofold.py",
+      "sha256": "d56d8b49ee77f7351f9ff68883d87d11093cf34a4080a86b64d22acd41e85629",
+      "local_changes": "Take the tool environment from the Site profile's software root instead of sourcing a System-specific environment script.",
+      "source_sha256": "894cd0743d3f636136dda9916a8d4b4017b54552392e1dc057671d449b46d82b"
+    },
+    {
+      "source": "skills/diffusion-models/rfd4-proteina-jupiter/references/funnel-scripts/mmgbsa.py (moeen branch)",
+      "copy": "skills/diffusion-models/rfd4-proteina/scripts/jupiter/intact-egfr-energy/mmgbsa.py",
+      "sha256": "1869fe966e4e0bcdc318e8e7b980bfa2b8769f557e42666829655de38a4bf9ea",
+      "source_sha256": "03e45e4cdf670a1e8677f58066c5be682338f0ebb3d96d895af92a68d105429c",
+      "local_changes": "Verify zero covalent bonds between sequence-defined target and binder residue ranges; report explicit partition because Amber can lose chain labels."
+    }
+  ],
+  "note": "Each `sha256` is this checkout's copy; `source_sha256`, where present, is the digest the campaign ran. Hash the copy you actually stage before quoting a digest in a row."
+}
