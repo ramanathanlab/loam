@@ -1,4 +1,4 @@
-"""Local FastMCP server: GCExecutor → PBSPro allocation → pinned Academy agents.
+"""Local FastMCP server: GCExecutor → the scheduler's allocation → pinned Academy agents.
 
 HPC_LAUNCH_MODE=existing instead attaches to an allocation that is already
 running: the server runs inside it, hosts the agents in its own event loop, and
@@ -138,7 +138,7 @@ class Settings:
 
 
 # The GC executor is the only allocation launcher. Passing the user endpoint
-# config here causes the endpoint's Parsl PBSProProvider to render the PBS job.
+# config here causes the endpoint's Parsl provider to render the batch job.
 def make_executor(settings: Settings) -> Executor:
     return Executor(endpoint_id=settings.endpoint_id, user_endpoint_config=settings.endpoint_config)
 
@@ -179,7 +179,7 @@ async def await_endpoint_ready(settings: Settings) -> None:
         except asyncio.CancelledError:
             raise
         except (asyncio.TimeoutError, TimeoutError):
-            # Accepted and queued (no worker yet); the queue wait belongs to PBS.
+            # Accepted and queued (no worker yet); the queue wait belongs to the scheduler.
             logger.info("user endpoint accepted work on attempt %d (task queued)", attempt)
             return
         except Exception as exc:  # noqa: BLE001 - re-raised below unless cold-start
@@ -271,12 +271,13 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
             named = {"executor": executor, "name": f"{settings.campaign_id}-agent"}
 
             async def launch_one() -> Handle:
-                return await launch(HpcAgent(settings.campaign_id, settings.base_dir, settings.inspect_roots, worker_env), **named)
+                return await launch(HpcAgent(settings.campaign_id, settings.base_dir, settings.inspect_roots, worker_env,
+                                             spec.gpu_pin_var), **named)
 
             async def launch_client(generation_ckpt_dir: str) -> Handle:
                 return await launch(HpcClientAgent(
                     settings.campaign_id, settings.base_dir, generation_ckpt_dir, settings.inspect_roots, worker_env,
-                    spec.gpu_sharing()), **named)
+                    spec.gpu_sharing(), spec.gpu_pin_var), **named)
 
             async def launch_cluster(generation_ckpt_dir: str) -> Handle:
                 return await launch(HpcClusterAgent(settings.base_dir, generation_ckpt_dir, nnodes, spec, nodes=nodes))
@@ -365,8 +366,8 @@ def create_server(cluster: bool = False, ckpt_dir: str | None = None,
                 inputs file are copied when the batch is created, so later edits do not
                 affect it. gpus is the number of GPUs/tiles EACH ROW gets, not the batch:
                 rows run side by side on all free tiles, so a script that uses one device
-                (e.g. xpu:0 or cuda:0) needs gpus=1 and 12 rows then fill a 12-tile node at
-                once. Raise it only when a single row itself spans several devices.
+                needs gpus=1, and a node with N GPUs then runs N rows at once. Raise it
+                only when a single row itself spans several devices.
                 Returns at once with a batch_id: poll batch_status, never wait.
                 To resume, pass only batch_id; finished runs are skipped. Use this rather
                 than run_code for more than a handful of runs.

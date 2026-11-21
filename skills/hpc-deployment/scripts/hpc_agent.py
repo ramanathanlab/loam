@@ -85,9 +85,9 @@ if _EXCHANGE_NO_PROXY:
 _TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
-def _device_pin() -> str:
-    """The accelerator this process is pinned to: ZE_AFFINITY_MASK (Intel) or CUDA_VISIBLE_DEVICES."""
-    return os.environ.get("ZE_AFFINITY_MASK", os.environ.get("CUDA_VISIBLE_DEVICES", ""))
+def _device_pin(pin_var: str | None) -> str:
+    """The accelerator this process is pinned to, read from the System's pin variable (SystemSpec.gpu_pin_var)."""
+    return os.environ.get(pin_var, "") if pin_var else ""
 
 
 def _python(venv_path: str | None) -> str:
@@ -266,7 +266,7 @@ _harden_exchange_send()
 
 class HpcAgent(Agent):
     def __init__(self, campaign_id: str, base_dir: str, inspect_roots: list[str] | None = None,
-                 worker_env: Mapping[str, str] | None = None) -> None:
+                 worker_env: Mapping[str, str] | None = None, gpu_pin_var: str | None = None) -> None:
         super().__init__()
         self._inflight = 0
         self.campaign_id = campaign_id
@@ -274,6 +274,8 @@ class HpcAgent(Agent):
         self.inspect_roots = inspect_roots or []
         # Set for every script this agent runs; see worker_environment().
         self.worker_env = dict(worker_env or {})
+        # The System's pin variable (SystemSpec.gpu_pin_var): HPC_* reaches the server, not this worker.
+        self.gpu_pin_var = gpu_pin_var
 
     @action
     async def probe(self) -> dict[str, str]:
@@ -281,7 +283,7 @@ class HpcAgent(Agent):
         return {
             "pid": str(os.getpid()),
             "campaign_id": self.campaign_id,
-            "device_pin": _device_pin(),
+            "device_pin": _device_pin(self.gpu_pin_var),
         }
 
     @action
@@ -343,7 +345,7 @@ class HpcAgent(Agent):
         return await asyncio.to_thread(
             _register_tool, name, script_path, params, description, example, defaults,
             call, venv_path, skip_smoke, labels, expects, self.base_dir, self.inspect_roots,
-            self.worker_env,
+            self.worker_env, self.gpu_pin_var,
         )
 
     @action
@@ -584,7 +586,7 @@ class HpcClusterAgent(Agent):
         """Health check"""
         return {
             "pid": str(os.getpid()),
-            "device_pin": _device_pin(),
+            "device_pin": _device_pin(self.spec.gpu_pin_var),
         }
 
     async def agent_on_shutdown(self):
@@ -594,8 +596,9 @@ class HpcClusterAgent(Agent):
 
 class HpcClientAgent(HpcAgent):
     def __init__(self, campaign_id: str, base_dir: str, ckpt_dir: str, inspect_roots: list[str] | None = None,
-                 worker_env: Mapping[str, str] | None = None, gpu_sharing: Mapping | None = None) -> None:
-        super().__init__(campaign_id, base_dir, inspect_roots, worker_env)
+                 worker_env: Mapping[str, str] | None = None, gpu_sharing: Mapping | None = None,
+                 gpu_pin_var: str | None = None) -> None:
+        super().__init__(campaign_id, base_dir, inspect_roots, worker_env, gpu_pin_var)
         # SystemSpec.gpu_sharing(): set when several science workers share each GPU.
         self.gpu_sharing = dict(gpu_sharing) if gpu_sharing else None
         self.ckpt_dir = str(Path(self.base_dir, ckpt_dir))
@@ -703,7 +706,7 @@ class HpcClientAgent(HpcAgent):
                 executable=_run_one,
                 args=(script, row, run_dir, timeout_each, venv_path, call, order,
                       entry["script_sha256"], expects, self.worker_env,
-                      self.gpu_sharing if gpus else None),
+                      self.gpu_sharing if gpus else None, self.gpu_pin_var),
             )
             for run_id, row, run_dir in todo
         ]
@@ -1210,7 +1213,7 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
              venv_path: str | None = None, call: str = "json",
              order: list[str] | None = None, sha: str | None = None,
              expects: list[str] | None = None, worker_env: Mapping[str, str] | None = None,
-             gpu_sharing: Mapping | None = None) -> dict:
+             gpu_sharing: Mapping | None = None, gpu_pin_var: str | None = None) -> dict:
     """Run one batch row inside an EL task; only a small status dict returns.
 
     The script is invoked as `python script input.json` (call="json") or
@@ -1259,7 +1262,7 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
         "attempt": attempt_n,
         "seconds": round(time.time() - started, 1),
         "host": socket.gethostname(),
-        "gpu": _device_pin(),
+        "gpu": _device_pin(gpu_pin_var),
     }
     # L3: enforce the tool's declared output contract on an otherwise-clean exit.
     if returncode == 0 and expects:
@@ -1704,7 +1707,7 @@ def _register_tool(name: str, script_path: str, params: dict, description: str,
                    example: dict, defaults: dict | None, call: str, venv_path: str | None,
                    skip_smoke: bool, labels: dict | None, expects: list[str] | None,
                    base_dir: str, inspect_roots: list[str],
-                   worker_env: Mapping[str, str] | None = None) -> dict:
+                   worker_env: Mapping[str, str] | None = None, gpu_pin_var: str | None = None) -> dict:
     """Freeze a script as the next version of a tool and smoke-test it.
 
     Registering the same script with the same params, defaults and call style
@@ -1755,7 +1758,8 @@ def _register_tool(name: str, script_path: str, params: dict, description: str,
     if not skip_smoke:
         smoke_status = _run_one(str(version_dir / "script.py"), example,
                                 str(version_dir / "smoke"), _SMOKE_TIMEOUT, venv_path,
-                                call, list(params), expects=expects, worker_env=worker_env)
+                                call, list(params), expects=expects, worker_env=worker_env,
+                                gpu_pin_var=gpu_pin_var)
         if not _run_succeeded(smoke_status):
             tail = (version_dir / "smoke" / "stderr.txt").read_text(errors="replace")
             missing = smoke_status.get("missing_outputs")
