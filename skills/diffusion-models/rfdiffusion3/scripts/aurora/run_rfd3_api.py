@@ -50,7 +50,18 @@ from typing import Any
 # foundry/utils/xpu/single_xpu_strategy.py (strategy_name = "xpu_single").
 STRATEGY = os.environ.get("RFD3_STRATEGY", "xpu_single")
 DEFAULT_CKPT = "rfd3"
-CHECKPOINT_DIRS = "/flare/FRAME-IDP/msinclair/software/checkpoints"
+
+
+def checkpoint_dirs() -> str:
+    """Where the checkpoint registry looks, from the Site profile -- never a baked-in path."""
+    configured = os.environ.get("FOUNDRY_CHECKPOINT_DIRS")
+    if configured:
+        return configured
+    software = os.environ.get("LOAM_SOFTWARE_ROOT")
+    if not software:
+        raise SystemExit("Set FOUNDRY_CHECKPOINT_DIRS, or LOAM_SOFTWARE_ROOT so that "
+                         "$LOAM_SOFTWARE_ROOT/checkpoints can be used.")
+    return str(Path(software) / "checkpoints")
 
 
 def _stage(path: Path | None, stage: str, **kw: Any) -> None:
@@ -80,7 +91,7 @@ def build_engine(
     """Construct the engine as the CLI would, then force a single-device strategy."""
     from rfd3.engine import RFD3InferenceEngine
 
-    os.environ.setdefault("FOUNDRY_CHECKPOINT_DIRS", CHECKPOINT_DIRS)
+    os.environ["FOUNDRY_CHECKPOINT_DIRS"] = checkpoint_dirs()
     engine = RFD3InferenceEngine(
         skip_existing=False,
         json_keys_subset=None,

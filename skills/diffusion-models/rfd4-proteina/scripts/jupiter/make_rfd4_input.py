@@ -1,38 +1,9 @@
 #!/usr/bin/env python
-"""Build a VALID RFD4-Proteina annotated-CIF input from a real folded target.
+"""Build a validated RFD4 annotated CIF from real Jupiter target coordinates.
 
-Why this exists
----------------
-RFD4-Proteina conditions binder generation on an *annotated* mmCIF: the target
-structure plus AtomWorks `StandardAnnotation` columns (C_CRDGRP / C_SEQ / C_HOT /
-C_IDX ...) and the required `pdbx_PDB_model_num` field. Hand-writing that CIF is
-error-prone -- the common failure is emitting a file with no `pdbx_PDB_model_num`
-column and/or placeholder zero coordinates, which makes RFD4's loader die with
-`biotite.DeserializationError: Failed to deserialize category 'atom_site'` and
-produce zero backbones.
-
-Instead of hand-authoring, this wrapper drives RFD4's OWN builder,
-`write_condition_spec_cif`, from a parameterized PPI condition spec. The builder
-parses the real target coordinates, emits the correct columns, inserts the de-novo
-binder chain via the contig, and runs RFD4's pre-save validation. The output is an
-annotated CIF that `rfd4-generate inputs=<file>` accepts.
-
-Run it on the Aurora worker in RFD4's venv (it imports `rfproteina`):
-
-    /flare/FRAME-IDP/msinclair/software/RFD4-Proteina/.venv/bin/python make_rfd4_input.py \
-        --target /path/to/folded_target.cif \
-        --target-chain A \
-        --hotspots 55,100,150,500,550,600 \
-        --binder-len 55 \
-        --out /path/to/input_annotated.cif
-
-Then generate:
-
-    rfd4-generate inputs=/path/to/input_annotated.cif out_dir=... num_designs=...
-
-Validate separately with the shipped checker:
-
-    bash .../skills/rfd4-proteina-annotated-cif/scripts/check_annotated_cif.sh <out.cif>
+Run with $LOAM_SOFTWARE_ROOT/RFD4-Proteina/.venv/bin/python; the Site profile's
+worker_init has already exported the runtime environment. Author residue numbers are used for
+--target-range and --hotspots; hotspots accept comma-separated ids or ranges.
 """
 from __future__ import annotations
 
@@ -42,49 +13,31 @@ from pathlib import Path
 
 
 def _chain_span(target_path: str, chain: str) -> str:
-    """Return "<start>-<end>" for `chain`'s observed residues in a CIF or PDB.
-
-    Reads author-assigned residue ids, which is what a contig token refers to.
-    Falls back to raising rather than guessing: a wrong span silently designs
-    against the wrong part of the target.
-    """
-    import gzip
-
-    path = Path(target_path)
-    opener = gzip.open if path.suffix == ".gz" else open
-    ids: list[int] = []
-    with opener(path, "rt", errors="replace") as handle:
-        lines = handle.read().splitlines()
-
-    if any(line.startswith(("_atom_site.", "data_")) for line in lines[:400]):
-        # mmCIF: resolve columns from the loop header rather than assuming order.
-        cols: dict[str, int] = {}
-        for line in lines:
-            if line.startswith("_atom_site."):
-                cols[line.strip().split(".", 1)[1]] = len(cols)
-            elif cols and line.startswith("ATOM"):
-                f = line.split()
-                ch = cols.get("auth_asym_id", cols.get("label_asym_id"))
-                rs = cols.get("auth_seq_id", cols.get("label_seq_id"))
-                if ch is None or rs is None or len(f) <= max(ch, rs):
-                    continue
-                if f[ch] == chain and f[rs].lstrip("-").isdigit():
-                    ids.append(int(f[rs]))
-            elif cols and line.startswith("#") and ids:
-                break
-    else:
-        # PDB: fixed columns 22 (chain) and 23-26 (resSeq).
-        for line in lines:
-            if line.startswith("ATOM") and len(line) >= 26:
-                if line[21] == chain and line[22:26].strip().lstrip("-").isdigit():
-                    ids.append(int(line[22:26]))
-
+    """Read observed protein author residue ids with the installed CIF parser."""
+    import gemmi
+    structure = gemmi.read_structure(target_path)
+    ids = [res.seqid.num for ch in structure[0] if ch.name == chain
+           for res in ch if res.het_flag == 'A']
     if not ids:
-        raise SystemExit(
-            f"make_rfd4_input: chain {chain!r} has no parsable residues in "
-            f"{target_path}; pass --target-range explicitly."
-        )
+        raise SystemExit(f"Target chain {chain!r} has no protein residues in {target_path}")
     return f"{min(ids)}-{max(ids)}"
+
+
+def parse_hotspots(value: str) -> list[int]:
+    """Expand author-residue ranges without inventing or silently dropping ids."""
+    result = []
+    for part in value.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        if '-' in part[1:]:
+            lo, hi = part.split('-', 1)
+            if int(lo) > int(hi):
+                raise ValueError(f'Reversed hotspot range: {part}')
+            result.extend(range(int(lo), int(hi) + 1))
+        else:
+            result.append(int(part))
+    return list(dict.fromkeys(result))
 
 
 def build_spec(
@@ -106,21 +59,7 @@ def build_spec(
     C_SEQ    = the whole target chain sequence is known (only the binder is designed).
     C_HOT    = atom-level hotspots the binder should engage.
     """
-    # A contig's preserved-segment token is chain letters FOLLOWED BY digits
-    # ("A1-645", "A300"); rfproteina's _parse_preserved_segment rejects a bare
-    # chain id. So --target-range's documented "Default: whole chain" could not
-    # work: it emitted "A" and rfd4 died 87s in with
-    #   ValueError: Malformed preserved-segment token: 'A'
-    # on all 48 rows of run 16. Derive the chain's real span instead, so the
-    # default means what it says.
-    # Always reconcile the range against the structure. Agents supply ranges
-    # from UniProt (e.g. the 1-645 ectodomain) that overrun the deposited
-    # model, and rfd4 then refuses the whole run:
-    #   ValueError: Preserved segment 'A1-645' runs outside chain A, whose
-    #               residues are 1-622.
-    # That killed all 48 rows of a run 16 batch. Clamping keeps the experiment
-    # alive with a correct contig instead of failing 20s in; the adjustment is
-    # printed so the narrowing is visible in the row's log.
+    # Explicit ranges must match the observed author numbering.
     actual = _chain_span(target_path, target_chain)
     lo, hi = (int(x) for x in actual.split("-"))
     if target_range:
@@ -140,8 +79,7 @@ def build_spec(
                 f"overlap chain {target_chain}, which spans {actual}."
             )
         if (c_lo, c_hi) != (w_lo, w_hi):
-            print(f"    note: --target-range {target_range} clamped to "
-                  f"{c_lo}-{c_hi} (chain {target_chain} spans {actual})")
+            raise SystemExit(f"Target range {target_range} exceeds observed chain {target_chain} span {actual}; verify the residue mapping")
         target_range = f"{c_lo}-{c_hi}"
     else:
         target_range = actual
@@ -171,6 +109,60 @@ def build_spec(
     return spec
 
 
+def input_report(target_path: Path, out_path: Path, chain_id: str, spec: dict, hotspots: list[int]) -> dict:
+    """Describe native annotations and map renumbered residues by preserved CAs."""
+    import hashlib
+    import json
+    import math
+    import gemmi
+    source = gemmi.read_structure(str(target_path))[0]
+    built = gemmi.read_structure(str(out_path))[0]
+    source_by_ca = {}
+    for chain in source:
+        if chain.name != chain_id:
+            continue
+        for residue in chain:
+            ca = residue.find_atom('CA', '*')
+            if ca:
+                key = tuple(round(x, 3) for x in (ca.pos.x, ca.pos.y, ca.pos.z))
+                source_by_ca[key] = residue.seqid.num
+    mapping = []
+    for chain in built:
+        if chain.name != chain_id:
+            continue
+        for residue in chain:
+            ca = residue.find_atom('CA', '*')
+            if ca:
+                key = tuple(round(x, 3) for x in (ca.pos.x, ca.pos.y, ca.pos.z))
+                mapping.append({'source_author_residue': source_by_ca.get(key),
+                                'input_residue': residue.seqid.num})
+    atoms = gemmi.cif.read(str(out_path)).sole_block().get_mmcif_category('_atom_site.')
+    fields = {'C_SEQ': 'condition_sequence_1_residue',
+              'C_HOT': 'condition_hotspot_1_atom',
+              'C_CRDGRP': 'condition_CoordinateGroup_1_atom'}
+    actual_hotspots = sorted({int(atoms['auth_seq_id'][i])
+        for i, value in enumerate(atoms.get(fields['C_HOT'], []))
+        if str(value).lower() in {'true', '1'} and atoms['auth_asym_id'][i] == chain_id})
+    source_to_input = {item['source_author_residue']: item['input_residue'] for item in mapping}
+    expected = sorted({source_to_input[h] for h in hotspots if h in source_to_input})
+    if hotspots and (len(expected) != len(set(hotspots)) or expected != actual_hotspots):
+        raise ValueError(f'Hotspot annotation mismatch: expected {hotspots} mapped to {expected}, observed {actual_hotspots}')
+    report = {'input': str(out_path), 'source': str(target_path),
+              'source_sha256': hashlib.sha256(target_path.read_bytes()).hexdigest(),
+              'input_sha256': hashlib.sha256(out_path.read_bytes()).hexdigest(),
+              'contig': spec['contig'], 'conditions': fields,
+              'native_condition_columns_present': {name: field in atoms for name, field in fields.items()},
+              'residue_counts_per_chain': {chain.name: len(chain) for chain in built},
+              'target_residue_mapping': mapping, 'source_hotspot_residues': hotspots,
+              'input_hotspot_residues': actual_hotspots,
+              'target_coordinates_finite': all(math.isfinite(v) for chain in built if chain.name == chain_id
+                  for residue in chain for atom in residue for v in (atom.pos.x, atom.pos.y, atom.pos.z)),
+              'note': 'RFD4 renumbers target residues; the expandable binder sentinel is not a generated binder.'}
+    sidecar = out_path.with_suffix('.report.json')
+    sidecar.write_text(json.dumps(report, indent=2) + '\n')
+    return {**report, 'report_path': str(sidecar)}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--target", required=True,
@@ -186,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="Binder length, fixed ('55') or a sampled range ('50-120'). Length is set HERE, not by a CLI flag.")
     ap.add_argument("--out", required=True, help="Output annotated CIF path.")
     ap.add_argument("--example-id", default="denovo_binder", help="Label used in the builder's summary.")
+    ap.add_argument("--validate", action="store_true", help="Explicitly request validation (enabled by default).")
     ap.add_argument("--no-validate", action="store_true", help="Skip RFD4 pre-save validation (NOT recommended).")
     args = ap.parse_args(argv)
 
@@ -195,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     out_path = Path(args.out).resolve()
 
-    hotspots = [int(x) for x in args.hotspots.split(",") if x.strip()]
+    hotspots = parse_hotspots(args.hotspots)
 
     # Import RFD4's builder. `rfproteina.conditions` must be imported to register
     # the RFProteina condition classes before building, or columns get dropped.
@@ -205,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # pragma: no cover
         print(
             "ERROR: could not import rfproteina. Run this with RFD4's venv, e.g.\n"
-            "  /flare/FRAME-IDP/msinclair/software/RFD4-Proteina/.venv/bin/python "
+            "  $LOAM_SOFTWARE_ROOT/RFD4-Proteina/.venv/bin/python "
             f"{Path(__file__).name} ...\n"
             f"(import error: {exc})",
             file=sys.stderr,
@@ -230,9 +223,12 @@ def main(argv: list[str] | None = None) -> int:
         spec_dir=target_path.parent,
         validate=not args.no_validate,
     )
+    report = input_report(target_path, Path(written), args.target_chain, spec, hotspots)
+    import json
+    print("INPUT_REPORT=" + json.dumps(report))
     print(f"OK: wrote annotated CIF -> {written}")
     print(f"    binder contig: {spec['contig']}  hotspots: {hotspots or 'none'}")
-    print(f"    feed to: rfd4-generate inputs={written} out_dir=<dir> num_designs=<n>")
+    print(f"    feed to: rfd4-generate inputs={written} out_dir=<dir> num_replicates=<n> recycle_strategy=medium/front_loaded")
     return 0
 
 

@@ -38,3 +38,7 @@ worker_init: |
   module load frameworks
   # Only if campaigns use the reactra skill: the native Reactra deployment it runs.
   # export REACTRA_DEPLOYMENT=/flare/YOUR_ALLOCATION/YOUR_USER/reactra-deployment
+  # Only if campaigns use the rfd4-proteina skill: the pinned RFD4 deployment it runs against.
+  # export RFD4_DEPLOYMENT=/flare/YOUR_ALLOCATION/ANOTHER_USER/rfd4-deployment
+  # Only if campaigns use the rfdiffusion3 skill: where its checkpoints live.
+  # export FOUNDRY_CHECKPOINT_DIRS=$LOAM_SOFTWARE_ROOT/checkpoints

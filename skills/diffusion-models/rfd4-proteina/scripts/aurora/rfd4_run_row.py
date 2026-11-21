@@ -3,7 +3,7 @@
 
 run_batch executes `python rfd4_run_row.py input.json` once per JSONL row, in a
 per-row folder, with this row pinned to ONE XPU tile via ZE_AFFINITY_MASK. We
-write a 1-sample plan and invoke run_rfd4_resident.sh (the pinned Kastner stack),
+write a 1-sample plan and invoke run_rfd4_resident.sh (the pinned deployment),
 which inherits the tile, loads the model, and generates the backbone. Output
 (CIF + receipt) lands under <row>/rfd4_run/predictions/. This runs under the
 exact MPI/PALS launcher that deadlocked the old rfd4-generate path; the resident
@@ -16,7 +16,7 @@ Input row (JSONL): {"id","input","seed"[,"seconds"][,"wrapper"]}
   wrapper : optional override for the resident wrapper path
 
 Wrapper resolution order: row["wrapper"] -> $RFD4_WRAPPER ->
-  $HPC_LOAM_HOME/skills/diffusion-models/rfd4-proteina/scripts/run_rfd4_resident.sh
+  $HPC_LOAM_HOME/skills/diffusion-models/rfd4-proteina/scripts/aurora/run_rfd4_resident.sh
 """
 import json
 import os
@@ -31,7 +31,7 @@ def resolve_wrapper(row):
     w = row.get("wrapper") or os.environ.get("RFD4_WRAPPER")
     if not w and os.environ.get("HPC_LOAM_HOME"):
         w = os.path.join(os.environ["HPC_LOAM_HOME"],
-                         "skills/diffusion-models/rfd4-proteina/scripts/run_rfd4_resident.sh")
+                         "skills/diffusion-models/rfd4-proteina/scripts/aurora/run_rfd4_resident.sh")
     if not w or not os.path.isfile(w):
         sys.exit(f"[rfd4_run_row] resident wrapper not found (row.wrapper / $RFD4_WRAPPER / "
                  f"$HPC_LOAM_HOME): got {w!r}")

@@ -15,8 +15,8 @@ environment, a runnable example, its arguments and its outputs.
 | Structure Prediction | [chai](structure-prediction/chai/SKILL.md) | chai-lab | Use `scripts/chai_xpu.py`; the stock `chai` CLI is broken |
 | Structure Prediction | [esmfold2](structure-prediction/esmfold2/SKILL.md) | esm | Forked transformers first on `PYTHONPATH`; slow cold start |
 | Structure Prediction | [protenix](structure-prediction/protenix/SKILL.md) | Protenix | Prepend old oneAPI lib to `LD_LIBRARY_PATH`; torch kernels |
-| Diffusion Models | [rfdiffusion3](diffusion-models/rfdiffusion3/SKILL.md) | foundry | `frameworks/2026.1.0`; `+` prefix on every `specification.*` |
-| Diffusion Models | [rfd4-proteina](diffusion-models/rfd4-proteina/SKILL.md) | (pinned dkastner deployment) | Resident worker per tile; annotated-CIF inputs |
+| Diffusion Models | [rfdiffusion3](diffusion-models/rfdiffusion3/SKILL.md) | foundry | Aurora only, interactive: rows hang under `run_batch` |
+| Diffusion Models | [rfd4-proteina](diffusion-models/rfd4-proteina/SKILL.md) | (`$RFD4_DEPLOYMENT`, or RFD4-Proteina) | Resident worker per accelerator; annotated-CIF inputs |
 | Inverse Folding | [proteinmpnn](inverse-folding/proteinmpnn/SKILL.md) | ProteinMPNN | IPEX shim on `PYTHONPATH`; `--device` ignored |
 | MD Simulation | [molecular-simulations](md-simulation/molecular-simulations/SKILL.md) | molecular-simulations | `platform='OpenCL'`; set `AMBERHOME`; no ligand builders |
 | MD Simulation | [openmm](md-simulation/openmm/SKILL.md) | openmm-sycl | GPU platform is named `OpenCL` |
@@ -46,7 +46,9 @@ The agent reads `references/$HPC_SYSTEM.md`; a skill with no reference file for 
 unsupported there and its `SKILL.md` says so. Paths go only through Site profile variables such as
 `$LOAM_SOFTWARE_ROOT`. `tests/test_skill_layout.py` enforces this for the converted skills (so far
 the structure-prediction family: boltz, chai, esmfold2, protenix; the md-simulation family:
-molecular-simulations, openmm; and the qm family: uma, and reactra, which is Aurora-only).
+molecular-simulations, openmm; the qm family: uma, and reactra, which is Aurora-only; and the
+diffusion-models family: rfd4-proteina, and rfdiffusion3, which is Aurora-only). It also fails when
+any file a converted skill bundles holds a personal path.
 
 Skills not yet converted are one Aurora `SKILL.md` with a fixed shape — install path, environment, a
 runnable example, arguments, outputs, and a short must-know list — plus a `scripts/` directory
