@@ -314,3 +314,16 @@ def test_core_pool_does_not_reach_for_a_system_specific_backend():
     source = open(loam.inference_pool.__file__).read()
     assert 'sys.path' not in source
     assert 'nemotron' not in source.lower()
+
+
+def test_resolver_returning_something_else_leaves_replica_not_ready(tmp_path):
+    async def run():
+        (tmp_path / 'pool.json').write_text(json.dumps({'model': MODEL, 'backends': [{'id': 'a'}]}))
+        pool = InferencePool(tmp_path, resolver=lambda entry: {'base_url': 'http://127.0.0.1:1/v1'})
+        await pool.start(token='test-client')
+        try:
+            assert pool.status()['backends'][0]['ready'] is False
+            assert pool.status()['backends'][0]['readiness_error'] == 'TypeError'
+        finally:
+            await pool.close()
+    asyncio.run(run())

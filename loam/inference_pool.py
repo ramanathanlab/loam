@@ -13,11 +13,14 @@ replicas can be added or retired while the pool runs:
      "max_inflight_per_backend": 16,
      "backends": [{"id": "r0", "base_url": "http://host:8000/v1", "token_file": "r0.token"}]}
 
-`model` is the served model name every request must name; `checkpoint` (optional) is the weights
-every replica must report serving. Neither can change while the pool runs. How a backend entry
-becomes a replica endpoint is the resolver's job: the default reads `base_url` and credentials
-from the entry itself, and an optional backend (e.g. self-hosted replicas that must prove they
-belong to this campaign) passes its own resolver. Nothing here knows which System it runs on.
+`model` is the served model name every request must name; `checkpoint` (optional) names the
+weights, and a replica whose endpoint reports other weights (or none) is never sent requests.
+Neither can change while the pool runs. How a backend entry becomes a replica endpoint is the
+resolver's job. The default takes `base_url`, credentials and `checkpoint` from the entry itself,
+so for it the checkpoint is what the operator declares, not something the replica proves. An
+optional backend (e.g. self-hosted replicas that must prove they belong to this campaign and which
+weights they loaded) passes its own resolver, closing over the pool root if it needs files there.
+Nothing here knows which System it runs on.
 
 The pool appends one timing record per attempt to `pool-request-timings.jsonl`, without prompt,
 completion or credential contents, and never passes a backend's own error text back to callers.
@@ -134,6 +137,10 @@ def safe_error(status, payload):
                       'code': 'context_length_exceeded', 'param': 'input_tokens'}}
 
 
+def unavailable(message):
+    return web.json_response({'error': {'message': message}}, status=503, headers={'Retry-After': '5'})
+
+
 class StreamAccounting:
     """Usage, finish reason and time to first token, read from an SSE stream as it passes."""
 
@@ -221,6 +228,8 @@ class InferencePool:
                 # A resolver may read files or load TLS material; with many replicas that must not
                 # stall the event loop while it serves campaign requests.
                 endpoint = await asyncio.to_thread(self.resolver, entry)
+                if not isinstance(endpoint, ReplicaEndpoint):
+                    raise TypeError('A resolver must return a ReplicaEndpoint')
                 if self.checkpoint is not None and endpoint.checkpoint != self.checkpoint:
                     raise RuntimeError('Replica serves a different checkpoint')
             except RESOLVE_ERRORS as error:
@@ -308,7 +317,8 @@ class InferencePool:
         with (self.root / 'pool-request-timings.jsonl').open('a') as stream:
             stream.write(json.dumps(item, separators=(',', ':')) + '\n')
 
-    def another_available(self, excluded):
+    def another_available(self, excluded=()):
+        """Whether any replica outside `excluded` could take a request now."""
         now = time.time()
         return any(b.available(now) and b.name not in excluded for b in self.backends.values())
 
@@ -393,8 +403,7 @@ class InferencePool:
                         client_request.transport.close()
                     return reply
                 if backend is None or not self.another_available(excluded):
-                    return web.json_response({'error': {'message': 'Inference pool unavailable'}},
-                                             status=503, headers={'Retry-After': '5'})
+                    return unavailable('Inference pool unavailable')
             finally:
                 usage = accounting.usage
                 record.update(finished_at=time.time(), seconds=time.time() - started,
@@ -408,8 +417,7 @@ class InferencePool:
                 self.record(record)
                 if backend:
                     await self.release(backend, estimate)
-        return web.json_response({'error': {'message': 'Inference replicas failed'}},
-                                 status=503, headers={'Retry-After': '5'})
+        return unavailable('Inference replicas failed')
 
     def status(self):
         now = time.time()
@@ -433,9 +441,8 @@ class InferencePool:
             return await handler(request)
 
         async def models(request):
-            if not self.another_available(()):
-                return web.json_response({'error': {'message': 'Inference replicas still warming'}},
-                                         status=503, headers={'Retry-After': '5'})
+            if not self.another_available():
+                return unavailable('Inference replicas still warming')
             return web.json_response({'object': 'list', 'data': [
                 {'id': self.model, 'object': 'model', 'owned_by': 'loam', 'root': self.checkpoint or self.model}]})
 
@@ -524,12 +531,13 @@ def write_json_atomic(path: Path, data):
     os.replace(temporary, path)
 
 
-async def serve(root: Path, host: str, port: int):
+async def serve(root: Path, host: str, port: int, *, resolver: Resolver | None = None):
+    """Run the pool until SIGINT/SIGTERM. A backend with its own resolver serves through this too."""
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
-    pool = InferencePool(root)
+    pool = InferencePool(root, resolver=resolver)
     await pool.start()
     runner = web.AppRunner(pool.app(), access_log=None)
     await runner.setup()
