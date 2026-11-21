@@ -1,13 +1,13 @@
-# Aurora Tool Skills
+# Tool skills
 
-Claude Code skills for the Aurora tool stack (Intel Data Center GPU Max 1550, FLAT mode, 12 tiles).
-Software lives in `/flare/FRAME-IDP/msinclair/software/<dir>`. Never write into those directories;
-write outputs elsewhere.
-
-Pin one GPU tile with `ZE_AFFINITY_MASK=<int>` — a plain integer (`4.0` hides the device).
+Claude Code skills for loam's scientific tool stack. Each skill's install lives under the Site
+profile's software root, `$LOAM_SOFTWARE_ROOT/<dir>` (the table's "Software dir"). Never write into
+those directories; write outputs to the campaign workspace.
 
 Read [TOOL_SELECTION.md](TOOL_SELECTION.md) to pick a tool, then that tool's `SKILL.md` for the
-environment, a runnable example, its arguments and its outputs.
+method, and `references/$HPC_SYSTEM.md` for the environment, device selection and launch commands on
+the System you are on. On Aurora (Intel Data Center GPU Max 1550, FLAT mode, 12 tiles) that means
+pinning one tile with `ZE_AFFINITY_MASK=<int>` — a plain integer (`4.0` hides the device).
 
 | Category | Skill | Software dir | Key note |
 |---|---|---|---|
@@ -17,13 +17,16 @@ environment, a runnable example, its arguments and its outputs.
 | Structure Prediction | [protenix](structure-prediction/protenix/SKILL.md) | Protenix | Prepend old oneAPI lib to `LD_LIBRARY_PATH`; torch kernels |
 | Diffusion Models | [rfdiffusion3](diffusion-models/rfdiffusion3/SKILL.md) | foundry | Aurora only, interactive: rows hang under `run_batch` |
 | Diffusion Models | [rfd4-proteina](diffusion-models/rfd4-proteina/SKILL.md) | (`$RFD4_DEPLOYMENT`, or RFD4-Proteina) | Resident worker per accelerator; annotated-CIF inputs |
-| Inverse Folding | [proteinmpnn](inverse-folding/proteinmpnn/SKILL.md) | ProteinMPNN | IPEX shim on `PYTHONPATH`; `--device` ignored |
+| Inverse Folding | [proteinmpnn](inverse-folding/proteinmpnn/SKILL.md) | ProteinMPNN (Aurora), proteinmpnn (Jupiter) | `--device` ignored; Aurora needs the IPEX shim on `PYTHONPATH` |
 | MD Simulation | [molecular-simulations](md-simulation/molecular-simulations/SKILL.md) | molecular-simulations | `platform='OpenCL'`; set `AMBERHOME`; no ligand builders |
 | MD Simulation | [openmm](md-simulation/openmm/SKILL.md) | openmm-sycl | GPU platform is named `OpenCL` |
 | QM | [uma](qm/uma/SKILL.md) | fairchem-xpu | Use `batch` or Nitro-XPU; `default` gives wrong forces |
 | QM | [reactra](qm/reactra/SKILL.md) | reactra | Needs the `mech-format` overlay; full runs ~1 h |
-| Analysis | [pyrosetta](analysis/pyrosetta/SKILL.md) | pyrosetta_energy | CPU only; use `init(extra_options=...)` |
-| Foundation LMs | [genslm-esm](foundation-language-models/genslm-esm/SKILL.md) | genslm-esm-sae | Use `venvs/aurora`; `venvs/ci` is CUDA-only |
+| Analysis | [pyrosetta](analysis/pyrosetta/SKILL.md) | pyrosetta_energy | Aurora only, CPU only; use `init(extra_options=...)` |
+| Foundation LMs | [genslm-esm](foundation-language-models/genslm-esm/SKILL.md) | genslm-esm-sae | Aurora only; use `venvs/aurora`, `venvs/ci` is CUDA-only |
+| Literature | [fetch-literature](fetch-literature/SKILL.md) | (none) | `systems: all`; `requests` against PubMed and Europe PMC |
+| RAG | [rag-build-index](rag-build-index/SKILL.md) | (none) | `systems: all`; faiss + an Arrow dataset in one row order |
+| RAG | [rag-query](rag-query/SKILL.md) | (none) | `systems: all`; needs an endpoint from `LOAM_INFERENCE_JSON` |
 
 `rfdiffusion3` and `rfd4-proteina` are both working backbone generators — see TOOL_SELECTION.md for
 which to pick.
@@ -47,12 +50,17 @@ unsupported there and its `SKILL.md` says so. Paths go only through Site profile
 `$LOAM_SOFTWARE_ROOT`. `tests/test_skill_layout.py` enforces this for the converted skills (so far
 the structure-prediction family: boltz, chai, esmfold2, protenix; the md-simulation family:
 molecular-simulations, openmm; the qm family: uma, and reactra, which is Aurora-only; and the
-diffusion-models family: rfd4-proteina, and rfdiffusion3, which is Aurora-only). It also fails when
-any file a converted skill bundles holds a personal path.
+diffusion-models family: rfd4-proteina, and rfdiffusion3, which is Aurora-only; inverse-folding:
+proteinmpnn; analysis: pyrosetta, and foundation-language-models: genslm-esm, both Aurora-only; and
+fetch-literature, rag-build-index and rag-query, which claim `systems: all`). It also fails when any
+file a converted skill bundles holds a personal path.
 
-Skills not yet converted are one Aurora `SKILL.md` with a fixed shape — install path, environment, a
-runnable example, arguments, outputs, and a short must-know list — plus a `scripts/` directory
-holding a minimal execution script (and any launcher or shim the tool genuinely needs).
+A skill that runs the same way everywhere claims `systems: all` instead of naming Systems: it has no
+reference file (and may not ship one), and takes its interpreter, caches, network and inference
+endpoints from the Site profile rather than from a System.
+
+Every tool skill in the table above is now converted. `hpc-deployment`, which is not a tool skill,
+still has its own shape; #62 widens the check to it.
 
 ## Recommended permanent fixes (software dirs were left untouched)
 

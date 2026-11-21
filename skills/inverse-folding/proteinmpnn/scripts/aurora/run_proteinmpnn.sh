@@ -2,7 +2,7 @@
 # Minimal ProteinMPNN sequence design on Aurora (one XPU tile).
 # Usage: run_proteinmpnn.sh <input.pdb> <out_dir> [tile=8] [extra protein_mpnn_run.py args...]
 set -eo pipefail
-MPNN=/flare/FRAME-IDP/msinclair/software/ProteinMPNN
+MPNN=${LOAM_SOFTWARE_ROOT:?set LOAM_SOFTWARE_ROOT}/ProteinMPNN
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PDB=$1; OUT=$2; TILE=${3:-8}; shift 3 2>/dev/null || shift $#
 

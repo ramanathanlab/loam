@@ -7,6 +7,7 @@ description: >-
   Use before you can semantically search or RAG-query a corpus; produces the
   faiss.index + dataset/ store the rag-query skill reads. Needs faiss, datasets,
   and sentence-transformers; CPU is fine.
+systems: all
 ---
 
 # RAG: build index (faiss + datasets + sentence-transformers)
@@ -21,7 +22,16 @@ exact (no approximation) and fine up to hundreds of thousands of records.
 
 This is a **self-contained, instruction-only skill**. There is no wrapper script
 and no project dependency — you (the agent) write and run the indexer yourself
-over faiss + sentence-transformers. NEVER import bindify.
+over faiss + sentence-transformers.
+
+## It does not depend on the System
+
+faiss, datasets and sentence-transformers on CPU are the whole stack, so this skill claims
+`systems: all`: there is no reference file, and nothing here is specific to a System. Use the
+interpreter the campaign gives you (a tool venv under `$LOAM_SOFTWARE_ROOT` if the Site profile
+provides one), and take `HF_HOME` and network access from the Site profile's `worker_init`. The
+encoder must already be in that cache before an offline run: download it beforehand, and report a
+missing model as a blocker rather than substituting another encoder.
 
 ## When to use it
 
@@ -99,7 +109,12 @@ print(f"indexed {len(records)} records -> {OUT_DIR}")
 ## Notes
 
 - Keep vector order and record order identical; retrieval maps a FAISS row index
-  straight back to a dataset row.
+  straight back to a dataset row. Reload both and verify one retrieval before
+  calling the store built.
+- Record the encoder identity and revision, the dimension, the normalization and
+  the document IDs with their source provenance. An import, or an index of
+  randomly generated vectors, is not a pass; synthetic fixture records are an
+  engineering test, never campaign evidence.
 - Deciding what corpus to index, how to clean/chunk the text, and which metadata
   fields to keep is your job as the agent. This skill only builds the store.
 - Upstream: gather the corpus with the fetch-literature skill. Downstream: query

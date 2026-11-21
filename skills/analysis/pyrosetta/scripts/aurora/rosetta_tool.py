@@ -2,7 +2,7 @@
 """Small PyRosetta CLI: score / perres / relax / interface.
 
 Run with the pyrosetta_energy venv:
-  PY=/flare/FRAME-IDP/msinclair/software/pyrosetta_energy/.venv/bin/python
+  PY=$LOAM_SOFTWARE_ROOT/pyrosetta_energy/.venv/bin/python
   $PY rosetta_tool.py score     in.pdb [--json out.json]
   $PY rosetta_tool.py perres    in.pdb --csv perres.csv
   $PY rosetta_tool.py relax     in.pdb --out relaxed.pdb [--rounds 1] [--max-iter 200] [--constrain]

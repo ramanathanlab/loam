@@ -1,15 +1,15 @@
 #!/bin/bash
-# Template adapted from /flare/FRAME-IDP/msinclair/software/pyrosetta_energy/scripts/submit_top100_energy.pbs
-# Usage: qsub -v TOP_DIR=/path/with/leaderboard_and_pdbs,WORKERS=96 submit_energy.pbs
+# PBS template for the install's batch scorer (CPU only).
+# Usage: qsub -A <account> -q <queue> -v TOP_DIR=/path/with/leaderboard_and_pdbs,WORKERS=96 submit_energy.pbs
+# The account and queue are your Site profile's allocation.account and allocation.queue: read them
+# from the profile and pass them here. This template deliberately hard-codes neither.
 #PBS -N rosetta_energy
-#PBS -A FRAME-IDP
-#PBS -q debug
 #PBS -l select=1:ncpus=208
 #PBS -l walltime=00:45:00
 #PBS -l filesystems=flare:home
 #PBS -j oe
 set -euo pipefail
-REPO=/flare/FRAME-IDP/msinclair/software/pyrosetta_energy
+REPO=${LOAM_SOFTWARE_ROOT:?set LOAM_SOFTWARE_ROOT}/pyrosetta_energy
 : "${TOP_DIR:?set TOP_DIR}"; WORKERS=${WORKERS:-96}
 OUT_DIR="$TOP_DIR/rosetta_energy"; mkdir -p "$OUT_DIR"
 export TMPDIR=/tmp
