@@ -70,7 +70,7 @@ avoids assuming the optional Nitro fast path is available. Stage it into a fresh
 run it with this tool's Python through `run_batch`:
 
 ```bash
-"$PY" smoke-workload.py --out <fresh-absolute-directory> --software "$LOAM_SOFTWARE_ROOT"
+"$PY" smoke-workload.py --out <fresh-absolute-directory>
 ```
 
 Then inspect `result.json` and `energy-forces.json`. It verifies installation plumbing and
