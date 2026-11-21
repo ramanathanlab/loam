@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 loam-saturation = "loam.saturation.__main__:main"
+loam-inference-pool = "loam.inference_pool:main"
 
 [project.optional-dependencies]
 dev = ["pytest"]
@@ -36,6 +37,8 @@ hpc = ["fastmcp", "globus-compute-sdk", "academy-py", "ensemble-launcher"]
 # hindsight-api-slim[all] pulls torch/sentence-transformers onto the laptop.
 # Pinned exactly: loam sets Hindsight's HINDSIGHT_API_* env vars, which are
 # not a stable interface across versions.
+# `loam-inference-pool`: routes OpenAI-compatible requests across replicas (loam/inference_pool.py).
+inference-pool = ["aiohttp>=3.9"]
 memory = ["hindsight-api-slim[embedded-db]==1.2.3", "hindsight-client==1.2.3"]
 
 [build-system]
