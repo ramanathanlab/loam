@@ -45,7 +45,8 @@ A skill is being converted, one family at a time, to a System-neutral layout (se
 The agent reads `references/$HPC_SYSTEM.md`; a skill with no reference file for a System is
 unsupported there and its `SKILL.md` says so. Paths go only through Site profile variables such as
 `$LOAM_SOFTWARE_ROOT`. `tests/test_skill_layout.py` enforces this for the converted skills (so far
-the structure-prediction family: boltz, chai, esmfold2, protenix).
+the structure-prediction family: boltz, chai, esmfold2, protenix; and the md-simulation family:
+molecular-simulations, openmm).
 
 Skills not yet converted are one Aurora `SKILL.md` with a fixed shape — install path, environment, a
 runnable example, arguments, outputs, and a short must-know list — plus a `scripts/` directory

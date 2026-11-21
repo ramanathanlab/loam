@@ -11,7 +11,8 @@ from loam import skills
 
 SKILLS = Path(__file__).resolve().parent.parent / 'skills'
 CONVERTED = ['structure-prediction/chai', 'structure-prediction/boltz',
-             'structure-prediction/protenix', 'structure-prediction/esmfold2']
+             'structure-prediction/protenix', 'structure-prediction/esmfold2',
+             'md-simulation/openmm', 'md-simulation/molecular-simulations']
 
 
 @pytest.mark.parametrize('skill', CONVERTED)
