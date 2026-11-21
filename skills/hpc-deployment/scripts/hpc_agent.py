@@ -356,7 +356,12 @@ class HpcAgent(Agent):
 
 
 # Written by loam.systems.System.environment(); this side can't import loam.
-_SYSTEM_ENV = ("HPC_CPU_IDS", "HPC_GPU_IDS", "HPC_GPU_PIN_VAR", "HPC_NODE_DISCOVERY", "HPC_MPI_FLAVOR")
+_SYSTEM_ENV = ("HPC_CPU_IDS", "HPC_GPU_IDS", "HPC_GPU_PIN_VAR", "HPC_NODE_DISCOVERY", "HPC_MPI_FLAVOR",
+               "HPC_SCIENCE_WORKERS_PER_GPU")
+
+# With several science workers per GPU, EL schedules this many logical slots per GPU and
+# pins each row to one through this variable; the row maps its slot back to a GPU.
+_GPU_SLOT_VAR = "LOAM_EL_GPU_SLOTS"
 
 
 @dataclass(frozen=True)
@@ -371,6 +376,7 @@ class SystemSpec:
     gpu_pin_var: str
     node_discovery: str
     mpi_flavor: str
+    science_workers_per_gpu: int = 1
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str]) -> SystemSpec:
@@ -380,16 +386,35 @@ class SystemSpec:
                                "loam generates these from execution.hpc.system")
         if environ["HPC_NODE_DISCOVERY"] not in _NODE_DISCOVERY:
             raise RuntimeError(f"unsupported HPC_NODE_DISCOVERY {environ['HPC_NODE_DISCOVERY']!r}")
+        if environ["HPC_MPI_FLAVOR"] not in _LAUNCHERS:
+            raise RuntimeError(f"unsupported HPC_MPI_FLAVOR {environ['HPC_MPI_FLAVOR']!r}")
         return cls(
             cpu_ids=tuple(json.loads(environ["HPC_CPU_IDS"])),
             gpu_ids=tuple(json.loads(environ["HPC_GPU_IDS"])),
             gpu_pin_var=environ["HPC_GPU_PIN_VAR"],
             node_discovery=environ["HPC_NODE_DISCOVERY"],
             mpi_flavor=environ["HPC_MPI_FLAVOR"],
+            science_workers_per_gpu=int(environ["HPC_SCIENCE_WORKERS_PER_GPU"]),
         )
 
+    def gpu_sharing(self) -> dict | None:
+        """What a batch row needs to map its science slot to a GPU; None when each GPU runs one worker."""
+        if self.science_workers_per_gpu == 1:
+            return None
+        return {"pin_var": self.gpu_pin_var, "gpu_ids": list(self.gpu_ids),
+                "workers_per_gpu": self.science_workers_per_gpu}
 
-def _pbs_nodefile_nodes(environ: Mapping[str, str]) -> list[str]:
+
+def _pin_shared_gpu(sharing: Mapping) -> None:
+    """Pin this row to the GPU its science slot is on, as EL would pin it to a whole GPU."""
+    slots = os.environ.get(_GPU_SLOT_VAR, "").split(",")
+    gpu_ids, capacity = sharing["gpu_ids"], len(sharing["gpu_ids"]) * sharing["workers_per_gpu"]
+    if len(slots) != 1 or not slots[0].isdigit() or not 0 <= int(slots[0]) < capacity:
+        raise ValueError(f"a shared-GPU row needs exactly one science slot in [0,{capacity})")
+    os.environ[sharing["pin_var"]] = str(gpu_ids[int(slots[0]) % len(gpu_ids)])
+
+
+def _pbs_nodefile_nodes(environ: Mapping[str, str], expected: int) -> list[str]:
     """Short hostnames from the PBS node file, or this host outside an allocation (as EL's get_nodes)."""
     nodefile = environ.get("PBS_NODEFILE")
     lines = Path(nodefile).read_text().splitlines() if nodefile else []
@@ -397,12 +422,56 @@ def _pbs_nodefile_nodes(environ: Mapping[str, str]) -> list[str]:
     return nodes or [socket.gethostname()]
 
 
-_NODE_DISCOVERY = {"pbs-nodefile": _pbs_nodefile_nodes}
+def _slurm_nodelist_nodes(environ: Mapping[str, str], expected: int) -> list[str]:
+    """The allocation's hosts from Slurm's node list (EL's own discovery reads only PBS)."""
+    nodelist = environ.get("SLURM_JOB_NODELIST") or environ.get("SLURM_NODELIST")
+    if not nodelist:
+        if expected > 1:
+            raise RuntimeError("a multi-node cluster on Slurm needs SLURM_JOB_NODELIST")
+        return [socket.gethostname()]
+    hostnames = subprocess.run(["scontrol", "show", "hostnames", nodelist],
+                               capture_output=True, text=True, check=True, timeout=30).stdout
+    nodes = list(dict.fromkeys(line.strip() for line in hostnames.splitlines() if line.strip()))
+    if len(nodes) != expected:
+        raise RuntimeError(f"the Slurm allocation has {len(nodes)} hosts; requested {expected}")
+    return nodes
 
 
-def discover_nodes(method: str, environ: Mapping[str, str]) -> list[str]:
-    """The allocation's nodes, found the way the System says to."""
-    return _NODE_DISCOVERY[method](environ)
+_NODE_DISCOVERY = {"pbs-nodefile": _pbs_nodefile_nodes, "slurm-nodelist": _slurm_nodelist_nodes}
+
+
+def discover_nodes(method: str, environ: Mapping[str, str], expected: int = 1) -> list[str]:
+    """The allocation's `expected` nodes, found the way the System says to."""
+    return _NODE_DISCOVERY[method](environ, expected)
+
+
+def _mpich_launcher(spec: SystemSpec, nnodes: int) -> dict:
+    return {"child_executor_name": "async_mpi", "mpi_config": MPIConfig(flavor="mpich")}
+
+
+# Every srun step, EL's node-local copy steps included (they leave out extra_launcher_flags),
+# shares the allocation the endpoint already holds.
+_SRUN_OVERLAP = Path(__file__).with_name("srun_overlap.sh")
+
+
+def _srun_overlap_launcher(spec: SystemSpec, nnodes: int) -> dict:
+    return {
+        # One node needs no launcher at all.
+        "child_executor_name": "async_processpool" if nnodes <= 1 else "async_mpi",
+        "mpi_config": MPIConfig(
+            flavor="srun",
+            launcher=str(_SRUN_OVERLAP.resolve()),
+            hosts_flag="--nodelist",   # EL picks the nodes, so srun must be told them
+            hostfile_flag="--nodefile",
+            cpu_bind_method="none",    # EL's "list:" binding is not valid for srun
+            extra_launcher_flags=[f"--gpus-per-node={len(spec.gpu_ids)}", "--gpu-bind=none"],
+        ),
+        # EL's one-shot child launch splits hostnames at '-' (jpbo-012 -> jpbo); one at a time keeps them whole.
+        "sequential_child_launch": True,
+    }
+
+
+_LAUNCHERS = {"mpich": _mpich_launcher, "srun-overlap": _srun_overlap_launcher}
 
 
 def worker_environment(environ: Mapping[str, str]) -> dict[str, str]:
@@ -429,23 +498,25 @@ class HpcClusterAgent(Agent):
         super().__init__()
         self.ckpt_dir = str(Path(base_dir, ckpt_dir))
         self.spec = spec
+        self.nnodes = nnodes
+        # Shared GPUs: EL schedules logical slots, which each row maps back to a GPU (_pin_shared_gpu).
+        shared = spec.science_workers_per_gpu > 1
+        gpus = list(range(len(spec.gpu_ids) * spec.science_workers_per_gpu)) if shared else list(spec.gpu_ids)
         self.system_config = SystemConfig(
-            name="loam", ncpus=len(spec.cpu_ids), ngpus=len(spec.gpu_ids),
-            cpus=list(spec.cpu_ids), gpus=list(spec.gpu_ids),
+            name="loam", ncpus=len(spec.cpu_ids), ngpus=len(gpus), cpus=list(spec.cpu_ids), gpus=gpus,
         )
         self.launcher_config = LauncherConfig(
-            child_executor_name="async_mpi",
+            **_LAUNCHERS[spec.mpi_flavor](spec, nnodes),
             task_executor_name=task_executor_name or ["async_processpool"],
             cluster=True,
             checkpoint_dir=self.ckpt_dir,
             task_flush_interval=0.5,
             result_flush_interval=0.5,
-            gpu_selector=spec.gpu_pin_var,
+            gpu_selector=_GPU_SLOT_VAR if shared else spec.gpu_pin_var,
             master_logs=True,
             children_scheduler_policy="fixed_leafs_children_policy",
             policy_config=PolicyConfig(nlevels=2, leaf_nodes=nnodes),
             log_dir=str(Path(base_dir, "logs")),
-            mpi_config=MPIConfig(flavor=spec.mpi_flavor),
         )
         self._el = None
 
@@ -458,7 +529,7 @@ class HpcClusterAgent(Agent):
             el = EnsembleLauncher(ensemble_file={},
                                   system_config=self.system_config,
                                   launcher_config=self.launcher_config,
-                                  Nodes=discover_nodes(self.spec.node_discovery, os.environ))
+                                  Nodes=discover_nodes(self.spec.node_discovery, os.environ, self.nnodes))
             el.start()
             return el
 
@@ -479,8 +550,10 @@ class HpcClusterAgent(Agent):
 
 class HpcClientAgent(HpcAgent):
     def __init__(self, campaign_id: str, base_dir: str, ckpt_dir: str, inspect_roots: list[str] | None = None,
-                 worker_env: Mapping[str, str] | None = None) -> None:
+                 worker_env: Mapping[str, str] | None = None, gpu_sharing: Mapping | None = None) -> None:
         super().__init__(campaign_id, base_dir, inspect_roots, worker_env)
+        # SystemSpec.gpu_sharing(): set when several science workers share each GPU.
+        self.gpu_sharing = dict(gpu_sharing) if gpu_sharing else None
         self.ckpt_dir = str(Path(self.base_dir, ckpt_dir))
         self._client = None
         # Holds each batch's futures so they stay referenced. Progress is read
@@ -560,6 +633,7 @@ class HpcClientAgent(HpcAgent):
         entry, script, todo = await asyncio.to_thread(
             _prepare_batch, script_path, inputs_path, batch_id, labels,
             timeout_each, gpus, venv_path, self.base_dir, self.inspect_roots, tool, tool_version,
+            science_workers_per_gpu=self.gpu_sharing["workers_per_gpu"] if self.gpu_sharing else 1,
         )
         batch_id = entry["batch_id"]
         # Use the frozen run parameters, not this call's args; .get falls back
@@ -576,9 +650,12 @@ class HpcClientAgent(HpcAgent):
                 nnodes=1,
                 ppn=1,
                 ngpus_per_process=gpus,
+                # Under shared GPUs, a zero-GPU row must not inherit an earlier row's slot or GPU.
+                env={_GPU_SLOT_VAR: "", self.gpu_sharing["pin_var"]: ""} if self.gpu_sharing and gpus == 0 else {},
                 executable=_run_one,
                 args=(script, row, run_dir, timeout_each, venv_path, call, order,
-                      entry["script_sha256"], expects, self.worker_env),
+                      entry["script_sha256"], expects, self.worker_env,
+                      self.gpu_sharing if gpus else None),
             )
             for run_id, row, run_dir in todo
         ]
@@ -1084,7 +1161,8 @@ def _promote_outputs(attempt: Path, folder: Path) -> None:
 def _run_one(script: str, row: dict, run_dir: str, timeout: float,
              venv_path: str | None = None, call: str = "json",
              order: list[str] | None = None, sha: str | None = None,
-             expects: list[str] | None = None, worker_env: Mapping[str, str] | None = None) -> dict:
+             expects: list[str] | None = None, worker_env: Mapping[str, str] | None = None,
+             gpu_sharing: Mapping | None = None) -> dict:
     """Run one batch row inside an EL task; only a small status dict returns.
 
     The script is invoked as `python script input.json` (call="json") or
@@ -1098,6 +1176,8 @@ def _run_one(script: str, row: dict, run_dir: str, timeout: float,
     producing them is recorded as a failure (L3). `done` is written last, so it
     means "finished".
     """
+    if gpu_sharing:
+        _pin_shared_gpu(gpu_sharing)
     folder = Path(run_dir)
     folder.mkdir(parents=True, exist_ok=True)
     # C3: claim the folder before touching anything. If a live task already owns
@@ -1195,7 +1275,8 @@ def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: s
                    labels: dict | None, timeout_each: float, gpus: float,
                    venv_path: str | None, base_dir: str, inspect_roots: list[str],
                    tool: str | None = None,
-                   tool_version: int | None = None) -> tuple[dict, str, list]:
+                   tool_version: int | None = None, *,
+                   science_workers_per_gpu: int = 1) -> tuple[dict, str, list]:
     """Create or resume a batch on disk and list the runs still to submit.
 
     New: validate, freeze copies of script (or the tool's script) and inputs,
@@ -1208,11 +1289,15 @@ def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: s
     registry.mkdir(parents=True, exist_ok=True)
     batch_id = _check_id(batch_id or f"b-{uuid.uuid4().hex[:12]}", "batch_id")
     labels = _clean_labels(labels)
+    if science_workers_per_gpu > 1 and gpus not in (0, 1):
+        raise ValueError("shared science GPUs take only zero-GPU rows and one-device science rows")
     entry_path = registry / f"{batch_id}.json"
     batch_dir = root / batch_id
 
     if entry_path.exists():
         entry = json.loads(entry_path.read_text())
+        if entry.get("science_workers_per_gpu", 1) != science_workers_per_gpu:
+            raise ValueError("cannot resume a batch under a different GPU sharing policy")
         existing_labels = entry.get("labels") or {}
         for key in ("plan_id", "hypothesis_id"):
             if labels.get(key) and labels[key] != existing_labels.get(key):
@@ -1314,6 +1399,7 @@ def _prepare_batch(script_path: str | None, inputs_path: str | None, batch_id: s
             "timeout_each": timeout_each,
             "gpus": gpus,
             "venv_path": venv_path,  # H4: frozen so a resume keeps the interpreter
+            "science_workers_per_gpu": science_workers_per_gpu,
         }
         if spec:
             entry.update(tool=spec["tool"], tool_version=spec["version"],

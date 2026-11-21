@@ -164,7 +164,7 @@ def test_profile_paths_must_be_absolute(tmp_path, config_home):
 EXAMPLES = Path(__file__).resolve().parents[1] / 'examples'
 
 
-@pytest.mark.parametrize('system', ['aurora', 'polaris'])
+@pytest.mark.parametrize('system', ['aurora', 'polaris', 'jupiter'])
 def test_the_example_profiles_load(tmp_path, config_home, system):
     shutil.copy(EXAMPLES / 'site-profiles' / f'{system}.yaml', config_home_profile(config_home, 'mine'))
     config = write_config(tmp_path, site_profile='mine', drop=('account',))
@@ -187,7 +187,7 @@ def test_the_example_campaign_takes_its_account_from_the_site_profile(config_hom
 def test_committed_examples_hold_no_personal_paths_or_allocations():
     offending = [f'{path.relative_to(EXAMPLES)}: {marker}'
                  for path in EXAMPLES.rglob('*') if path.is_file()
-                 for marker in ('/flare/FRAME-IDP', '/Users/', 'FRAME-IDP')
+                 for marker in ('/flare/FRAME-IDP', '/Users/', 'FRAME-IDP', 'deepwing', 'booster', '/e/project1')
                  if marker in path.read_text(errors='ignore')]
     assert offending == []
 
