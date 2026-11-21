@@ -32,7 +32,7 @@ The user must obtain access to the model on Hugging Face, then log in interactiv
 with the same `HF_HOME` the workers use (the one the Site profile's `worker_init` sets):
 
 ```bash
-export HF_HOME="${LOAM_CACHE_ROOT:-$LOAM_SOFTWARE_ROOT/.hf-cache}"
+export HF_HOME="${HF_HOME:-${LOAM_CACHE_ROOT:-$LOAM_SOFTWARE_ROOT/.hf-cache}}"   # as worker_init sets it
 umask 077
 "$LOAM_SOFTWARE_ROOT/fairchem/.venv/bin/hf" auth login
 ```

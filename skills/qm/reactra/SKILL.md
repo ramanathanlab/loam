@@ -12,9 +12,8 @@ The checkout, control and native interpreters, the mech-format overlay, the depl
 the launch details differ per System. Read `references/<HPC_SYSTEM>.md` (for example
 `read_skill(name="reactra", file="references/aurora.md")`) and follow it; it is authoritative over
 this file for anything System-specific. This skill has a reference file for **aurora** only. It is
-**unsupported** on any other System, including Jupiter, where no Reactra or mech-format runtime is
-installed: report the step as blocked rather than adapting Aurora's instructions. Missing
-prerequisites are not a scientific refutation.
+**unsupported** on any other System: report the step as blocked rather than adapting Aurora's
+instructions. Missing prerequisites are not a scientific refutation.
 
 Software is found only through Site profile variables: the checkout is under `$LOAM_SOFTWARE_ROOT`.
 Never edit the checkout; write outputs to a directory you own.

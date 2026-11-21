@@ -74,7 +74,7 @@ calc = FAIRChemCalculator(predictor, task_name="omol")
 - The first Nitro-XPU call JIT-compiles Intel Triton kernels (~25–50 s); later calls are ms-scale.
 - Compiled/merged paths auto-fall back when the composition changes ("Compositions differ from
   merged model … Falling back"). Results after the fallback are fine, but the compile time is wasted.
-- `UnknownCheckpointError` / HF 401 / gated errors mean `FAIRCHEM_CACHE_DIR` is wrong or
+- On Aurora, checkpoint errors (see `SKILL.md`) mean `FAIRCHEM_CACHE_DIR` is wrong or
   `HF_HUB_OFFLINE` is unset on a node with no proxy. For real downloads you also need an HF token
   with `facebook/UMA` access plus `export http_proxy=http://proxy.alcf.anl.gov:3128
   https_proxy=$http_proxy`.

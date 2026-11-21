@@ -9,7 +9,7 @@ provisioning. This reference describes the payload, not a second deployment syst
 Install this skill directory, including `references/`, into the active Hermes
 skill library. With `run-campaign`, that library is shared from
 `<loam-repo>/.hermes/.loam-home/skills`; a source checkout alone does not register
-its root `skills/` directory. Confirm `skill_view(name="reactra")` resolves it.
+its root `skills/` directory. Confirm `read_skill(name="reactra")` resolves it.
 Add the name to the selected profile in your external Loam configuration:
 
 ```yaml

@@ -15,7 +15,8 @@ fallback. Consult the installed CLI's `--help` and matching docs when versions d
 | Native workers (OpenMM+UMA+PLUMED) | from a deployment profile (`native.python`) | `$REACTRA_DEPLOYMENT` (`native-python`, `deployment/profile.yaml`, `assets/`) |
 
 `REACTRA_DEPLOYMENT` is the native Reactra deployment the campaign uses — possibly another user's
-shared one. Set it in the campaign's `execution.setup`; if it is unset, or
+shared one. Set it in the Site profile's `worker_init` (see `examples/site-profiles/aurora.yaml`)
+when the endpoint renders it, else in the campaign's `execution.setup`; if it is unset, or
 `$REACTRA_DEPLOYMENT/deployment/profile.yaml` does not exist, report the step as blocked rather than
 guessing a path.
 
@@ -102,8 +103,8 @@ $RX resume --store cm/store --request-id cm-example-1
 ```
 
 The inspect/author/validate/plan commands were verified on 2026-10-29 (each under 25 s, no GPU); the
-run commands were not run here. The `uma-s-1p2p1.pt` under `$LOAM_CACHE_ROOT` and the deployment's
-`assets/` copy are identical (sha256 `b2673b85…5ce`).
+run commands were not run here. The hf_cache copy of `uma-s-1p2p1.pt` and the deployment's `assets/`
+copy were identical (sha256 `b2673b85…5ce`); check the hash of whichever you pass.
 
 PBS launcher: `tools/aurora/run_root.pbs` with `REACTRA_ROOT, REACTRA_PYTHON, REACTRA_CONFIG,
 REACTRA_STORE, REACTRA_REQUEST_ID, REACTRA_ACTION=run, REACTRA_THREADS` (see
