@@ -250,6 +250,10 @@ If a campaign is interrupted mid-round, restarting `python -m loam <config.yaml>
 
 `loam-saturation JOB --baseline BASELINE_JOB` audits a completed single-allocation job: every allocation attempt's GPU-hours from the scheduler's accounting (requeued boots included), time-weighted GPU busy from the job's telemetry, science-slot occupancy, distinct trials per allocated GPU-hour, and how many hypotheses got a reviewed, completed test. It writes `JOB/saturation-audit.json` and prints the gains over the baseline job and whether the scale-up gates pass. The job's System (`execution.hpc.system` in its campaign config) says how to read allocated time and the per-host GPU telemetry in `campaign/telemetry/*.jsonl`. A System that declares neither (`allocation_accounting`, `gpu_telemetry` in `loam/systems.py`) cannot be audited, and neither Aurora nor Polaris does yet. The node shape is the plan's `gpus_per_node`, else the System's. Samples that don't cover every GPU on the node count as unobserved. The audit never submits or changes jobs.
 
+### Inference Pool
+
+`loam-inference-pool ROOT` serves several replicas of one model, from any OpenAI-compatible backend (vLLM, SGLang, a hosted endpoint), as a single authenticated endpoint. Point campaign models at it like any other `base_url`. `ROOT/pool.json` names the served `model`, an optional `checkpoint` (a replica whose entry declares other weights, or none, gets no requests), the routing `policy` (`least_loaded_affinity`, `least_loaded` or `round_robin`), `max_inflight_per_backend`, and the `backends`, each with an `id`, a `base_url`, and optionally a `token_file` or `token_env` for its bearer token. Unknown top-level keys, a duplicate backend `id` or an out-of-range value refuse the file; a backend entry may carry extra keys for its resolver. The pool re-reads `pool.json` every two seconds, so replicas can be added or retired while it runs. A bad edit marks every replica not ready until it is fixed, and the model and checkpoint are fixed for the pool's lifetime. Requests are forwarded unchanged. A request that fails before it starts streaming is retried on another replica, and a backend's error text is never passed on except for context-length numbers. The pool writes its URL and the path of its client token to `ROOT/pool-service.json`, and one timing record per attempt, with no prompt or completion text, to `ROOT/pool-request-timings.jsonl`. `POST /pool/batch` fans out up to 64 independent non-streaming requests, and `GET /pool/status` reports each replica's load and readiness. Install with the `inference-pool` extra.
+
 ---
 
 ## Memory (optional)
@@ -345,6 +349,7 @@ loam/
 ├── steering.py        # Elo + evidence priority scoring across the hypothesis pool
 ├── synthesis.py       # Round synthesis: reduces threads + steering to the next brief within the context
 ├── skills.py          # SKILL.md discovery, prompt catalog, and read_skill helper
+├── inference_pool.py  # One OpenAI-compatible endpoint over a pool of replicas (`loam-inference-pool`)
 ├── saturation/        # Saturation accounting: allocated GPU-hours, GPU busy, reviewed hypothesis counts, scale-up gates (`loam-saturation`)
 └── prompts/           # Role system instructions (validator, code_generator, reviewer, reasoner)
 examples/              # Aurora EGFR binder campaign YAML, goal, campaign rules, redacted Site profiles

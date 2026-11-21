@@ -2444,6 +2444,9 @@ hpc = [
     { name = "fastmcp" },
     { name = "globus-compute-sdk" },
 ]
+inference-pool = [
+    { name = "aiohttp" },
+]
 memory = [
     { name = "hindsight-api-slim", extra = ["embedded-db"] },
     { name = "hindsight-client" },
@@ -2452,6 +2455,7 @@ memory = [
 [package.metadata]
 requires-dist = [
     { name = "academy-py", marker = "extra == 'hpc'" },
+    { name = "aiohttp", marker = "extra == 'inference-pool'", specifier = ">=3.9" },
     { name = "ensemble-launcher", marker = "extra == 'hpc'" },
     { name = "fastmcp", marker = "extra == 'hpc'" },
     { name = "globus-compute-sdk", marker = "extra == 'hpc'" },
