@@ -43,10 +43,17 @@ def test_system_specific_or_personal_path_in_skill_md_fails(tmp_path, path):
 
 
 @pytest.mark.parametrize('line', ['#PBS -A MYPROJ', '#SBATCH --account=myproj', '#SBATCH -A myproj',
-                                  'sbatch --account myproj job.sh', 'qsub -A MYPROJ job.pbs', 'account: MYPROJ'])
+                                  'sbatch --account myproj job.sh', 'qsub -A MYPROJ job.pbs', 'account: MYPROJ',
+                                  'Submit with `-A MYPROJ`.', '-A MYPROJ', '  account: "MYPROJ"'])
 def test_hard_coded_account_in_skill_md_fails(tmp_path, line):
     problems = skills.layout_problems(make_skill(tmp_path, body=f'```\n{line}\n```\nUnsupported elsewhere.\n'))
     assert any('account' in p for p in problems), problems
+
+
+@pytest.mark.parametrize('line', ['grep -A 3 ERROR run.log', 'ls -A out', 'Take into account: memory grows with L.'])
+def test_unrelated_dash_a_or_the_word_account_passes(tmp_path, line):
+    body = f'```\n{line}\n```\nUnsupported elsewhere.\n'
+    assert skills.layout_problems(make_skill(tmp_path, body=body)) == []
 
 
 def test_account_taken_from_a_variable_passes(tmp_path):

@@ -39,9 +39,14 @@ def read(skills: dict[str, Path], name: str, file: str | None = None) -> str:
 # Paths that belong to one System's filesystem or one person's machine. A SKILL.md reaches software
 # only through Site profile variables such as $LOAM_SOFTWARE_ROOT; System paths go in a reference file.
 FORBIDDEN_PATHS = ('/flare/', '/lus/', '/e/project', '/Users/', '/opt/aurora')
-# An allocation account written out (`-A NAME`, `--account NAME`, `account: NAME`) rather than taken from
-# a variable; accounts come from the Site profile.
-HARD_CODED_ACCOUNT = re.compile(r'(?:\s-A\s+|--account[=\s]+|\baccount:\s*)(?![\s"\'$]*\$)[\w"\'-]')
+# An allocation account written out rather than taken from a variable; accounts come from the Site
+# profile. `-A NAME` counts only as a scheduler flag (after a submit command or directive, or standing
+# alone at the start of a line or code span), so `grep -A 3` and `ls -A` don't; `account:` only as a key.
+_ACCOUNT_VALUE = r'''["']?(?!["']?[$<])[A-Za-z_]'''
+HARD_CODED_ACCOUNT = re.compile(
+    r'(?:(?:#PBS|#SBATCH|\b(?:qsub|sbatch|salloc|srun))\b[^\n]*?\s|^\s*|`)-A\s*' + _ACCOUNT_VALUE
+    + r'|--account[=\s]+' + _ACCOUNT_VALUE
+    + r'|^\s*account:\s*' + _ACCOUNT_VALUE)
 
 
 def layout_problems(skill: Path) -> list[str]:
