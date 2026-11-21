@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 loam-saturation = "loam.saturation.__main__:main"
 loam-inference-pool = "loam.inference_pool:main"
+loam-scaling = "loam.scaling:main"
 
 [project.optional-dependencies]
 dev = ["pytest"]
