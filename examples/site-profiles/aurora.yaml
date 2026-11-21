@@ -36,3 +36,5 @@ inference:
 # endpoint_options replaces this one.
 worker_init: |
   module load frameworks
+  # Only if campaigns use the reactra skill: the native Reactra deployment it runs.
+  # export REACTRA_DEPLOYMENT=/flare/YOUR_ALLOCATION/YOUR_USER/reactra-deployment
