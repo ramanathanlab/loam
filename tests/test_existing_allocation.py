@@ -68,3 +68,27 @@ def test_science_nodes_must_be_a_unique_subset_of_the_allocation(monkeypatch):
         replies['science'] = invalid
         with pytest.raises(RuntimeError, match='science nodes'):
             hpc_agent.allocation_nodes('slurm-nodelist', environ, 2)
+
+
+def test_a_timed_out_science_row_takes_its_descendants_with_it(tmp_path):
+    # Ported from the moeen branch's single-allocation tests: a row that outlives its timeout
+    # must not leave children holding the allocation's GPUs, nor block on their inherited pipe.
+    import signal
+    import subprocess
+    import time
+    payload = ('import subprocess,sys,time; '
+               'p=subprocess.Popen([sys.executable,"-c","import time; time.sleep(10)"]); '
+               'print(p.pid,flush=True); time.sleep(10)')
+    start = time.monotonic()
+
+    code, stdout, _, timed_out = hpc_agent._run_process([sys.executable, '-c', payload], tmp_path, 0.5,
+                                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    assert timed_out and code == -signal.SIGKILL
+    assert time.monotonic() - start < 4
+    child = Path('/proc') / stdout.decode().strip() / 'status'
+    try:
+        state = child.read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return  # Already reaped, or no /proc on this platform.
+    assert '\nState:\tZ' in state  # Killed, awaiting its new parent's reap.

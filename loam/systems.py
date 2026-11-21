@@ -15,6 +15,10 @@ A System may also name how to read back what a job cost and did: its
 scheduler's accounting of allocated time, and the format of the per-host GPU
 telemetry samples. Saturation accounting (`loam.saturation`) asks the System
 for both, and a System without them cannot be audited.
+
+Single-allocation staging (`loam.staging`) and its coordinator (`loam.coordinator`)
+ask the System how to submit a job, find the hosts of the allocation they run in,
+and run one step on chosen hosts; nothing else in loam names a scheduler command.
 """
 
 from __future__ import annotations
@@ -23,8 +27,10 @@ import csv
 import io
 import json
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 
@@ -128,9 +134,76 @@ class System:
         output = sacct(['-n', '-X', '-j', ','.join(ids), '--parsable2', '--format=' + ','.join(SACCT_FIELDS)])
         return parse_sacct_parent_jobs(output, ids)
 
+    def batch_submission(self, *, script: str, name: str, workdir: str, account: str, queue: str, nodes: int,
+                         walltime: str, reservation: str, dependencies: tuple[tuple[str, str], ...]) -> list[str]:
+        """The command that submits `script` as one exclusive job of `nodes` whole nodes.
+
+        `dependencies` are (kind, job id) pairs such as ('afterany', '41'). On Slurm the queue is the partition.
+        The job starts with no environment from the submitting shell; its script sets what it needs.
+        """
+        if self.scheduler != 'slurm':
+            raise NotImplementedError(f'loam cannot submit a single-allocation job on {self.name}')
+        args = ['sbatch', '--parsable', '--export=NIL', f'--account={account}', f'--partition={queue}',
+                f'--nodes={nodes}', '--ntasks-per-node=1', f'--cpus-per-task={len(self.cpu_ids)}',
+                f'--gres=gpu:{self.gpus_per_node}', '--exclusive', f'--time={walltime}', f'--job-name={name}',
+                f'--chdir={workdir}', f'--output={workdir}/slurm-%j.log']
+        if reservation:
+            args.append(f'--reservation={reservation}')
+        args += [f'--dependency={kind}:{job_id}' for kind, job_id in dependencies]
+        return [*args, script]
+
+    def submitted_job_id(self, stdout: str) -> str:
+        """The job id in the scheduler's acknowledgement of `batch_submission`."""
+        job_id = stdout.strip().split(';')[0]
+        if not job_id.isdigit():
+            raise RuntimeError(f'Ambiguous {self.scheduler} acknowledgement {stdout!r}; '
+                               'inspect the submission intent before retrying')
+        return job_id
+
+    def allocation_hosts(self, environ: Mapping[str, str]) -> list[str]:
+        """The short hostnames of the allocation this process runs inside, in the scheduler's order."""
+        variable = {'pbs-nodefile': 'PBS_NODEFILE', 'slurm-nodelist': 'SLURM_JOB_NODELIST'}[self.node_discovery]
+        if not environ.get(variable):
+            raise RuntimeError(f'This process is not inside an allocation: {variable} is not set')
+        if self.node_discovery == 'pbs-nodefile':
+            listed = Path(environ[variable]).read_text().split()
+        else:
+            listed = subprocess.run(['scontrol', 'show', 'hostnames', environ[variable]], capture_output=True,
+                                    text=True, check=True, timeout=30).stdout.split()
+        return list(dict.fromkeys(host.split('.')[0] for host in listed))
+
+    def host_step(self, hosts: list[str], command: list[str], *, cpus: int = 1) -> list[str]:
+        """`command` run once on each of `hosts` with `cpus` cores and every GPU, inside the allocation."""
+        if self.mpi_flavor == 'srun-overlap':
+            return ['srun', '--overlap', '--exact', '--mpi=none', f'--nodes={len(hosts)}', f'--ntasks={len(hosts)}',
+                    '--ntasks-per-node=1', f'--cpus-per-task={cpus}', f'--nodelist={",".join(hosts)}',
+                    f'--gpus-per-node={self.gpus_per_node}', '--gpu-bind=none', *command]
+        return ['mpiexec', '-n', str(len(hosts)), '--ppn', '1', '--hosts', ','.join(hosts), *command]
+
+    def step_environment(self) -> dict[str, str]:
+        """Variables a `host_step` needs so the step sees the job's own environment.
+
+        A Slurm job submitted with --export=NIL would otherwise hand its steps none of it.
+        """
+        return {'SLURM_EXPORT_ENV': 'ALL'} if self.scheduler == 'slurm' else {}
+
     def check_gpu_telemetry(self) -> None:
         if self.gpu_telemetry != 'nvidia-smi-csv':
             raise NotImplementedError(f'loam cannot read GPU telemetry on {self.name}')
+
+    def gpu_sample(self) -> dict:
+        """One host's GPU part of a telemetry sample, in the form `gpu_busy` and `every_gpu_reported` read."""
+        try:
+            query = subprocess.run(self.gpu_telemetry_query(), capture_output=True, text=True, timeout=8)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return {'nvidia_error': type(error).__name__}
+        return {'gpu_csv': query.stdout.strip(), 'nvidia_returncode': query.returncode}
+
+    def gpu_telemetry_query(self) -> list[str]:
+        """The command whose output is one host's `gpu_csv` telemetry sample."""
+        self.check_gpu_telemetry()
+        return ['nvidia-smi', '--query-gpu=index,uuid,utilization.gpu,utilization.memory,memory.used,'
+                'memory.total,power.draw,temperature.gpu', '--format=csv,noheader,nounits']
 
     def gpu_busy(self, sample: dict, *, gpus_per_node: int) -> list[float] | None:
         """Busy percent of each GPU, by index, in one telemetry sample; None if it does not cover every GPU."""
