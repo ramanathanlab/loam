@@ -13,12 +13,13 @@ from pathlib import Path
 
 import pytest
 
-from loam.config import Config, SiteProfile
+from loam.config import SiteProfile
 from loam.systems import SYSTEMS
-from test_round import hpc_config_values
+from test_round import hpc_environment
 
 SCRIPTS = Path(__file__).resolve().parents[1] / 'skills' / 'hpc-deployment' / 'scripts'
-# The MCP server, its agent pools, and the agents (the cluster agent among them).
+# The MCP server, its agent pools, and the agents (the cluster agent among them). smoke_test_client.py
+# is left out: it is an operator's client, and its HPC_MCP_URL is for the operator to set.
 READERS = ('mcp_server.py', 'pool_manager.py', 'hpc_agent.py')
 
 # Read with a default that loam leaves alone; an operator may set one to tune a deployment.
@@ -47,11 +48,8 @@ def read_by_scripts() -> set[str]:
 
 
 def produced_by_loam(tmp_path, system) -> set[str]:
-    values, _ = hpc_config_values(tmp_path)
-    values['execution']['hpc']['system'] = system
     # With a Site profile, so its HPC_WORKER_ENV_JSON is produced too.
-    profile = SiteProfile(software_root='/soft/loam')
-    environment = Config.model_validate(values, context={'site_profile': profile}).execution.hpc.environment()
+    environment = hpc_environment(tmp_path, system, SiteProfile(software_root='/soft/loam'))
     return {name for name in environment if name.startswith('HPC_')}
 
 

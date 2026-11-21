@@ -11,8 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from loam.config import Config
-from test_round import hpc_config_values
+from test_round import hpc_environment
 
 pytest.importorskip('academy')
 pytest.importorskip('globus_compute_sdk')
@@ -20,12 +19,6 @@ fastmcp = pytest.importorskip('fastmcp')
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'skills' / 'hpc-deployment' / 'scripts'))
 import mcp_server  # noqa: E402
-
-
-def deployment_environment(tmp_path, system):
-    values, _ = hpc_config_values(tmp_path)
-    values['execution']['hpc']['system'] = system
-    return Config.model_validate(values).execution.hpc.environment()
 
 
 class Services:
@@ -104,7 +97,7 @@ def pool_status(server):
     ('polaris', False, None, 4, 5),
 ])
 def test_pool_status_reports_the_capacity_of_the_system(tmp_path, services, system, cluster, nodes, per_node, total):
-    environment = deployment_environment(tmp_path, system)
+    environment = hpc_environment(tmp_path, system)
     nnodes = int(environment['HPC_NNODES']) if cluster else None
 
     server = mcp_server.create_server(cluster=cluster, nnodes=nnodes, environ=environment)
@@ -125,7 +118,7 @@ def test_pool_status_reports_the_capacity_of_the_system(tmp_path, services, syst
 @pytest.mark.parametrize('variable', ['HPC_CPU_IDS', 'HPC_GPU_IDS', 'HPC_GPU_PIN_VAR', 'HPC_NODE_DISCOVERY',
                                       'HPC_MPI_FLAVOR', 'HPC_GLOBUS_ENDPOINT_ID'])
 def test_a_missing_variable_stops_the_server_before_anything_is_submitted(tmp_path, services, cluster, variable):
-    environment = deployment_environment(tmp_path, 'aurora')
+    environment = hpc_environment(tmp_path, 'aurora')
     del environment[variable]
 
     with pytest.raises(Exception, match=variable):

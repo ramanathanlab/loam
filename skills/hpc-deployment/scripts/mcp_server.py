@@ -74,8 +74,8 @@ class Settings:
     base_dir: str
     campaign_id: str
     exchange_url: str
-    endpoint_config: dict
-    inspect_roots: list[str]
+    endpoint_config: dict  # handed to the Globus Executor, which serializes it
+    inspect_roots: tuple[str, ...]
     # A label for pool_status only. The System's node shape and launch mechanics
     # arrive spelled out (HPC_CPU_IDS, HPC_GPU_IDS, ...; see loam.systems), so this
     # server never branches on which System it is.
@@ -95,10 +95,14 @@ class Settings:
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str]) -> Settings:
+        endpoint_id = required(environ, "HPC_GLOBUS_ENDPOINT_ID")
+        pool_size = int(required(environ, "HPC_POOL_SIZE"))
+        base_dir = required(environ, "HPC_BASE_DIR")
+        campaign_id = required(environ, "HPC_CAMPAIGN_ID")
+        exchange_url = required(environ, "ACADEMY_EXCHANGE_URL")
         endpoint_config = json.loads(required(environ, "HPC_ENDPOINT_CONFIG_JSON"))
         if not isinstance(endpoint_config, dict):
             raise RuntimeError("HPC_ENDPOINT_CONFIG_JSON must encode an object")
-        pool_size = int(required(environ, "HPC_POOL_SIZE"))
         if pool_size < 1:
             raise RuntimeError("HPC_POOL_SIZE must be positive")
         exchange_request_timeout = float(environ.get("HPC_EXCHANGE_REQUEST_TIMEOUT", "20"))
@@ -106,13 +110,13 @@ class Settings:
             raise RuntimeError("HPC_EXCHANGE_REQUEST_TIMEOUT must be positive")
         auth = environ.get("HPC_EXCHANGE_AUTH", "globus").strip().lower()
         return cls(
-            endpoint_id=required(environ, "HPC_GLOBUS_ENDPOINT_ID"),
+            endpoint_id=endpoint_id,
             pool_size=pool_size,
-            base_dir=required(environ, "HPC_BASE_DIR"),
-            campaign_id=required(environ, "HPC_CAMPAIGN_ID"),
-            exchange_url=required(environ, "ACADEMY_EXCHANGE_URL"),
+            base_dir=base_dir,
+            campaign_id=campaign_id,
+            exchange_url=exchange_url,
             endpoint_config=endpoint_config,
-            inspect_roots=[item for item in environ.get("HPC_INSPECT_ROOTS", "").split(":") if item],
+            inspect_roots=tuple(item for item in environ.get("HPC_INSPECT_ROOTS", "").split(":") if item),
             system=environ.get("HPC_SYSTEM", ""),
             exchange_request_timeout=exchange_request_timeout,
             exchange_auth_method=None if auth in ("", "none", "null", "off") else auth,
