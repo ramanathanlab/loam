@@ -3,7 +3,7 @@ name: hpc-deployment
 description: >-
   Deploy a local seven-tool MCP server backed by a user-supplied Globus
   Compute endpoint and an Ensemble Launcher cluster on the System's batch
-  allocation (Aurora, Polaris).
+  allocation (Aurora, Polaris, Jupiter).
 license: Apache-2.0
 ---
 
@@ -15,7 +15,7 @@ This skill does exactly this, and nothing else:
 
 1. Start a **local FastMCP server**. Cluster mode exposes exactly seven tools: `run_code`, `write_files`, `inspect_filesystem`, `run_batch`, `batch_status`, `list_batches`, and `pool_status`. Direct mode omits `run_batch`.
 2. The server uses a **Globus Compute `Executor`** targeting the **endpoint UUID supplied by the user**.
-3. The submitted endpoint job uses its **Parsl provider** (`PBSProProvider` on the PBS Systems, Aurora and Polaris) to request the **user-supplied allocation** (`account`, `queue`, `walltime`, `nodes_per_block`, block count, filesystem/place settings, and worker environment).
+3. The submitted endpoint job uses its **Parsl provider** (`PBSProProvider` on the PBS Systems, Aurora and Polaris; a Slurm provider on Jupiter) to request the **user-supplied allocation** (`account`, `queue`, `walltime`, `nodes_per_block`, block count, filesystem/place settings, and worker environment).
 4. Within that allocation, start Academy agents in one of two modes. **Direct mode** starts one `HpcAgent` per pinned GPU/tile, and the agent runs payloads itself. **Cluster mode** (`create_server(cluster=True)`, used by the executable entry point) starts one `HpcClusterAgent` that runs an Ensemble Launcher cluster, plus exactly `HPC_POOL_SIZE` unpinned `HpcClientAgent`s that submit into it. Server startup fails and cleans up if the complete requested client pool is unavailable.
 
 The harness never uses SSH, `qsub`, `qstat`, `sbatch`, or a campaign-local scheduler wrapper to execute campaign work. The endpoint and its Parsl provider own scheduling. The agent has no domain-specific actions and no arbitrary shell action.
@@ -33,7 +33,8 @@ The user-authored loam YAML is the sole campaign settings file. Select
 | `worker_code_dir` | `HPC_LOAM_HOME` |
 | `campaign_id` | `HPC_CAMPAIGN_ID` |
 | `exchange_url` | `ACADEMY_EXCHANGE_URL` |
-| `system` | `HPC_SYSTEM`, plus the System spelled out: `HPC_CPU_IDS`, `HPC_GPU_IDS`, `HPC_GPU_PIN_VAR`, `HPC_NODE_DISCOVERY`, `HPC_MPI_FLAVOR` |
+| `system` | `HPC_SYSTEM`, plus the System spelled out: `HPC_CPU_IDS`, `HPC_GPU_IDS`, `HPC_GPU_PIN_VAR`, `HPC_NODE_DISCOVERY`, `HPC_MPI_FLAVOR` (with `gpus_per_node` / `cpus_per_node` overrides, where the System allows them) |
+| `science_workers_per_gpu` | `HPC_SCIENCE_WORKERS_PER_GPU` |
 | `allocation.nodes` | `HPC_NNODES` |
 | `inspect_roots` | `HPC_INSPECT_ROOTS` |
 | `cold_endpoint_timeout` | `HPC_COLD_ENDPOINT_TIMEOUT` |
@@ -70,15 +71,17 @@ request. No endpoint or queue has been verified merely because it appears in a
 configuration example.
 
 Each System is defined once in `loam.systems`: its cores, accelerators, the
-variable that pins a process to one accelerator, how nodes are found, and the
-MPI launcher. Loam spells these out in the generated environment, and neither
+variable that pins a process to one accelerator, how nodes are found (the PBS
+node file, or Slurm's node list), the launcher (`mpiexec`, or `srun --overlap`
+steps inside the endpoint's own Slurm allocation, via `scripts/srun_overlap.sh`),
+and how the endpoint config sizes its workers. Loam spells these out in the generated environment, and neither
 the server nor the cluster agent branches on `HPC_SYSTEM`; it is only a label.
 Adding a System means adding a definition there, not editing these scripts.
 
 In direct mode, request one worker per accelerator in `HPC_GPU_IDS` and pin each
 with a distinct value of `HPC_GPU_PIN_VAR`; `pool_size` is requested nodes ×
 accelerators per node unless the endpoint exposes another count. System-specific
-pinning details live in the per-System references (`references/aurora.md`). In
+pinning details live in the per-System references (`references/aurora.md`, `references/jupiter.md`). In
 cluster mode EL owns accelerator placement and `pool_size` is the configured
 client-agent count, not the accelerator count.
 
@@ -90,7 +93,7 @@ MCP harness
   → Globus Compute Executor(endpoint_id=HPC_GLOBUS_ENDPOINT_ID,
                             user_endpoint_config=HPC_ENDPOINT_CONFIG_JSON)
   → endpoint manager / user endpoint
-  → the System's Parsl provider allocation (PBSProProvider on Aurora/Polaris)
+  → the System's Parsl provider allocation (PBSProProvider on Aurora/Polaris, Slurm on Jupiter)
   → direct mode:  one worker per pinned GPU/tile
                   → one Academy HpcAgent per worker
   → cluster mode: HpcClusterAgent → EL cluster (owns GPU placement)
@@ -214,8 +217,10 @@ The action resolves paths and restricts them to the explicit allowed roots: `HPC
 ## Size batches from observed allocation state
 
 Call `pool_status` instead of assuming a node count. A `run_batch(gpus=1)` row
-uses one accelerator (one tile on Aurora, one GPU on Polaris) and `pool_status.total_tiles` is the
-configured one-wave capacity. This is not a live-free-tile count: inspect
+uses one accelerator (one tile on Aurora, one GPU on Polaris or Jupiter) and
+`pool_status.concurrent_scientific_rows` is the configured one-wave capacity:
+`total_tiles`, times `science_workers_per_gpu` when several science workers share
+each GPU (Jupiter only). Under sharing, rows take `gpus=0` or `gpus=1`. This is not a live-free-tile count: inspect
 `list_batches` and `batch_status` for work already in flight.
 
 Code-generators share the pool across concurrently validated hypotheses. Size

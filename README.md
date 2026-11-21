@@ -161,7 +161,8 @@ Configured under `execution.mode`:
   - Read roles (`validator`, `reviewer`) receive `read_file` and `list_dir` confined to the hypothesis workspace.
   - `code_generator` adds `write_files` (confined to its numbered run directory) and `run_shell` (runs bash in the run directory; process group killed on timeout, **not** sandboxed—do not use for untrusted code).
 - **`mcp`** — Connects to an externally managed MCP server at `execution.mcp_url`.
-- **`hpc`** — Managed HPC deployment (`aurora` or `polaris`) via **Globus Compute → PBSPro → Academy → Ensemble Launcher**.
+- **`hpc`** — Managed HPC deployment (`aurora`, `polaris` or `jupiter`) via **Globus Compute → the System's scheduler → Academy → Ensemble Launcher**.
+  - On a System that allows it (Jupiter), `execution.hpc.gpus_per_node` and `cpus_per_node` override the node shape, and `science_workers_per_gpu: 2` runs two science workers on each GPU. A System that doesn't allow them rejects them when the config loads.
   - `loam` translates `execution.hpc` into the deployment server's internal environment, spawns `mcp_server.py`, waits for cluster pool readiness, and tears down the allocation cleanly on exit (`SIGINT`).
   - No separate environment file or scheduler wrapper (`qsub`/`sbatch`) is needed.
 
@@ -174,7 +175,7 @@ What differs between people on the same System lives in a **Site profile**, a YA
 - The roots and the profile's `worker_init` snippet (or the campaign config's `endpoint_options.worker_init`, which replaces it) are also sent as the endpoint's `worker_init`. That only takes effect on an endpoint whose template renders `{{ worker_init }}`; the Aurora endpoints do not, and ignore it. Scripts get the `LOAM_*` variables either way, from the agents.
 - A missing profile, an invalid one, or an allocation value set in neither place fails when the config loads, naming the profile and the key.
 
-Copy a redacted example from [`examples/site-profiles/`](examples/site-profiles/) (Aurora, Polaris) and fill it in. Never commit a filled-in profile.
+Copy a redacted example from [`examples/site-profiles/`](examples/site-profiles/) (Aurora, Polaris, Jupiter) and fill it in. Never commit a filled-in profile.
 
 ### Role-Scoped MCP Tools (`mcp` & `hpc` modes)
 
@@ -248,7 +249,7 @@ If a campaign is interrupted mid-round, restarting `python -m loam <config.yaml>
 
 ### Saturation Accounting
 
-`loam-saturation JOB --baseline BASELINE_JOB` audits a completed single-allocation job: every allocation attempt's GPU-hours from the scheduler's accounting (requeued boots included), time-weighted GPU busy from the job's telemetry, science-slot occupancy, distinct trials per allocated GPU-hour, and how many hypotheses got a reviewed, completed test. It writes `JOB/saturation-audit.json` and prints the gains over the baseline job and whether the scale-up gates pass. The job's System (`execution.hpc.system` in its campaign config) says how to read allocated time and the per-host GPU telemetry in `campaign/telemetry/*.jsonl`. A System that declares neither (`allocation_accounting`, `gpu_telemetry` in `loam/systems.py`) cannot be audited, and neither Aurora nor Polaris does yet. The node shape is the plan's `gpus_per_node`, else the System's. Samples that don't cover every GPU on the node count as unobserved. The audit never submits or changes jobs.
+`loam-saturation JOB --baseline BASELINE_JOB` audits a completed single-allocation job: every allocation attempt's GPU-hours from the scheduler's accounting (requeued boots included), time-weighted GPU busy from the job's telemetry, science-slot occupancy, distinct trials per allocated GPU-hour, and how many hypotheses got a reviewed, completed test. It writes `JOB/saturation-audit.json` and prints the gains over the baseline job and whether the scale-up gates pass. The job's System (`execution.hpc.system` in its campaign config) says how to read allocated time and the per-host GPU telemetry in `campaign/telemetry/*.jsonl`. A System that declares neither (`allocation_accounting`, `gpu_telemetry` in `loam/systems.py`) cannot be audited; Jupiter declares both, Aurora and Polaris neither yet. The node shape is the plan's `gpus_per_node`, else the System's. Samples that don't cover every GPU on the node count as unobserved. The audit never submits or changes jobs.
 
 ### Inference Pool
 

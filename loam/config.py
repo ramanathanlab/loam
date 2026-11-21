@@ -182,6 +182,11 @@ class HPCDeployment(ConfigModel):
     worker_code_dir: str
     inspect_roots: list[str]
     pool_size: PositiveInt
+    # The node's GPU and CPU counts, for a System that allows overriding them (see loam.systems).
+    gpus_per_node: PositiveInt | None = None
+    cpus_per_node: PositiveInt | None = None
+    # Science workers sharing each GPU, up to the System's limit.
+    science_workers_per_gpu: PositiveInt = 1
     server_script: Path
     host: NonEmptyStr
     port: Annotated[int, Field(ge=1, le=65535)]
@@ -203,6 +208,8 @@ class HPCDeployment(ConfigModel):
     @model_validator(mode='after')
     def validate_deployment(self, info: ValidationInfo):
         self._site_profile = (info.context or {}).get('site_profile')
+        self.system_definition()  # rejects node shape overrides the System does not allow
+        SYSTEMS[self.system].check_science_workers_per_gpu(self.science_workers_per_gpu)
         for name in ('base_dir', 'worker_code_dir'):
             _validate_remote_path(name, getattr(self, name))
         for root in self.inspect_roots:
@@ -212,9 +219,12 @@ class HPCDeployment(ConfigModel):
             raise ValueError('execution.hpc.exchange_url must be an HTTP(S) URL')
         return self
 
+    def system_definition(self):
+        """The System, with this campaign's node shape."""
+        return SYSTEMS[self.system].with_node_shape(gpus=self.gpus_per_node, cpus=self.cpus_per_node)
+
     def environment(self) -> dict[str, str]:
-        definition = SYSTEMS[self.system]
-        accelerators = definition.gpus_per_node
+        definition = self.system_definition()
         allocation = self.allocation
         endpoint_config = {
             **allocation.endpoint_options,
@@ -226,9 +236,8 @@ class HPCDeployment(ConfigModel):
             'min_blocks': allocation.min_blocks,
             'max_blocks': allocation.max_blocks,
             'max_idletime': allocation.max_idletime,
-            'available_accelerators': accelerators,
-            'max_workers_per_node': accelerators,
-            'base_dir': self.worker_code_dir,
+            **definition.endpoint_workers_config(pool_size=self.pool_size, nodes=allocation.nodes,
+                                                 base_dir=self.worker_code_dir),
         }
         if self._site_profile is not None:
             endpoint_config['worker_init'] = self._site_profile.full_worker_init(
@@ -242,6 +251,7 @@ class HPCDeployment(ConfigModel):
             'HPC_LOAM_HOME': self.worker_code_dir,
             'HPC_INSPECT_ROOTS': ':'.join(self.inspect_roots),
             'HPC_POOL_SIZE': str(self.pool_size),
+            'HPC_SCIENCE_WORKERS_PER_GPU': str(self.science_workers_per_gpu),
             'HPC_COLD_ENDPOINT_TIMEOUT': str(self.cold_endpoint_timeout),
             'HPC_COLD_ENDPOINT_BACKOFF': str(self.cold_endpoint_backoff),
             'HPC_ENDPOINT_CONFIG_JSON': json.dumps(endpoint_config, sort_keys=True, separators=(',', ':')),

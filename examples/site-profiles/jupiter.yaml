@@ -1,0 +1,56 @@
+# Example Site profile for Jupiter (redacted). Copy it outside the repo, fill it
+# in, and name it from a campaign config:
+#
+#   cp examples/site-profiles/jupiter.yaml ~/.config/loam/site-profiles/jupiter-myproject.yaml
+#   # loam.yaml:  site_profile: jupiter-myproject
+#
+# or point LOAM_SITE_PROFILE at it when the campaign config names none. Never
+# commit a filled-in profile: it holds your allocation and filesystem roots.
+#
+# Remote paths must be absolute. The roots reach the deployment environment as
+# LOAM_SOFTWARE_ROOT, LOAM_DATA_ROOT and LOAM_CACHE_ROOT, which every script
+# loam runs on a worker sees, so skills refer to software only through them.
+
+# Used when the campaign config leaves execution.hpc.allocation.account/queue
+# out; a value set there wins. On Slurm the queue is the partition.
+allocation:
+  account: YOUR_ALLOCATION
+  queue: YOUR_PARTITION
+
+software_root: /YOUR_FILESYSTEM/YOUR_ALLOCATION/YOUR_USER/software   # required
+data_root: /YOUR_FILESYSTEM/YOUR_ALLOCATION/YOUR_USER/data
+cache_root: /YOUR_FILESYSTEM/YOUR_ALLOCATION/YOUR_USER/software/.hf-cache
+
+# Name -> absolute path; reaches the environment as LOAM_MODEL_WEIGHTS_JSON.
+model_weights:
+  chai: /YOUR_FILESYSTEM/YOUR_ALLOCATION/YOUR_USER/software/chai-lab/downloads
+
+# Name -> OpenAI-compatible endpoint; reaches the environment as
+# LOAM_INFERENCE_JSON. Keys are named by environment variable, never written here.
+inference:
+  argo: {base_url: http://127.0.0.1:61612/v1}
+
+# Sent as the endpoint's worker_init, after the LOAM_* exports. Only takes
+# effect if the endpoint's template renders {{ worker_init }}; check yours.
+# A worker_init in the campaign config's endpoint_options replaces this one.
+# Each tool's caches and installs live under the software root; a value already
+# set in the worker's environment wins.
+worker_init: |
+  export HF_HOME="${HF_HOME:-${LOAM_CACHE_ROOT:-$LOAM_SOFTWARE_ROOT/.hf-cache}}"
+  export CHAI_DOWNLOADS_DIR="${CHAI_DOWNLOADS_DIR:-$LOAM_SOFTWARE_ROOT/chai-lab/downloads}"
+  export BOLTZ_CACHE="${BOLTZ_CACHE:-$LOAM_SOFTWARE_ROOT/boltz/cache}"
+  export FAIRCHEM_CACHE_DIR="${FAIRCHEM_CACHE_DIR:-$LOAM_SOFTWARE_ROOT/fairchem/cache}"
+  export DATA_PATH="${DATA_PATH:-$LOAM_SOFTWARE_ROOT/RFD4-Proteina/data_path}"
+  export FOUNDRY_CHECKPOINT_DIRS="${FOUNDRY_CHECKPOINT_DIRS:-$LOAM_SOFTWARE_ROOT/foundry/checkpoints}"
+  export PROTENIX_ROOT_DIR="${PROTENIX_ROOT_DIR:-$LOAM_SOFTWARE_ROOT/protenix/data}"
+  export AMBERHOME="${AMBERHOME:-$LOAM_SOFTWARE_ROOT/ambertools}"
+  export PATH="$AMBERHOME/bin:$PATH"
+  export LOAM_HOOK_PYTHON="$LOAM_SOFTWARE_ROOT/jnana-engine/.venv/bin/python"
+  export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+  export LAYERNORM_TYPE=torch
+  # Compute nodes reach the internet only through the login-node proxy, if you set one up.
+  proxy_env="${LOAM_PROXY_ENV_FILE:-$LOAM_SOFTWARE_ROOT/internet-proxy/env.sh}"
+  if [ -f "$proxy_env" ]; then . "$proxy_env"; fi
+  # Open Babel's ARM64 wheel needs X11 libraries that compute nodes lack; RFD4's runtime ships them.
+  rfd4_lib="$LOAM_SOFTWARE_ROOT/RFD4-Proteina/runtime/lib"
+  if [ -d "$rfd4_lib" ]; then export LD_LIBRARY_PATH="$rfd4_lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; fi

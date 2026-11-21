@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from test_round import hpc_environment
+from loam.config import Config
+from test_round import hpc_config_values, hpc_environment
 
 pytest.importorskip('academy')
 pytest.importorskip('globus_compute_sdk')
@@ -113,10 +114,20 @@ def test_pool_status_reports_the_capacity_of_the_system(tmp_path, services, syst
     assert status['campaign_id'] == 'campaign-17'
 
 
+def test_pool_status_counts_science_rows_on_shared_gpus(tmp_path, services):
+    values, _ = hpc_config_values(tmp_path)
+    values['execution']['hpc'].update(system='jupiter', science_workers_per_gpu=2)
+    environment = Config.model_validate(values).execution.hpc.environment()
+
+    status = pool_status(mcp_server.create_server(cluster=True, nnodes=2, environ=environment))
+
+    # Two nodes of four GPUs, two science workers on each.
+    assert (status['total_tiles'], status['science_workers_per_gpu'], status['concurrent_scientific_rows']) == (8, 2, 16)
+
 
 @pytest.mark.parametrize('cluster', [True, False])
 @pytest.mark.parametrize('variable', ['HPC_CPU_IDS', 'HPC_GPU_IDS', 'HPC_GPU_PIN_VAR', 'HPC_NODE_DISCOVERY',
-                                      'HPC_MPI_FLAVOR', 'HPC_GLOBUS_ENDPOINT_ID'])
+                                      'HPC_MPI_FLAVOR', 'HPC_SCIENCE_WORKERS_PER_GPU', 'HPC_GLOBUS_ENDPOINT_ID'])
 def test_a_missing_variable_stops_the_server_before_anything_is_submitted(tmp_path, services, cluster, variable):
     environment = hpc_environment(tmp_path, 'aurora')
     del environment[variable]

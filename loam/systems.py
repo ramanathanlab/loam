@@ -23,7 +23,7 @@ import csv
 import io
 import json
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
 
@@ -39,9 +39,19 @@ class System:
     # The variable that pins a process to one accelerator.
     gpu_pin_var: str
     # How the cluster agent finds the allocation's nodes.
-    node_discovery: Literal['pbs-nodefile']
-    # ensemble_launcher MPI flavour used to launch onto those nodes.
-    mpi_flavor: str
+    node_discovery: Literal['pbs-nodefile', 'slurm-nodelist']
+    # How the cluster agent launches onto those nodes: an ensemble_launcher MPI flavour, or
+    # 'srun-overlap', srun steps that share the allocation the endpoint already holds.
+    mpi_flavor: Literal['mpich', 'srun-overlap']
+    # How the Globus endpoint config sizes its workers. 'per-accelerator': one worker per
+    # accelerator, with available_accelerators and base_dir. 'pool-across-allocation': the
+    # workers only host loam's agents (the pool plus the cluster agent), spread over the
+    # allocation's nodes, and the endpoint template takes no accelerator list or base_dir.
+    endpoint_workers: Literal['per-accelerator', 'pool-across-allocation'] = 'per-accelerator'
+    # Whether a campaign config may set the node's GPU and CPU counts.
+    node_shape_overrides: bool = False
+    # How many science workers may share one GPU.
+    max_science_workers_per_gpu: int = 1
     # How the scheduler reports a job's allocated time, if loam can read it.
     allocation_accounting: Literal['sacct'] | None = None
     # The format of one host's GPU telemetry sample, if loam can read it.
@@ -50,6 +60,28 @@ class System:
     @property
     def gpus_per_node(self) -> int:
         return len(self.gpu_ids)
+
+    def with_node_shape(self, *, gpus: int | None = None, cpus: int | None = None) -> System:
+        """This System with a campaign config's GPU and CPU counts, numbered from zero."""
+        if gpus is None and cpus is None:
+            return self
+        if not self.node_shape_overrides:
+            raise ValueError(f'{self.name} does not allow GPU/CPU count overrides')
+        return replace(self, gpu_ids=self.gpu_ids if gpus is None else tuple(range(gpus)),
+                       cpu_ids=self.cpu_ids if cpus is None else tuple(range(cpus)))
+
+    def check_science_workers_per_gpu(self, workers: int) -> None:
+        if workers > self.max_science_workers_per_gpu:
+            most = self.max_science_workers_per_gpu
+            raise ValueError(f'{self.name} allows at most {most} science worker{"s" * (most != 1)} per GPU')
+
+    def endpoint_workers_config(self, *, pool_size: int, nodes: int, base_dir: str) -> dict:
+        """The endpoint config keys that size its workers."""
+        if self.endpoint_workers == 'pool-across-allocation':
+            # One worker per pool agent plus one for the cluster agent, divided over the nodes.
+            return {'max_workers_per_node': (pool_size + nodes) // nodes}
+        return {'available_accelerators': self.gpus_per_node, 'max_workers_per_node': self.gpus_per_node,
+                'base_dir': base_dir}
 
     def environment(self) -> dict[str, str]:
         return {
@@ -212,6 +244,22 @@ POLARIS = System(
     mpi_flavor='mpich',
 )
 
-SYSTEMS: dict[str, System] = {system.name: system for system in (AURORA, POLARIS)}
+# A GH200 node: 288 Grace cores and four CUDA GPUs.
+JUPITER = System(
+    name='jupiter',
+    scheduler='slurm',
+    cpu_ids=tuple(range(288)),
+    gpu_ids=tuple(range(4)),
+    gpu_pin_var='CUDA_VISIBLE_DEVICES',
+    node_discovery='slurm-nodelist',
+    mpi_flavor='srun-overlap',
+    endpoint_workers='pool-across-allocation',
+    node_shape_overrides=True,
+    max_science_workers_per_gpu=2,
+    allocation_accounting='sacct',
+    gpu_telemetry='nvidia-smi-csv',
+)
+
+SYSTEMS: dict[str, System] = {system.name: system for system in (AURORA, POLARIS, JUPITER)}
 
 SystemName = Literal[tuple(SYSTEMS)]  # type: ignore[valid-type]

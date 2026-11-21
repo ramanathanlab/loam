@@ -352,6 +352,7 @@ def test_managed_hpc_yaml_resolves_script_and_generates_canonical_environment(tm
         'HPC_LOAM_HOME': '/campaign/loam',
         'HPC_INSPECT_ROOTS': '/datasets:/campaign/results',
         'HPC_POOL_SIZE': '5',
+        'HPC_SCIENCE_WORKERS_PER_GPU': '1',
         # Cold-endpoint retry bounds: config-driven, defaulted here. They are
         # NOT in HPC_ENDPOINT_CONFIG_JSON on purpose -- changing them must not
         # fork a new user endpoint, since that would forfeit a running block.
@@ -415,10 +416,73 @@ def test_managed_hpc_polaris_environment_spells_out_its_system(tmp_path):
     }
 
 
+def test_managed_hpc_jupiter_environment_spells_out_its_system(tmp_path):
+    values, _ = hpc_config_values(tmp_path)
+    values['execution']['hpc']['system'] = 'jupiter'
+
+    environment = Config.model_validate(values).execution.hpc.environment()
+
+    assert environment['HPC_SYSTEM'] == 'jupiter'
+    # A GH200 node: 288 Grace cores and four CUDA GPUs, found from Slurm's node list
+    # and launched onto with srun steps that overlap the endpoint's own allocation.
+    assert json.loads(environment['HPC_CPU_IDS']) == list(range(288))
+    assert environment['HPC_GPU_IDS'] == '[0,1,2,3]'
+    assert environment['HPC_GPU_PIN_VAR'] == 'CUDA_VISIBLE_DEVICES'
+    assert environment['HPC_NODE_DISCOVERY'] == 'slurm-nodelist'
+    assert environment['HPC_MPI_FLAVOR'] == 'srun-overlap'
+    assert environment['HPC_SCIENCE_WORKERS_PER_GPU'] == '1'
+    # The endpoint's workers host only loam's agents (pool_size 5, plus the cluster agent),
+    # spread over the 2 nodes; science runs under EL. Its template takes no accelerator
+    # list or base_dir.
+    assert json.loads(environment['HPC_ENDPOINT_CONFIG_JSON']) == {
+        'worker_init': 'module load tools',
+        'account': 'project',
+        'queue': 'debug',
+        'walltime': '01:02:03',
+        'nodes_per_block': 2,
+        'init_blocks': 1,
+        'min_blocks': 1,
+        'max_blocks': 3,
+        'max_idletime': 90,
+        'max_workers_per_node': 3,
+    }
+
+
+def test_managed_hpc_jupiter_takes_node_shape_overrides_and_shared_gpus(tmp_path):
+    values, _ = hpc_config_values(tmp_path)
+    values['execution']['hpc'].update(system='jupiter', gpus_per_node=2, cpus_per_node=72, science_workers_per_gpu=2)
+
+    environment = Config.model_validate(values).execution.hpc.environment()
+
+    assert json.loads(environment['HPC_CPU_IDS']) == list(range(72))
+    assert environment['HPC_GPU_IDS'] == '[0,1]'
+    assert environment['HPC_SCIENCE_WORKERS_PER_GPU'] == '2'
+
+
+@pytest.mark.parametrize('system', ['aurora', 'polaris'])
+@pytest.mark.parametrize(('override', 'message'), [
+    ({'gpus_per_node': 2}, 'does not allow GPU/CPU count overrides'),
+    ({'cpus_per_node': 16}, 'does not allow GPU/CPU count overrides'),
+    ({'science_workers_per_gpu': 2}, 'allows at most 1 science worker per GPU'),
+])
+def test_managed_hpc_rejects_overrides_a_system_does_not_allow(tmp_path, system, override, message):
+    values, _ = hpc_config_values(tmp_path)
+    values['execution']['hpc'].update(system=system, **override)
+    with pytest.raises(ValueError, match=f'{system} {message}'):
+        Config.model_validate(values)
+
+
+def test_managed_hpc_rejects_more_shared_workers_than_jupiter_allows(tmp_path):
+    values, _ = hpc_config_values(tmp_path)
+    values['execution']['hpc'].update(system='jupiter', science_workers_per_gpu=3)
+    with pytest.raises(ValueError, match='jupiter allows at most 2 science workers per GPU'):
+        Config.model_validate(values)
+
+
 def test_managed_hpc_rejects_an_undefined_system(tmp_path):
     values, _ = hpc_config_values(tmp_path)
     values['execution']['hpc']['system'] = 'frontier'
-    with pytest.raises(ValueError, match="'aurora' or 'polaris'"):
+    with pytest.raises(ValueError, match="'aurora', 'polaris' or 'jupiter'"):
         Config.model_validate(values)
 
 
