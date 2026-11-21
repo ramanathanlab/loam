@@ -7,11 +7,13 @@ import logging
 from .config import load
 from .launcher import managed_hpc_server
 from .orchestrator import Campaign
+from .token_refresh import refresh_tokens
 
 
 async def main(config_path: str) -> None:
     cfg = load(config_path)
     async with managed_hpc_server(cfg):
+        await refresh_tokens(cfg)  # after the allocation wait, which can outlive a token
         await Campaign(cfg).run(cfg.rounds)
 
 
