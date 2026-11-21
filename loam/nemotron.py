@@ -25,7 +25,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
@@ -40,6 +41,7 @@ from .config import ConfigModel, NonEmptyStr
 from .inference_pool import PoolConfig, ReplicaEndpoint, safe_error, write_json_atomic
 from .systems import SYSTEMS
 
+DRAIN_SECONDS = 900   # retire gives up if the pool still has requests on a retired replica after this
 ROUTES = {('GET', '/v1/models'), ('POST', '/v1/chat/completions')}
 ATTEMPT = re.compile(r'loam-nemotron-[0-9a-f]{16}')
 PROBE = 'LOAM_NEMOTRON_READY'
@@ -91,14 +93,14 @@ def private_address(address: str) -> str:
     return str(ip)
 
 
-def model_snapshot(profile: ServingProfile) -> None:
+def check_model_snapshot(profile: ServingProfile) -> None:
     """Refuse a model directory that is not a complete local Nemotron snapshot of the pinned revision."""
     path = Path(profile.model_dir).resolve(strict=True)
     if path.name != profile.checkpoint_revision:
         raise ValueError('model_dir must be the local snapshot directory named with checkpoint_revision')
-    if json.loads((path / 'config.json').read_text()).get('model_type') != 'nemotron_h_omni':
+    if _read(path / 'config.json').get('model_type') != 'nemotron_h_omni':
         raise ValueError('The local snapshot is not the expected Nemotron Super VL architecture')
-    shards = set(json.loads((path / 'model.safetensors.index.json').read_text())['weight_map'].values())
+    shards = set(_read(path / 'model.safetensors.index.json')['weight_map'].values())
     if not shards or any(Path(name).name != name or not (path / name).is_file() or not (path / name).stat().st_size
                          for name in shards):
         raise ValueError('The local Nemotron snapshot is missing model shards')
@@ -108,11 +110,20 @@ def _pool_config(root: Path, profile: ServingProfile) -> dict:
     path = root / 'pool.json'
     if not path.exists():
         return {'model': profile.model, 'checkpoint': profile.checkpoint, 'backends': []}
-    config = PoolConfig.model_validate_json(path.read_text())
-    if (config.model, config.checkpoint) != (profile.model, profile.checkpoint):
-        raise ValueError(f'pool.json serves model {config.model!r} ({config.checkpoint}), '
+    config = _read(path)
+    serving = PoolConfig.model_validate(config)
+    if (serving.model, serving.checkpoint) != (profile.model, profile.checkpoint):
+        raise ValueError(f'pool.json serves model {serving.model!r} ({serving.checkpoint}), '
                          f'not {profile.model!r} ({profile.checkpoint})')
-    return json.loads(path.read_text())
+    return config
+
+
+@contextmanager
+def _replicas_locked(root: Path) -> Iterator[None]:
+    """Serialise changes to ROOT's replica list (add and retire, possibly from different hosts)."""
+    with (root / '.replicas.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
 
 def _new_attempt(directory: Path, request: dict) -> str:
@@ -132,7 +143,7 @@ def _new_attempt(directory: Path, request: dict) -> str:
 
 
 def add_replicas(root: Path, profile: Mapping, *, system: str, job_id: str, expires_at: float, pool_address: str,
-                 hosts: list[str | None] = (None,), allocation_manifest: Path | None = None) -> list[dict]:
+                 hosts: Sequence[str | None] = (None,), allocation_manifest: Path | None = None) -> list[dict]:
     """Prepare one replica per host in job `job_id` and list each in ROOT/pool.json; returns their entries.
 
     The pool routes to a replica once `loam-nemotron serve ROOT/replicas/<attempt>` reports it ready,
@@ -141,13 +152,12 @@ def add_replicas(root: Path, profile: Mapping, *, system: str, job_id: str, expi
     """
     root = Path(root).resolve()
     serving = ServingProfile.model_validate(profile)
-    model_snapshot(serving)
+    check_model_snapshot(serving)
     pool_address = private_address(pool_address)
     if system not in SYSTEMS:
         raise ValueError(f'Unknown System {system!r}')
     root.mkdir(parents=True, exist_ok=True)
-    with (root / '.replicas.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with _replicas_locked(root):
         config = _pool_config(root, serving)
         numbers = [int(m[1]) for b in config['backends'] if (m := re.fullmatch(r'nemotron-(\d+)', b['id']))]
         first = max(numbers, default=-1) + 1
@@ -222,8 +232,8 @@ def replica_resolver(root: Path) -> Callable[[Mapping], ReplicaEndpoint]:
 
 def relay_app(session: aiohttp.ClientSession, token: str, upstream, *, model: str,
               allowed_address: str | None = None) -> web.Application:
-    """Forward the two OpenAI routes the pool uses (SSE included) to `await upstream()`'s
-    (base_url, token, tls), for callers with `token` (and, if given, from `allowed_address`) only.
+    """Forward the two OpenAI routes the pool uses (SSE included) to the base URL `await upstream()`
+    returns, for callers with `token` (and, if given, from `allowed_address`) only.
 
     Backend error text never passes through, except a context overflow's numbers (see safe_error).
     """
@@ -244,12 +254,10 @@ def relay_app(session: aiohttp.ClientSession, token: str, upstream, *, model: st
                 raise web.HTTPBadRequest(text=f'This replica serves {model!r}')
         reply = None
         try:
-            base, upstream_token, tls = await upstream()
-            headers = {'Content-Type': 'application/json'}
-            if upstream_token:
-                headers['Authorization'] = f'Bearer {upstream_token}'
+            base = await upstream()
             async with session.request(request.method, base + request.path.removeprefix('/v1'), data=data,
-                                       headers=headers, ssl=tls, allow_redirects=False) as response:
+                                       headers={'Content-Type': 'application/json'},
+                                       allow_redirects=False) as response:
                 if response.status >= 300:
                     error = safe_error(response.status, await response.content.read(16385))
                     return web.json_response(error, status=response.status if response.status >= 400 else 502)
@@ -282,7 +290,8 @@ async def _drained(root: Path, ids: set[str], poll_seconds: float) -> None:
         return
     record = _read(service)
     headers = {'Authorization': 'Bearer ' + Path(record['token_file']).read_text().strip()}
-    async with aiohttp.ClientSession(trust_env=False, timeout=aiohttp.ClientTimeout(total=15)) as session:
+    async with asyncio.timeout(DRAIN_SECONDS), aiohttp.ClientSession(
+            trust_env=False, timeout=aiohttp.ClientTimeout(total=15)) as session:
         while True:
             async with session.get(record['status_url'], headers=headers) as response:
                 response.raise_for_status()
@@ -297,16 +306,18 @@ async def retire_replicas(root: Path, *, keep: int, poll_seconds: float = 2) -> 
 
     A retired replica is disabled in pool.json first. Once the running pool has finished every request
     it sent there, the replica's `stop` file tells its `loam-nemotron serve` to shut vLLM down; the
-    caller then releases its node however its scheduler does.
+    caller then releases its node however its scheduler does. A retire that failed while draining is
+    finished by the next one: disabled replicas without a `stop` file are retired again.
     """
     root = Path(root).resolve()
-    with (root / '.replicas.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with _replicas_locked(root):
         config = _read(root / 'pool.json')
         active = [b for b in config['backends'] if b.get('enabled', True)]
         if not 0 <= keep <= len(active):
             raise ValueError(f'Cannot keep {keep} of {len(active)} enabled replicas')
-        retired = active[keep:]
+        unfinished = [b for b in config['backends']
+                      if not b.get('enabled', True) and not (_attempt(root, b) / 'stop').exists()]
+        retired = unfinished + active[keep:]
         for entry in retired:
             entry['enabled'] = False
         write_json_atomic(root / 'pool.json', config)
@@ -347,13 +358,11 @@ def check_compiler(env: Mapping[str, str]) -> None:
         subprocess.run([str(binary)], env=env, check=True, capture_output=True, timeout=10)
 
 
-async def completion_check(session: aiohttp.ClientSession, base: str, model: str, token: str = '', *,
-                           tls=None, timeout: float = 120) -> None:
+async def completion_check(session: aiohttp.ClientSession, base: str, model: str, *, timeout: float) -> None:
     """Readiness means a real completion from the expected model, not an open port."""
-    headers = {'Authorization': f'Bearer {token}'} if token else {}
     body = {'model': model, 'messages': [{'role': 'user', 'content': f'Reply exactly: {PROBE}'}],
             'max_tokens': 128, 'chat_template_kwargs': {'enable_thinking': False}}
-    async with session.post(base + '/chat/completions', json=body, headers=headers, ssl=tls,
+    async with session.post(base + '/chat/completions', json=body,
                             timeout=aiohttp.ClientTimeout(total=timeout), allow_redirects=False) as response:
         response.raise_for_status()
         result = await response.json()
@@ -409,7 +418,7 @@ async def serve(attempt: Path) -> None:
         return stop.is_set() or (attempt / 'stop').exists() or time.time() >= expires_at
 
     with (attempt / 'vllm.log').open('ab') as log:
-        process = subprocess.Popen(server_arguments(request['profile'], port), env=env, stdout=log, stderr=log,
+        process = subprocess.Popen(server_arguments(profile.model_dump(), port), env=env, stdout=log, stderr=log,
                                    start_new_session=True)
     try:
         async with aiohttp.ClientSession(trust_env=False, timeout=aiohttp.ClientTimeout(
@@ -431,7 +440,7 @@ async def serve(attempt: Path) -> None:
             async def upstream():
                 if process.poll() is not None or time.time() >= expires_at:
                     raise RuntimeError('Replica allocation ended')
-                return base, '', None
+                return base
 
             tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             tls.load_cert_chain(attempt / 'tls.pem', attempt / 'tls.key')

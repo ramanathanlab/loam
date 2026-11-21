@@ -204,7 +204,7 @@ async def through_relay(reply, method, path, *, headers=None, allowed_address=No
     """Send one request through the relay in front of a fake vLLM; returns (status, body bytes)."""
     async with serve(fake_vllm(reply)) as upstream, aiohttp.ClientSession() as session:
         async def target():
-            return upstream + '/v1', '', None
+            return upstream + '/v1'
 
         app = nemotron.relay_app(session, 'relay-token', target, model=MODEL, allowed_address=allowed_address)
         async with serve(app) as relay:
@@ -343,3 +343,35 @@ def test_a_retired_replica_finishes_its_request_before_it_is_stopped(tmp_path, p
 
     assert asyncio.run(run()) == ['nemotron-01']
     assert stopped_while_busy == [False] and stop.exists()
+
+
+def test_a_retire_that_failed_while_draining_is_finished_by_the_next_one(tmp_path, profile):
+    entries = add(tmp_path, profile, hosts=['a', 'b'])
+    (tmp_path / 'pool-token').write_text('t\n')
+    (tmp_path / 'pool-service.json').write_text(json.dumps(  # a pool that has since died
+        {'status_url': 'http://127.0.0.1:9/pool/status', 'token_file': str(tmp_path / 'pool-token')}))
+    with pytest.raises(aiohttp.ClientError):
+        asyncio.run(nemotron.retire_replicas(tmp_path, keep=1))
+    (tmp_path / 'pool-service.json').unlink()
+    assert [r['id'] for r in asyncio.run(nemotron.retire_replicas(tmp_path, keep=1))] == ['nemotron-01']
+    assert (tmp_path / 'replicas' / entries[1]['attempt'] / 'stop').exists()
+
+
+def test_retire_gives_up_on_a_pool_that_never_drains(tmp_path, profile, monkeypatch):
+    add(tmp_path, profile, hosts=['a', 'b'])
+    monkeypatch.setattr(nemotron, 'DRAIN_SECONDS', 0.2)
+
+    async def run():
+        async def status(request):
+            return web.json_response({'backends': [{'id': 'nemotron-01', 'enabled': False, 'inflight': 1}]})
+
+        app = web.Application()
+        app.router.add_get('/pool/status', status)
+        async with serve(app) as url:
+            (tmp_path / 'pool-token').write_text('t\n')
+            (tmp_path / 'pool-service.json').write_text(json.dumps(
+                {'status_url': url + '/pool/status', 'token_file': str(tmp_path / 'pool-token')}))
+            await nemotron.retire_replicas(tmp_path, keep=1, poll_seconds=0.02)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(run())
