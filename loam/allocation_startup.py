@@ -1,9 +1,10 @@
 """Observe every assigned physical GPU before starting services inside an allocation.
 
 Ported from the moeen branch's single-allocation startup, where the device count was
-Jupiter's four; here it is the System's GPUs per node. A sample is one host's line in
-`<campaign>/telemetry/<job_id>-<host>.jsonl`, with the GPU rows as CSV whose first
-column is the device index and third its busy percent (`loam.systems.parse_nvidia_smi_busy`).
+Jupiter's four; here the System (with the campaign's node shape) says how many GPUs a
+node has and how to read a sample. A sample is one host's line in
+`<campaign>/telemetry/<job_id>-<host>.jsonl`. A System whose GPU telemetry loam cannot
+read cannot be started this way.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .systems import parse_nvidia_smi_busy
+from .systems import System
 
 # Only the end of a telemetry file is read: an earlier attempt may have left a long one.
 TAIL_BYTES = 65536
@@ -31,25 +32,26 @@ def _tail_lines(path: Path) -> list[str]:
         return stream.read().decode(errors='replace').splitlines()
 
 
-def _healthy(row: dict, allocation: dict, *, host: str, science: set[str], gpus_per_node: int, now: float) -> bool:
+def _healthy(row: dict, allocation: dict, *, host: str, science: set[str], system: System, now: float) -> bool:
     """A fresh, successful sample from this allocation and host role, covering every GPU on the node."""
     timestamp = float(row['timestamp'])
     if (row['job_id'] != allocation['job_id']
             or row.get('role') != ('science' if host in science else 'inference')
-            or row.get('nvidia_returncode') != 0 or not math.isfinite(timestamp)
+            or not math.isfinite(timestamp)
             or timestamp < float(allocation['started_at'])
             or not -SKEW_SECONDS <= now - timestamp <= FRESH_SECONDS):
         return False
-    return parse_nvidia_smi_busy(row.get('gpu_csv', ''), gpus_per_node=gpus_per_node) is not None
+    return system.every_gpu_reported(row)
 
 
-def telemetry_ready_hosts(campaign: Path, allocation: dict, *, gpus_per_node: int,
+def telemetry_ready_hosts(campaign: Path, allocation: dict, *, system: System,
                           now: float | None = None) -> set[str]:
-    """The allocation's hosts whose latest sample shows all `gpus_per_node` GPUs healthy.
+    """The allocation's hosts whose latest sample shows each of the System's GPUs healthy.
 
     A previous allocation's samples, partial appends, wrong roles, failed queries, and
     device lists of the wrong size cannot satisfy startup readiness.
     """
+    system.check_gpu_telemetry()
     now = time.time() if now is None else now
     expected = set(allocation['all_nodes'])
     science = set(allocation['science_nodes'])
@@ -67,7 +69,7 @@ def telemetry_ready_hosts(campaign: Path, allocation: dict, *, gpus_per_node: in
                 host = row['host'].split('.')[0]
                 if host not in expected or host in ready:
                     continue
-                if _healthy(row, allocation, host=host, science=science, gpus_per_node=gpus_per_node, now=now):
+                if _healthy(row, allocation, host=host, science=science, system=system, now=now):
                     ready.add(host)
                     break
             except (KeyError, TypeError, ValueError):
@@ -75,12 +77,13 @@ def telemetry_ready_hosts(campaign: Path, allocation: dict, *, gpus_per_node: in
     return ready
 
 
-async def wait_for_allocation_telemetry(process: Any, campaign: Path, allocation: dict, *, gpus_per_node: int,
+async def wait_for_allocation_telemetry(process: Any, campaign: Path, allocation: dict, *, system: System,
                                         timeout: float = 900) -> set[str]:
     """Wait until every host shows all its GPUs; never submit, cancel, or restart the allocation.
 
     `process` is the telemetry collector (anything with `poll()`); if it exits first, startup fails.
     """
+    system.check_gpu_telemetry()
     deadline = time.monotonic() + timeout
     expected = set(allocation['all_nodes'])
     if not expected:
@@ -88,10 +91,10 @@ async def wait_for_allocation_telemetry(process: Any, campaign: Path, allocation
     while True:
         if process.poll() is not None:
             raise RuntimeError('Allocation telemetry process exited before service startup')
-        ready = telemetry_ready_hosts(campaign, allocation, gpus_per_node=gpus_per_node)
+        ready = telemetry_ready_hosts(campaign, allocation, system=system)
         if ready == expected:
             return ready
         if time.monotonic() >= deadline:
-            raise TimeoutError(f'No fresh {gpus_per_node}-GPU telemetry on assigned nodes: '
+            raise TimeoutError(f'No fresh {system.gpus_per_node}-GPU telemetry on assigned nodes: '
                                + ', '.join(sorted(expected - ready)))
         await asyncio.sleep(min(2, max(0, deadline - time.monotonic())))

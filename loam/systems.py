@@ -74,6 +74,11 @@ class System:
     def gpus_per_node(self) -> int:
         return len(self.gpu_ids)
 
+    @property
+    def job_id_variable(self) -> str:
+        """The variable the scheduler sets, inside a job, to that job's id."""
+        return {'pbs': 'PBS_JOBID', 'slurm': 'SLURM_JOB_ID'}[self.scheduler]
+
     def with_node_shape(self, *, gpus: int | None = None, cpus: int | None = None) -> System:
         """This System with a campaign config's GPU and CPU counts, numbered from zero."""
         if gpus is None and cpus is None:
@@ -123,11 +128,20 @@ class System:
         output = sacct(['-n', '-X', '-j', ','.join(ids), '--parsable2', '--format=' + ','.join(SACCT_FIELDS)])
         return parse_sacct_parent_jobs(output, ids)
 
-    def gpu_busy(self, sample: dict, *, gpus_per_node: int) -> list[float] | None:
-        """Busy percent of each GPU, by index, in one telemetry sample; None if it does not cover every GPU."""
+    def check_gpu_telemetry(self) -> None:
         if self.gpu_telemetry != 'nvidia-smi-csv':
             raise NotImplementedError(f'loam cannot read GPU telemetry on {self.name}')
+
+    def gpu_busy(self, sample: dict, *, gpus_per_node: int) -> list[float] | None:
+        """Busy percent of each GPU, by index, in one telemetry sample; None if it does not cover every GPU."""
+        self.check_gpu_telemetry()
         return parse_nvidia_smi_busy(sample.get('gpu_csv', ''), gpus_per_node=gpus_per_node)
+
+    def every_gpu_reported(self, sample: dict) -> bool:
+        """Whether one host's telemetry sample is a successful query that covers each of this System's GPUs."""
+        self.check_gpu_telemetry()
+        return sample.get('nvidia_returncode') == 0 \
+            and self.gpu_busy(sample, gpus_per_node=self.gpus_per_node) is not None
 
 
 # --- Slurm accounting (`sacct`) -------------------------------------------
@@ -257,6 +271,7 @@ POLARIS = System(
     gpu_pin_var='CUDA_VISIBLE_DEVICES',
     node_discovery='pbs-nodefile',
     mpi_flavor='mpich',
+    gpu_telemetry='nvidia-smi-csv',  # A100s; allocation accounting is still unread on PBS
 )
 
 # A GH200 node: 288 Grace cores and four CUDA GPUs.

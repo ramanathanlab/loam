@@ -44,21 +44,15 @@ def test_enforces_parent_job_and_host_role(tmp_path):
             validate_role(path, role, hostname=host, job_id=job)
 
 
-def test_a_pbs_job_is_found_from_the_scheduler_environment(tmp_path, monkeypatch):
+def test_a_dotted_pbs_job_id_is_a_job(tmp_path):
     job = '4242.aurora-pbs-0001.hostmgmt.cm.aurora.alcf.anl.gov'
-    path = manifest(tmp_path, job_id=job)
-    monkeypatch.delenv('SLURM_JOB_ID', raising=False)
-    monkeypatch.setenv('PBS_JOBID', job)
 
-    assert validate_role(path, 'science', hostname='a')['job_id'] == job
+    assert validate_role(manifest(tmp_path, job_id=job), 'science', hostname='a', job_id=job)['job_id'] == job
 
 
-def test_outside_any_job_no_role_is_valid(tmp_path, monkeypatch):
-    monkeypatch.delenv('SLURM_JOB_ID', raising=False)
-    monkeypatch.delenv('PBS_JOBID', raising=False)
-
+def test_outside_any_job_no_role_is_valid(tmp_path):
     with pytest.raises(RuntimeError, match='assigned job'):
-        validate_role(manifest(tmp_path), 'science', hostname='a')
+        validate_role(manifest(tmp_path), 'science', hostname='a', job_id=None)
 
 
 # Simultaneous replicas must not multiply the allocation wall clock.

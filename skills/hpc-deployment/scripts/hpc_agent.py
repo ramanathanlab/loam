@@ -474,15 +474,14 @@ def allocation_nodes(method: str, environ: Mapping[str, str], expected: int | No
         raise RuntimeError(f"HPC_LAUNCH_MODE=existing, but this process is not inside an allocation: "
                            f"{variable} is not set. Start the campaign from within the job.")
     hosts = list(dict.fromkeys(host.split(".")[0] for host in read_hosts(environ[variable]) if host.strip()))
-    nodes = hosts
+    nodes, which = hosts, "nodes"
     if environ.get("HPC_SCIENCE_NODELIST"):
         assigned = [host.strip().split(".")[0] for host in expand(environ["HPC_SCIENCE_NODELIST"]) if host.strip()]
         if len(set(assigned)) != len(assigned) or not set(assigned) <= set(hosts):
             raise RuntimeError(f"the science nodes {assigned} must be a unique subset of the allocation {hosts}")
-        nodes = assigned
+        nodes, which = assigned, "science nodes"
     if expected is not None and len(nodes) != expected:
-        role = "science nodes" if nodes is not hosts else "nodes"
-        raise RuntimeError(f"the allocation has {len(nodes)} {role}; the campaign expects {expected}")
+        raise RuntimeError(f"the allocation has {len(nodes)} {which}; the campaign expects {expected}")
     return nodes
 
 

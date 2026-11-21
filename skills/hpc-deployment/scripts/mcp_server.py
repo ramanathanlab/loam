@@ -75,8 +75,8 @@ class Settings:
     """Everything the server reads from the deployment environment, except the System
     (hpc_agent.SystemSpec) and the Site profile (hpc_agent.worker_environment)."""
     # 'globus': the endpoint submits the allocation. 'existing': attach to the one this runs inside.
-    launch_mode: str
-    endpoint_id: str  # empty when attaching to an existing allocation
+    launch_mode: Literal["globus", "existing"]
+    endpoint_id: str | None  # None when attaching to an existing allocation
     pool_size: int
     base_dir: str
     campaign_id: str
@@ -105,7 +105,7 @@ class Settings:
         launch_mode = required(environ, "HPC_LAUNCH_MODE")
         if launch_mode not in ("globus", "existing"):
             raise RuntimeError(f"HPC_LAUNCH_MODE must be globus or existing, not {launch_mode!r}")
-        endpoint_id = required(environ, "HPC_GLOBUS_ENDPOINT_ID") if launch_mode == "globus" else ""
+        endpoint_id = required(environ, "HPC_GLOBUS_ENDPOINT_ID") if launch_mode == "globus" else None
         pool_size = int(required(environ, "HPC_POOL_SIZE"))
         base_dir = required(environ, "HPC_BASE_DIR")
         campaign_id = required(environ, "HPC_CAMPAIGN_ID")

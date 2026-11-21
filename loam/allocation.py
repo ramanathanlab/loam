@@ -3,20 +3,18 @@
 Ported from the moeen branch's single-allocation mode. The manifest is written by
 whoever splits the allocation (the single-allocation coordinator); every process that
 serves a role checks it runs in that job, on a host assigned to that role. Job ids are
-the scheduler's own: Slurm's are numeric, PBS's dotted (`4242.aurora-pbs-0001...`).
+the scheduler's own, read from the System's `job_id_variable`: numeric on some
+schedulers, dotted on others (`4242.aurora-pbs-0001...`).
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
 import socket
 from pathlib import Path
 
 ROLES = ('science', 'inference')
-# The variable each scheduler sets to the running job's id.
-JOB_ID_VARIABLES = ('SLURM_JOB_ID', 'PBS_JOBID')
 # A job id also names telemetry files, so it may not contain a path separator.
 JOB_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
 
@@ -39,17 +37,14 @@ def read_allocation(path: Path) -> dict:
     return data
 
 
-def current_job_id() -> str | None:
-    """The id of the scheduler job this process runs in, if any."""
-    return next((os.environ[name] for name in JOB_ID_VARIABLES if os.environ.get(name)), None)
+def validate_role(path: Path, role: str, *, job_id: str | None, hostname: str | None = None) -> dict:
+    """The manifest, if this process runs in its job (`job_id`, None outside any) on a host assigned to `role`.
 
-
-def validate_role(path: Path, role: str, *, hostname: str | None = None, job_id: str | None = None) -> dict:
-    """The manifest, if this process runs in its job on a host assigned to `role`."""
+    The caller reads `job_id` from the environment, as `os.environ.get(system.job_id_variable)`.
+    """
     data = read_allocation(path)
-    job = job_id or current_job_id()
     host = (hostname or socket.gethostname()).split('.')[0]
-    if job != data['job_id'] or role not in ROLES or host not in data[role + '_nodes']:
+    if job_id != data['job_id'] or role not in ROLES or host not in data[role + '_nodes']:
         raise RuntimeError('Process does not belong to its assigned job/role/host')
     return data
 
