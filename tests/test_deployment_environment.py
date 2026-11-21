@@ -32,6 +32,10 @@ TUNING = {
     'HPC_RUN_CODE_MAX_OUTPUT', 'HPC_TOOL_ROOT', 'HPC_TOOL_SMOKE_TIMEOUT',
 }
 
+# Set by whoever splits an existing allocation into science and inference roles (the single-allocation
+# coordinator), not by the campaign config: each allocation's hosts are only known once it runs.
+ROLE_ASSIGNMENT = {'HPC_SCIENCE_NODELIST'}
+
 # Produced by loam for the operator, who exports it to workers (skills/hpc-deployment/SKILL.md); no script reads it.
 OPERATOR_ONLY = {'HPC_LOAM_HOME'}
 
@@ -55,7 +59,7 @@ def produced_by_loam(tmp_path, system) -> set[str]:
 
 @pytest.mark.parametrize('system', sorted(SYSTEMS))
 def test_every_variable_the_scripts_read_is_produced_by_loam_or_is_tuning(tmp_path, system):
-    unproduced = read_by_scripts() - produced_by_loam(tmp_path, system) - TUNING
+    unproduced = read_by_scripts() - produced_by_loam(tmp_path, system) - TUNING - ROLE_ASSIGNMENT
     assert not unproduced, (f'read by {", ".join(READERS)} but not produced by loam for {system}; produce it '
                             f'(loam.config / loam.systems) or, if it has a default, list it in TUNING')
 
@@ -71,4 +75,6 @@ def test_every_variable_loam_produces_is_read_or_is_for_the_operator(tmp_path, s
 def test_the_exception_lists_are_not_stale(tmp_path, system):
     read, produced = read_by_scripts(), produced_by_loam(tmp_path, system)
     assert TUNING <= read - produced, 'TUNING lists a variable no script reads, or one loam now produces'
+    assert ROLE_ASSIGNMENT <= read - produced, \
+        'ROLE_ASSIGNMENT lists a variable no script reads, or one loam now produces'
     assert OPERATOR_ONLY <= produced - read, 'OPERATOR_ONLY lists a variable loam no longer produces, or one a script reads'

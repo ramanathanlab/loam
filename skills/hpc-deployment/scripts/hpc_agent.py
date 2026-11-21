@@ -433,9 +433,7 @@ def _slurm_nodelist_nodes(environ: Mapping[str, str], expected: int) -> list[str
         if expected > 1:
             raise RuntimeError("a multi-node cluster on Slurm needs SLURM_JOB_NODELIST")
         return [socket.gethostname()]
-    hostnames = subprocess.run(["scontrol", "show", "hostnames", nodelist],
-                               capture_output=True, text=True, check=True, timeout=30).stdout
-    nodes = list(dict.fromkeys(line.strip() for line in hostnames.splitlines() if line.strip()))
+    nodes = list(dict.fromkeys(_slurm_hostnames(nodelist)))
     if len(nodes) != expected:
         raise RuntimeError(f"the Slurm allocation has {len(nodes)} hosts; requested {expected}")
     return nodes
@@ -447,6 +445,44 @@ _NODE_DISCOVERY = {"pbs-nodefile": _pbs_nodefile_nodes, "slurm-nodelist": _slurm
 def discover_nodes(method: str, environ: Mapping[str, str], expected: int = 1) -> list[str]:
     """The allocation's `expected` nodes, found the way the System says to."""
     return _NODE_DISCOVERY[method](environ, expected)
+
+
+def _slurm_hostnames(expression: str) -> list[str]:
+    return subprocess.run(["scontrol", "show", "hostnames", expression],
+                          capture_output=True, text=True, check=True, timeout=30).stdout.split()
+
+
+# For each discovery method: the variable naming the running allocation's nodes, how to read
+# that allocation's hosts from it, and how to expand HPC_SCIENCE_NODELIST (in the same notation).
+_ALLOCATION_HOSTS = {
+    "pbs-nodefile": ("PBS_NODEFILE", lambda value: Path(value).read_text().split(),
+                     lambda value: value.split(",")),
+    "slurm-nodelist": ("SLURM_JOB_NODELIST", _slurm_hostnames, _slurm_hostnames),
+}
+
+
+def allocation_nodes(method: str, environ: Mapping[str, str], expected: int | None) -> list[str]:
+    """The nodes of the allocation this process runs inside (HPC_LAUNCH_MODE=existing).
+
+    Unlike `discover_nodes`, never falls back to this host: outside an allocation it fails.
+    HPC_SCIENCE_NODELIST, when set, names the science role's share of the allocation (the
+    rest serve inference); science runs only there. `expected`, when given, is the node
+    count the campaign was configured for.
+    """
+    variable, read_hosts, expand = _ALLOCATION_HOSTS[method]
+    if not environ.get(variable):
+        raise RuntimeError(f"HPC_LAUNCH_MODE=existing, but this process is not inside an allocation: "
+                           f"{variable} is not set. Start the campaign from within the job.")
+    hosts = list(dict.fromkeys(host.split(".")[0] for host in read_hosts(environ[variable]) if host.strip()))
+    nodes, which = hosts, "nodes"
+    if environ.get("HPC_SCIENCE_NODELIST"):
+        assigned = [host.strip().split(".")[0] for host in expand(environ["HPC_SCIENCE_NODELIST"]) if host.strip()]
+        if len(set(assigned)) != len(assigned) or not set(assigned) <= set(hosts):
+            raise RuntimeError(f"the science nodes {assigned} must be a unique subset of the allocation {hosts}")
+        nodes, which = assigned, "science nodes"
+    if expected is not None and len(nodes) != expected:
+        raise RuntimeError(f"the allocation has {len(nodes)} {which}; the campaign expects {expected}")
+    return nodes
 
 
 def _mpich_launcher(spec: SystemSpec, nnodes: int) -> dict:
@@ -498,11 +534,14 @@ def worker_environment(environ: Mapping[str, str]) -> dict[str, str]:
 class HpcClusterAgent(Agent):
     """Owns the lifecycle of one EL cluster; stopping this agent stops the cluster."""
     def __init__(self, base_dir: str, ckpt_dir: str, nnodes: int, spec: SystemSpec,
-                 task_executor_name: list[str] | None = None):
+                 task_executor_name: list[str] | None = None, nodes: list[str] | None = None):
         super().__init__()
         self.ckpt_dir = str(Path(base_dir, ckpt_dir))
         self.spec = spec
         self.nnodes = nnodes
+        # The nodes to run on, when the server already found them in the allocation it attached
+        # to (HPC_LAUNCH_MODE=existing); otherwise this agent discovers them where it starts.
+        self.nodes = nodes
         # Shared GPUs: EL schedules logical slots, which each row maps back to a GPU (_pin_shared_gpu).
         shared = spec.science_workers_per_gpu > 1
         gpus = list(range(len(spec.gpu_ids) * spec.science_workers_per_gpu)) if shared else list(spec.gpu_ids)
@@ -533,7 +572,8 @@ class HpcClusterAgent(Agent):
             el = EnsembleLauncher(ensemble_file={},
                                   system_config=self.system_config,
                                   launcher_config=self.launcher_config,
-                                  Nodes=discover_nodes(self.spec.node_discovery, os.environ, self.nnodes))
+                                  Nodes=self.nodes or discover_nodes(self.spec.node_discovery, os.environ,
+                                                                     self.nnodes))
             el.start()
             return el
 

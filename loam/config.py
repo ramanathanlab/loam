@@ -174,7 +174,11 @@ class SiteProfile(ConfigModel):
 
 
 class HPCDeployment(ConfigModel):
-    endpoint_id: NonEmptyStr
+    # 'globus': the Globus Compute endpoint submits the allocation. 'existing': the campaign runs
+    # inside an allocation that is already running, and finds its nodes from the scheduler.
+    launch_mode: Literal['globus', 'existing'] = 'globus'
+    # The Globus Compute endpoint; only Globus submission uses one.
+    endpoint_id: NonEmptyStr | None = None
     campaign_id: NonEmptyStr
     system: SystemName
     exchange_url: NonEmptyStr
@@ -208,6 +212,8 @@ class HPCDeployment(ConfigModel):
     @model_validator(mode='after')
     def validate_deployment(self, info: ValidationInfo):
         self._site_profile = (info.context or {}).get('site_profile')
+        if self.launch_mode == 'globus' and self.endpoint_id is None:
+            raise ValueError('execution.hpc.endpoint_id is required when launch_mode is globus')
         self.system_definition()  # rejects node shape overrides the System does not allow
         SYSTEMS[self.system].check_science_workers_per_gpu(self.science_workers_per_gpu)
         for name in ('base_dir', 'worker_code_dir'):
@@ -242,8 +248,10 @@ class HPCDeployment(ConfigModel):
         if self._site_profile is not None:
             endpoint_config['worker_init'] = self._site_profile.full_worker_init(
                 allocation.endpoint_options.get('worker_init'))
+        endpoint = {'HPC_GLOBUS_ENDPOINT_ID': self.endpoint_id} if self.endpoint_id is not None else {}
         return {
-            'HPC_GLOBUS_ENDPOINT_ID': self.endpoint_id,
+            'HPC_LAUNCH_MODE': self.launch_mode,
+            **endpoint,
             'HPC_CAMPAIGN_ID': self.campaign_id,
             'HPC_SYSTEM': self.system,
             'ACADEMY_EXCHANGE_URL': self.exchange_url,
