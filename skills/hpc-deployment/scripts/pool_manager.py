@@ -156,7 +156,7 @@ class ClusterPool:
         self.want = want
         # How long to retry a cold-endpoint (ENDPOINT_NOT_ONLINE) submit, plus
         # the initial backoff (doubles, capped at a quarter of the window).
-        # Covers uep fork/registration only, not the PBS queue.
+        # Covers uep fork/registration only, not the scheduler's queue.
         self.cold_endpoint_timeout_s = _setting(
             cold_endpoint_timeout_s, "HPC_COLD_ENDPOINT_TIMEOUT", "300")
         self.cold_endpoint_backoff_s = _setting(
@@ -164,7 +164,7 @@ class ClusterPool:
         # A new client has to clear scheduler wait and agent_on_startup (the EL
         # ClusterClient checkpoint handshake) before it answers a probe.
         self.startup_timeout_s = _setting(startup_timeout_s, "HPC_AGENT_STARTUP_TIMEOUT", "600")
-        # The cluster agent's first probe waits out the PBS queue, not just
+        # The cluster agent's first probe waits out the scheduler's queue, not just
         # process startup, so it gets a much larger budget than anything else.
         self.cluster_timeout_s = _setting(cluster_timeout_s, "HPC_CLUSTER_STARTUP_TIMEOUT", "3000")
         self.probe_interval_s = _setting(probe_interval_s, "HPC_POOL_PROBE_INTERVAL", "60")
