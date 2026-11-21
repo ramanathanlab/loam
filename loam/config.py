@@ -53,6 +53,9 @@ class ModelSpec(ConfigModel):
     model: str
     base_url: str | None = None
     api_key_env: str | None = None
+    # pydantic-ai model settings for this role's agent, e.g. {max_tokens: 32768}. Synthesis reserves
+    # the reasoner's max_tokens in its request budget. model_retries and timeouts.model_request win.
+    settings: dict[str, Any] = Field(default_factory=dict)
 
     def api_key(self, *, custom_endpoint: bool = False) -> str | None:
         key = os.environ.get(self.api_key_env) if self.api_key_env else None
