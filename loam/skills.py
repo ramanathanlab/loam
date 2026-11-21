@@ -39,6 +39,8 @@ def read(skills: dict[str, Path], name: str, file: str | None = None) -> str:
 # Paths into one person's or project's filesystem. They are a Site profile's business, so no file a
 # skill bundles may hold one: reference files and scripts reach software through $LOAM_SOFTWARE_ROOT.
 PERSONAL_PATHS = ('/flare/', '/lus/', '/e/project', '/Users/')
+# What a skill claims in place of a list of Systems when it runs the same way on all of them.
+ANY_SYSTEM = 'all'
 # A SKILL.md is System-neutral as well as impersonal, so it may not even name a System's own
 # filesystem; a reference file for that System may.
 PATHS_FORBIDDEN_IN_SKILL_MD = PERSONAL_PATHS + ('/opt/aurora',)
@@ -60,14 +62,22 @@ def layout_problems(skill: Path) -> list[str]:
     references/<system>.md, the agent's instructions for that System, and no other System does.
     A skill that does not claim every System says it is unsupported elsewhere. No file the skill
     bundles holds a personal path, whichever System it is for.
+
+    A skill that runs the same way everywhere claims `systems: all` instead of naming Systems: it
+    needs no reference file and may not ship one, and has no System to be unsupported on. The
+    personal-path and account rules still hold.
     """
     text = (skill / 'SKILL.md').read_text(errors='replace')
     problems = []
     claimed = _frontmatter(skill / 'SKILL.md').get('systems')
+    if isinstance(claimed, str):   # a single claim needs no brackets: `systems: all`
+        claimed = [claimed]
     if not isinstance(claimed, list) or not claimed:
         problems.append('SKILL.md: frontmatter must list the Systems it supports, e.g. `systems: [aurora]`')
         claimed = []
     claimed = [str(system) for system in claimed]
+    if ANY_SYSTEM in claimed:
+        return _system_independent_problems(skill, claimed) + _impersonal_problems(skill, text)
     for system in claimed:
         if system not in SYSTEMS:
             problems.append(f'SKILL.md: {system!r} is not a defined System ({", ".join(SYSTEMS)})')
@@ -77,13 +87,24 @@ def layout_problems(skill: Path) -> list[str]:
                  for system in SYSTEMS if system not in claimed and (skill / 'references' / f'{system}.md').is_file()]
     if set(SYSTEMS) - set(claimed) and 'unsupported' not in text.lower():
         problems.append('SKILL.md must say the skill is unsupported on the Systems it does not claim')
-    problems += _paths_found(text, 'SKILL.md', PATHS_FORBIDDEN_IN_SKILL_MD,
-                             'System-specific or personal path')
-    for line_no, line in enumerate(text.splitlines(), 1):
-        if HARD_CODED_ACCOUNT.search(line):
-            problems.append(f'SKILL.md:{line_no}: hard-coded allocation account')
-    problems += _personal_paths_in_bundled_files(skill)
-    return problems
+    return problems + _impersonal_problems(skill, text)
+
+
+def _impersonal_problems(skill: Path, text: str) -> list[str]:
+    """Every personal path or hard-coded account the skill holds, in SKILL.md or any file it bundles."""
+    problems = _paths_found(text, 'SKILL.md', PATHS_FORBIDDEN_IN_SKILL_MD,
+                            'System-specific or personal path')
+    problems += [f'SKILL.md:{line_no}: hard-coded allocation account'
+                 for line_no, line in enumerate(text.splitlines(), 1) if HARD_CODED_ACCOUNT.search(line)]
+    return problems + _personal_paths_in_bundled_files(skill)
+
+
+def _system_independent_problems(skill: Path, claimed: list[str]) -> list[str]:
+    """What is wrong with a `systems: all` skill: it claims nothing else and ships no reference file."""
+    problems = [f'SKILL.md: {ANY_SYSTEM!r} is the whole claim; it cannot be listed beside {system!r}'
+                for system in claimed if system != ANY_SYSTEM]
+    return problems + [f'SKILL.md claims {ANY_SYSTEM!r}, so references/{system}.md must not exist'
+                       for system in SYSTEMS if (skill / 'references' / f'{system}.md').is_file()]
 
 
 def _paths_found(text: str, name: str, paths: tuple[str, ...], label: str) -> list[str]:

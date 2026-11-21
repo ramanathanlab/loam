@@ -8,6 +8,7 @@ description: >-
   for free-text Q&A. Supports FREETEXT answers and STRUCTURED JSON extraction.
   Needs faiss + datasets + sentence-transformers AND a configured
   OpenAI-compatible chat endpoint.
+systems: all
 ---
 
 # RAG: query (faiss retrieval + OpenAI-compatible LLM)
@@ -22,7 +23,15 @@ and on whether the corpus actually contains the answer.
 
 This is a **self-contained, instruction-only skill**. There is no wrapper script
 and no project dependency — you (the agent) write and run the retrieval + LLM
-call yourself. NEVER import bindify.
+call yourself.
+
+## It does not depend on the System
+
+faiss, datasets and sentence-transformers on CPU plus one HTTP call are the whole stack, so this
+skill claims `systems: all`: there is no reference file, and nothing here is specific to a System.
+Use the interpreter the campaign gives you (a tool venv under `$LOAM_SOFTWARE_ROOT` if the Site
+profile provides one), and take `HF_HOME` and network access from the Site profile's `worker_init`.
+The encoder must match the one the index was built with and must already be cached.
 
 ## When to use it
 
@@ -42,15 +51,24 @@ python -c "import faiss, datasets, sentence_transformers" 2>/dev/null && echo re
 ```
 
 **Be honest about the endpoint: it must be configured, this skill cannot invent
-one.** Read the base URL from the env var `BINDIFY_LLM_BASE_URL` (default model
-e.g. `Qwen/Qwen2.5-32B-Instruct`). It may be a hosted OpenAI-compatible API, a
-local vLLM server (`requests.post` to `http://<server>/v1/chat/completions`), or
-an ALCF endpoint. If `BINDIFY_LLM_BASE_URL` is unset, stop and ask for it rather
-than guessing. Confirm reachability:
+one.** The Site profile's endpoints arrive as `LOAM_INFERENCE_JSON`, a JSON
+object of `name -> {base_url, api_key_env}`; pick one by name and read its key
+from the environment variable `api_key_env` names. It may be a hosted
+OpenAI-compatible API or a self-hosted server. If no endpoint is configured,
+stop and ask for one rather than guessing. An `api_key_env` that is named but
+unset is a **misconfiguration, not "no key"** — stop and report it rather than
+sending an unauthenticated request (loam does the same in `loam/hindsight.py`).
+The profile names no model, so ask the endpoint (`GET {base_url}/models`) or ask
+the operator; never guess a model name.
 
 ```bash
-echo "${BINDIFY_LLM_BASE_URL:?set BINDIFY_LLM_BASE_URL to your /v1 chat endpoint}"
+python -c "import json,os; print(json.loads(os.environ['LOAM_INFERENCE_JSON']))"
 ```
+
+A tunnel on a login node is not reachable from a compute node, so a `localhost`
+base URL only works where the service actually listens: retrieval can run on a
+worker while the chat call is made where the endpoint is reachable. Do not
+change service bindings or expose a tunnel to make it fit.
 
 ## Procedure
 
@@ -82,8 +100,13 @@ from sentence_transformers import SentenceTransformer
 STORE   = "/path/to/store"          # dir holding faiss.index + dataset/
 QUERY   = "What residues are known hotspots on <target>?"
 TOP_K   = 5
-BASE    = os.environ["BINDIFY_LLM_BASE_URL"].rstrip("/")   # .../v1
-MODEL   = os.environ.get("BINDIFY_LLM_MODEL", "Qwen/Qwen2.5-32B-Instruct")
+ENDPOINT = json.loads(os.environ["LOAM_INFERENCE_JSON"])["argo"]   # a name from your Site profile
+BASE    = ENDPOINT["base_url"].rstrip("/")                         # .../v1
+KEY_ENV = ENDPOINT.get("api_key_env")                              # None when the endpoint needs no key
+KEY     = os.environ[KEY_ENV] if KEY_ENV else ""                   # KeyError: named but unset = stop
+AUTH    = {"Authorization": f"Bearer {KEY}"} if KEY else {}
+MODELS  = [m["id"] for m in requests.get(f"{BASE}/models", headers=AUTH, timeout=30).json()["data"]]
+MODEL   = MODELS[0]                # choose deliberately when the endpoint serves more than one
 
 encoder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 index   = faiss.read_index(f"{STORE}/faiss.index")
@@ -101,6 +124,7 @@ prompt = (f"Use only the context to answer.\n\nContext:\n{context}\n\n"
 
 resp = requests.post(
     f"{BASE}/chat/completions",
+    headers=AUTH,
     json={"model": MODEL,
           "messages": [{"role": "user", "content": prompt}],
           "temperature": 0.0},
@@ -128,8 +152,12 @@ print(json.dumps({"answer": answer, "records": records}))
 
 ## Notes
 
-- Use the same encoder and normalization as the index; a mismatch silently
-  degrades retrieval.
+- Use the same encoder, dimension and normalization as the index; a mismatch
+  silently degrades retrieval. Reload the saved Arrow records and check the
+  hit-to-document mapping.
+- Answer only from the retrieved passages, and retain the retrieved records,
+  their scores, the encoder and model identities and the grounded answer.
+  Retrieval alone does not pass a query/answer check.
 - Deciding which questions to ask, what `query_type`/schema to extract, and how
   to act on the mined hotspots/interactions is your job as the agent. This skill
   only runs one retrieval-augmented query.

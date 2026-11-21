@@ -5,6 +5,7 @@ Usage:
 """
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 
@@ -13,8 +14,8 @@ from genslm_esm_sae.backbone import Backbone
 from genslm_esm_sae.sae import SaeModel
 
 MODEL = 'genslm-test/genslm-esmc-600M-contrastive-2026-10-step-200000'
-SAE_DEFAULT = ('/flare/FRAME-IDP/msinclair/software/genslm-esm-sae/campaigns/'
-               '600m-codon/runs/l18-36-lr2e-4/best/layer32')
+# The trained SAEs ship with the install, which the Site profile's software root locates.
+SAE_UNDER_SOFTWARE_ROOT = 'genslm-esm-sae/campaigns/600m-codon/runs/l18-36-lr2e-4/best/layer32'
 
 # Codon input: space-separated uppercase codons. Amino acid input: space-separated residues.
 CODON = ['ATG GCT AAA GGT GAA CTG TTC ACC GGT GTT GTG CCC ATC CTG GTC GAG CTG GAC GGC GAC TAA',
@@ -41,9 +42,14 @@ def embed(bb, seqs, modality, dev):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--out', type=Path, required=True)
-    p.add_argument('--sae-dir', default=SAE_DEFAULT)
+    p.add_argument('--sae-dir', help=f'default: $LOAM_SOFTWARE_ROOT/{SAE_UNDER_SOFTWARE_ROOT}')
     p.add_argument('--layer', type=int, default=32)
     a = p.parse_args()
+    if not a.sae_dir:
+        root = os.environ.get('LOAM_SOFTWARE_ROOT')
+        if not root:
+            p.error('pass --sae-dir, or set LOAM_SOFTWARE_ROOT so the bundled SAEs can be found')
+        a.sae_dir = f'{root}/{SAE_UNDER_SOFTWARE_ROOT}'
     a.out.mkdir(parents=True, exist_ok=True)
     dev = torch.device('xpu' if torch.xpu.is_available() else 'cpu')
     print('device', dev, torch.xpu.get_device_name(0) if dev.type == 'xpu' else '')

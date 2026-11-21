@@ -14,7 +14,10 @@ CONVERTED = ['structure-prediction/chai', 'structure-prediction/boltz',
              'structure-prediction/protenix', 'structure-prediction/esmfold2',
              'md-simulation/openmm', 'md-simulation/molecular-simulations',
              'qm/uma', 'qm/reactra',
-             'diffusion-models/rfd4-proteina', 'diffusion-models/rfdiffusion3']
+             'diffusion-models/rfd4-proteina', 'diffusion-models/rfdiffusion3',
+             'inverse-folding/proteinmpnn', 'analysis/pyrosetta',
+             'foundation-language-models/genslm-esm',
+             'fetch-literature', 'rag-build-index', 'rag-query']
 
 
 @pytest.mark.parametrize('skill', CONVERTED)
@@ -89,6 +92,39 @@ def test_unrelated_dash_a_or_the_word_account_passes(tmp_path, line):
 def test_account_taken_from_a_variable_passes(tmp_path):
     body = '```\nqsub -A "$ACCOUNT" job.pbs\n#SBATCH --account=${SLURM_ACCOUNT}\n```\nUnsupported elsewhere.\n'
     assert skills.layout_problems(make_skill(tmp_path, body=body)) == []
+
+
+def test_a_system_independent_skill_needs_no_reference_files(tmp_path):
+    skill = make_skill(tmp_path, body='Make the HTTP calls yourself. This skill does not depend on the System.\n',
+                       systems=('all',), references=())
+
+    assert skills.layout_problems(skill) == []
+
+
+def test_a_single_claim_may_be_written_without_brackets(tmp_path):
+    skill = make_skill(tmp_path, systems=('all',), references=())
+    (skill / 'SKILL.md').write_text('---\nname: demo\ndescription: A demo.\nsystems: all\n---\n\nAny System.\n')
+
+    assert skills.layout_problems(skill) == []
+
+
+def test_a_system_independent_skill_may_not_hold_a_personal_path(tmp_path):
+    skill = make_skill(tmp_path, body='Run `/flare/PROJ/me/software/tool`. No System needed.\n',
+                       systems=('all',), references=())
+
+    assert any('/flare/' in problem for problem in skills.layout_problems(skill))
+
+
+def test_a_system_independent_skill_with_a_reference_file_fails(tmp_path):
+    problems = skills.layout_problems(make_skill(tmp_path, systems=('all',), references=('aurora',)))
+
+    assert any('all' in p and 'aurora' in p for p in problems), problems
+
+
+def test_naming_all_beside_a_system_fails(tmp_path):
+    problems = skills.layout_problems(make_skill(tmp_path, systems=('all', 'aurora'), references=('aurora',)))
+
+    assert any('all' in p for p in problems), problems
 
 
 def test_claiming_a_system_without_its_reference_file_fails(tmp_path):

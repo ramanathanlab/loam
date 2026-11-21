@@ -1,35 +1,31 @@
 ---
 name: pyrosetta
-description: Score, relax and analyze protein structures with PyRosetta (ref2015) on Aurora CPUs — total and per-term energies, per-residue energies, FastRelax refinement, and binder/target interface metrics (dG, dSASA, shape complementarity, packstat, unsat H-bonds), plus a parallel batch scorer for ranking 2-chain complexes. Use to score, relax or rank PDBs by interface quality.
+description: Score, relax and analyze protein structures with PyRosetta (ref2015) on CPUs — total and per-term energies, per-residue energies, FastRelax refinement, and binder/target interface metrics (dG, dSASA, shape complementarity, packstat, unsat H-bonds), plus a parallel batch scorer for ranking 2-chain complexes. Use to score, relax or rank PDBs by interface quality.
+systems: [aurora]
 ---
 
-# PyRosetta on Aurora (CPU only)
+# PyRosetta
 
-Install: `/flare/FRAME-IDP/msinclair/software/pyrosetta_energy` (do not edit; write outputs
-elsewhere). CPU-only — never needs a GPU, so do not set `ZE_AFFINITY_MASK`.
+## Before you run it: read the reference file for this System
 
-## Environment
+The install, the interpreter and the batch launcher differ per System. Read
+`references/<HPC_SYSTEM>.md` (for example `read_skill(name="pyrosetta", file="references/aurora.md")`)
+and follow it; it is authoritative over this file for anything System-specific, and it defines the
+`$PY` used below. This skill has a reference file for **aurora** only. It is **unsupported** on any
+other System: report the step as blocked rather than adapting Aurora's instructions.
 
-```bash
-PY=/flare/FRAME-IDP/msinclair/software/pyrosetta_energy/.venv/bin/python   # Python 3.12, uv venv
-# or: source /flare/FRAME-IDP/msinclair/software/pyrosetta_energy/.venv/bin/activate
-```
+On Jupiter in particular the installed package is `pyrosetta-installer`, not a licensed ARM64
+PyRosetta runtime, so there is no scoring engine there. Report that software blocker rather than
+fabricating Rosetta scores or silently substituting another metric.
 
-`pyrosetta-2026.34+release.de92a3c0de`, plus numpy. **No pandas**, so `pyrosetta.distributed` and
-`get_energies_table`-style helpers are unavailable — use the pure-pose APIs below. The venv's base
-interpreter is an absolute `/opt/aurora/...2025.3.1` path, so it works without `module load`.
+Software is found only through Site profile variables: the install is under `$LOAM_SOFTWARE_ROOT`.
+Never edit the install directory; write outputs to the campaign workspace.
 
-## Example
+PyRosetta scoring is **CPU work** — do not request a GPU for it.
 
-```bash
-# Minimal runner: scripts/rosetta_tool.py — one structure, JSON to stdout
-$PY scripts/rosetta_tool.py score     in.pdb [--json out.json] [--sfxn ref2015]
-$PY scripts/rosetta_tool.py perres    in.pdb --csv perres.csv
-$PY scripts/rosetta_tool.py relax     in.pdb --out relaxed.pdb [--rounds 1] [--max-iter N] [--constrain]
-$PY scripts/rosetta_tool.py interface in.pdb --partners A_B [--pack-input] [--pack-separated] [--json out.json]
-```
+## Core API
 
-Core API — every process must `init` first, and **pass flags as `extra_options=`**:
+Every process must `init` first, and **must pass flags as `extra_options=`**:
 
 ```python
 import pyrosetta
@@ -74,17 +70,22 @@ sc, packstat, nres = d.sc_value, d.packstat, d.interface_nres[1]
 hb, unsat = d.interface_hbonds, d.delta_unsat_hbonds
 ```
 
-Batch scorer (the repo pipeline), for ranking many 2-chain complexes:
+Constructor signatures and available options vary between builds; check them against the installed
+build rather than assuming.
+
+## Example
+
+The bundled runner is `scripts/<HPC_SYSTEM>/rosetta_tool.py`, one structure per call, JSON to
+stdout. The reference file says how to address it on a worker; `$TOOL` below is that path.
 
 ```bash
-$PY /flare/FRAME-IDP/msinclair/software/pyrosetta_energy/scripts/compute_rosetta_energy.py \
-  --top100-dir DIR --out out.json [--out-csv out.csv] [--workers 32]
+$PY $TOOL score     in.pdb [--json out.json] [--sfxn ref2015]
+$PY $TOOL perres    in.pdb --csv perres.csv
+$PY $TOOL relax     in.pdb --out relaxed.pdb [--rounds 1] [--max-iter N] [--constrain]
+$PY $TOOL interface in.pdb --partners A_B [--pack-input] [--pack-separated] [--json out.json]
 ```
 
-`DIR/leaderboard.json` is a list of `{binder_id, pdb, score, ...}`; each PDB is looked up as
-`DIR/<basename(pdb)>` and must have exactly 2 chains, **A = target, B = binder** (`A_B` is
-hardcoded). `scripts/make_leaderboard.py DIR` generates that file for any folder of 2-chain PDBs.
-`scripts/submit_energy.pbs` is a PBS template (`qsub -v TOP_DIR=...,WORKERS=96`).
+The reference file names the batch scorer for ranking many 2-chain complexes, and its launcher.
 
 ## Arguments and outputs
 
@@ -99,6 +100,9 @@ Batch scorer output is `{"results": [...], "errors": [...]}` sorted by `interfac
 
 ## Must-know
 
+- **Rosetta Energy Units are not kcal/mol MM/GBSA estimates and not measured affinity.** For an
+  interface report, record the partner-chain grouping, the score function, the packing/relaxation
+  settings and the structure inspected.
 - **`pyrosetta.init("opts")` and `init(extra_options="opts")` give different results.** The
   positional `options` default is `-ex1 -ex2aro`; passing flags positionally silently drops extra
   rotamers, and anything that packs (FastRelax, IAM with `pack_input`/`pack_separated`) then shifts
@@ -108,9 +112,9 @@ Batch scorer output is `{"results": [...], "errors": [...]}` sorted by `interfac
 - **Per-residue sums need `decompose_bb_hb_into_pair_energies(True)`.** Without it, backbone
   H-bonds are not assigned to residues and the per-residue sum does not match the pose total.
 - `residue_total_energies(i)` terms are **unweighted** — multiply by `sfxn.get_weight(st)`.
-- **There is no `InterfaceAnalyzerMover("A_B")` string constructor** in this build (TypeError).
-  Wrap the string with `DockingPartners.docking_partners_from_string`.
-- **Repacked interface dG is stochastic** (~1-3 REU spread, and it depends on RNG state from prior
+- **There is no `InterfaceAnalyzerMover("A_B")` string constructor** in the installed build
+  (TypeError). Wrap the string with `DockingPartners.docking_partners_from_string`.
+- **Repacked interface dG is stochastic** (~1–3 REU spread, and it depends on RNG state from prior
   calls in the same worker). Don't over-interpret small rank differences, and compare only numbers
   from the same protocol and init flags. No-pack IAM is deterministic; `-constant_seed -jran N`
   makes a fresh process reproducible.
@@ -121,6 +125,3 @@ Batch scorer output is `{"results": [...], "errors": [...]}` sorted by `interfac
   own.
 - **PyRosetta is free for academic/non-profit use; commercial use requires a license**
   (license@uw.edu).
-- Durable test inputs: `$MPNN/inputs/PDB_monomers/pdbs/6MRR.pdb`,
-  `.../PDB_complexes/pdbs/3HTN.pdb` (3 chains), and
-  `/flare/FRAME-IDP/msinclair/software/ProtonPottsMPNN/inference/examples/pdl1_seed_binder.pdb` (A/B).

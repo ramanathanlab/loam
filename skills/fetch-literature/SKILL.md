@@ -7,6 +7,7 @@ description: >-
   papers/abstracts about a target before building a RAG store to mine hotspots,
   PTM sites, or known interactions. Needs only `requests`; remote HTTP,
   seconds-to-minutes, no GPU.
+systems: all
 ---
 
 # Fetch literature (requests → PubMed E-utilities + Europe PMC)
@@ -21,8 +22,16 @@ result count; no GPU.
 
 This is a **self-contained, instruction-only skill**. There is no wrapper script
 and no project dependency — you (the agent) make the HTTP calls yourself with
-`requests`. NEVER import bindify. (A `fetch_pubmed` helper existed in the repo,
-but this skill stands alone on `requests`.)
+`requests`.
+
+## It does not depend on the System
+
+`requests` over public HTTP is the whole stack, so this skill claims `systems: all`: there is no
+reference file, and nothing here is specific to a System. Use the interpreter the campaign gives
+you (a tool venv under `$LOAM_SOFTWARE_ROOT` if the Site profile provides one), and take network
+access from the Site profile's `worker_init` — on most Systems a compute node reaches the internet
+only through a login-node proxy it sets up. Never print proxy URLs or credentials. If the calls
+cannot leave the node, report that blocker rather than inventing records.
 
 ## When to use it
 
@@ -67,8 +76,8 @@ import json, time, requests
 QUERY   = "MDM2 p53 binding hotspot"
 MAX     = 30
 OUT     = "/path/to/corpus.jsonl"
-EMAIL   = "you@example.org"          # your email — be a polite NCBI citizen
-TOOL    = "bindify-fetch-literature"
+EMAIL   = "you@example.org"          # a real contact the operator configured; never invent one
+TOOL    = "loam-fetch-literature"
 
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 records = []
@@ -143,7 +152,13 @@ print(f"wrote {len(records)} records -> {OUT}")
 ## Notes
 
 - Rate-limit and include `tool`/`email` on E-utilities calls; register for an
-  NCBI API key if you need higher throughput.
+  NCBI API key if you need higher throughput. Use a contact the operator
+  configured rather than inventing one.
+- **Raise on HTTP errors and validate the returned content.** A successful
+  `import requests` is not a retrieval pass, and neither is a run that wrote
+  title-only records.
+- Preserve provenance in the records: source URLs, PMIDs/PMCIDs and the
+  retrieval date, so a later round can tell where a passage came from.
 - Deciding the query terms, how many results to pull, and which sources to merge
   is your job as the agent. This skill only fetches and formats the corpus.
 - Downstream: feed the JSONL to rag-build-index, then ask questions with

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Verified ProteinMPNN test suite on Aurora (single XPU tile).
 set -euo pipefail
-MPNN=/flare/FRAME-IDP/msinclair/software/ProteinMPNN
+MPNN=${LOAM_SOFTWARE_ROOT:?set LOAM_SOFTWARE_ROOT}/ProteinMPNN
 OUT=${1:-$PWD/proteinmpnn-tests}   # a directory you own; defaults under the current one
 export ZE_AFFINITY_MASK=${ZE_AFFINITY_MASK:-8}
 source $MPNN/.venv/bin/activate
