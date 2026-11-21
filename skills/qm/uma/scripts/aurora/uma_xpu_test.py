@@ -2,8 +2,8 @@
 
 Usage:
   export ZE_AFFINITY_MASK=9
-  export FAIRCHEM_CACHE_DIR=/flare/FRAME-IDP/msinclair/hf_cache HF_HUB_OFFLINE=1
-  /flare/FRAME-IDP/msinclair/software/fairchem-xpu/.venv/bin/python uma_xpu_test.py [model] [default|batch|high-precision|nitro-xpu]
+  export FAIRCHEM_CACHE_DIR=$LOAM_CACHE_ROOT HF_HUB_OFFLINE=1
+  $LOAM_SOFTWARE_ROOT/fairchem-xpu/.venv/bin/python uma_xpu_test.py [model] [default|batch|high-precision|nitro-xpu]
 """
 import sys
 import time

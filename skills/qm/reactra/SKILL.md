@@ -1,122 +1,74 @@
 ---
 name: reactra
-description: Author, validate, plan, run, resume and interpret Reactra enzyme-reaction simulations on Aurora — one YAML plus a MECH mechanism file drives cofold/prepared input, an OpenMM classical model, NVT/NPT, near-attack sampling, a UMA NNP/MM reactive model and OPES reaction flooding. Use for NNP/MM reaction sampling or OPES flooding, or to inspect a .mech mechanism. Not a plain QM single-point tool — use the `uma` skill for that.
+description: Author, validate, plan, run, resume and interpret Reactra enzyme-reaction simulations — one YAML plus a MECH mechanism file drives cofold/prepared input, an OpenMM classical model, NVT/NPT, near-attack sampling, a UMA NNP/MM reactive model and OPES reaction flooding. Use for NNP/MM reaction sampling or OPES flooding, or to inspect a .mech mechanism. Not a plain QM single-point tool — use the `uma` skill for that.
+systems: [aurora]
 ---
 
-# Reactra on Aurora
+# Reactra
 
-Checkout: `/flare/FRAME-IDP/msinclair/software/reactra` (do not edit). Reactra calls UMA
-(`uma_s_1p2p1`, XPU, `float32-high`, no compile) through the fairchem-xpu Nitro provider, and
-OpenMM on the `OpenCL` platform.
+## Before you run it: read the reference file for this System
+
+The checkout, control and native interpreters, the mech-format overlay, the deployment profile and
+the launch details differ per System. Read `references/<HPC_SYSTEM>.md` (for example
+`read_skill(name="reactra", file="references/aurora.md")`) and follow it; it is authoritative over
+this file for anything System-specific. This skill has a reference file for **aurora** only. It is
+**unsupported** on any other System, including Jupiter, where no Reactra or mech-format runtime is
+installed: report the step as blocked rather than adapting Aurora's instructions. Missing
+prerequisites are not a scientific refutation.
+
+Software is found only through Site profile variables: the checkout is under `$LOAM_SOFTWARE_ROOT`.
+Never edit the checkout; write outputs to a directory you own.
 
 Keep scientific intent in one `reactra.run/1` YAML, chemistry in MECH, and deployment details in
-the execution profile. Invoke the public CLI; do not recreate its operations in an agent script.
+the execution profile. Reactra owns preparation, candidate selection, numerical execution,
+validation, checkpoints and artifacts; loam chooses experiments and interprets their evidence.
+Invoke the public CLI; do not recreate its operations in an agent script.
 
 - PMD and the packaged CM reference: [references/examples.md](references/examples.md)
-- Campaign registration and remote execution: [references/loam-execution.md](references/loam-execution.md)
-- Install docs: `AGENTS.md`, `docs/getting-started.md`, `docs/guides/{yaml,running,successful-flooding-runs}.md`
+- Campaign registration, remote execution and recovery:
+  [references/loam-execution.md](references/loam-execution.md)
+- Docs in the checkout: `AGENTS.md`, `docs/getting-started.md`,
+  `docs/guides/{yaml,running,successful-flooding-runs}.md`, `docs/status.md`. Upstream:
+  [Reactra](https://github.com/MechanismAtlas/reactra).
 
-## Environment
+## Choose and review the experiment
 
-| Layer | Interpreter | Status |
-|---|---|---|
-| Control CLI | `/flare/FRAME-IDP/msinclair/software/reactra/.venv/bin/reactra` (uv venv) | Works after the overlay below. Has no openmm/fairchem/ase. |
-| Locked dev env | `pixi run --frozen reactra …` | **Not installed** (no `.pixi/` in this checkout). |
-| Native workers (OpenMM+UMA+PLUMED) | from a deployment profile (`native.python`) | Shared: `/lus/flare/projects/FRAME-IDP/dkastner/Projects/Reactra/` |
+Establish only the missing inputs: intended reaction/endpoint, run YAML and MECH, prepared molecular
+inputs or preparation route, model assets, execution profile, work directory/store, request ID, and
+authorized compute/time budget.
 
-**One-time setup: the mech-format overlay.** The uv venv is missing `mech-format`, so every
-MECH-dependent command (inspect-mech, preview, validate, plan, example) refuses with "MECH
-inspection requires mech-format". Build the overlay in a directory **you** own and keep it for the
-campaign's lifetime — there is no shared copy to inherit:
+- **For a new enzyme, use its own MECH atom identities, protonation, charge, cofactors, waters,
+  region, CVs, target basin and integrity criteria.** PMD's atom selectors and thresholds are not
+  generic defaults, and a PDB alone is not a prepared system.
+- Keep restraints, timestep, seeds, sampling caps, ensemble size, stopping rules and requested
+  outputs in YAML. Deployment paths and accelerator slots belong in the profile. Do not patch worker
+  code to tune an experiment.
+- Start with authoring review (`preview --authoring-only`): inspect effective values and their
+  origins before expensive work. `validate` additionally resolves scientific assets and
+  declarations; neither proves native readiness. Missing assets or invalid chemistry need a specific
+  repair, not removed hashes, weakened checks or a silent provider change.
+- `plan` returns an executable plan only with a declared deployment. `run` already resolves and
+  commits its plan; do not add repeated admission around it.
 
-```bash
-export http_proxy=http://proxy.alcf.anl.gov:3128 https_proxy=$http_proxy
-O=<a directory you own>          # must persist between calls
-uv pip install --python /flare/FRAME-IDP/msinclair/software/reactra/.venv/bin/python \
-  --target $O/mech_overlay \
-  "mech-format @ git+https://github.com/MechanismAtlas/mech-format.git@29c79dc7ee9e352dc55e0ac0004750a7f8dd65dc"
-# mech_format resolves its schema at <overlay>/../schema (parents[2] of its module), so:
-ln -sfn mech_overlay/share/mech-format/schema $O/schema
-export REACTRA_MECH_OVERLAY=$O/mech_overlay
-```
-
-The `schema` symlink is not optional — the layout, not just the package, is what makes MECH resolve.
-`scripts/reactra_cli.sh` reads `$REACTRA_MECH_OVERLAY`, puts it on `PYTHONPATH` with
-`PYTHONDONTWRITEBYTECODE=1`, and runs the venv's `reactra`. It refuses rather than guessing if that
-variable is unset, so export it in the same `run_code` call that invokes the CLI.
-
-## Upgrading an existing install
-
-Pull in the checkout you already use. Editable installs pick that up; a controller or
-worker running an **installed wheel does not** — reinstall into each of those interpreters:
+## Commands
 
 ```bash
-S=/flare/FRAME-IDP/msinclair/software/reactra
-PY=<the existing interpreter>
-$PY -m pip install --no-deps --force-reinstall $S
-$PY -c "import reactra; print(reactra.__file__)"    # the only reliable confirmation
+reactra capabilities                       # operations + operation kinds (JSON)
+reactra schema --section stages.sampling   # authoring JSON schema
+reactra inspect-mech MECHANISM.mech        # resolved MECH JSON
+reactra preview RUN.yaml --authoring-only --format text
+reactra example cm-flooding --output NEW_DIR --native-profile PROFILE \
+  --model-weights uma-s-1p2p1.pt --forcefield protein.ff14SB.xml --forcefield tip3p.xml
+reactra validate RUN.yaml                  # {"valid": true, "scientific_identity": "…"}
+reactra plan RUN.yaml --format text        # admits the deployment; launches no science
+reactra run    RUN.yaml --store STORE --request-id RUN_ID
+reactra status --store STORE --request-id RUN_ID
+reactra result --store STORE --request-id RUN_ID --operation OPERATION_ID
+reactra resume --store STORE --request-id RUN_ID
 ```
 
-The package version stays `0.1.0` across this update, so version text cannot tell you
-whether an environment is current — check the import path. Do **not** rebuild the native
-runtime: provisioned dependencies, model weights and the native runtime are unchanged.
-Finish in-flight requests on their original engine and give changed
-methods/configurations a new request ID; historical stores are export-only when method
-versions differ.
-
-Migration for YAML written against the previous version:
-
-- **Remove `stages.analysis.escape`** from conventional `flooding_rate` YAMLs. Events now
-  use the first chemically verified product frame. Single-level sampling remains available.
-- **The force-check displacement default is now `0.0002` nm.** To preserve the previous
-  finite-difference check, set `models.nnp_mm.force_checks.displacement_nm: 0.0001`
-  explicitly.
-- New three-level PMD work uses `reactra example pmd-design-screen`, with the same
-  asset/profile arguments as `pmd-flooding` — which remains the historical reproduction
-  example, not the current recipe.
-
-Full notes: `$S/docs/getting-started.md`, "Upgrade an existing Aurora installation".
-
-## Example
-
-```bash
-RX=<this skill>/scripts/reactra_cli.sh
-S=/flare/FRAME-IDP/msinclair/software/reactra
-rt=/lus/flare/projects/FRAME-IDP/dkastner/Projects/Reactra
-export REACTRA_MECH_OVERLAY=$O/mech_overlay
-
-# Inspect and author (all CPU-only, seconds)
-$RX capabilities                                 # operations + operation kinds (JSON)
-$RX schema --section stages.sampling             # authoring JSON schema
-$RX inspect-mech $S/src/reactra/data/mechanisms/chorismate-mutase.mech
-$RX preview $S/examples/chorismate-mutase-aroq-bounded-selection.yaml --authoring-only --format text
-
-# Materialize a runnable packaged example into a NEW dir
-$RX example cm-flooding --output $PWD/cm \
-  --native-profile $rt/deployment/profile.yaml \
-  --model-weights /flare/FRAME-IDP/msinclair/hf_cache/models--facebook--UMA/snapshots/ce3b2744ff57c0f49a010b763efcbfe9ba82e2e1/checkpoints/uma-s-1p2p1.pt \
-  --forcefield $rt/assets/protein.ff14SB.xml --forcefield $rt/assets/tip3p.xml
-#  -> cm/{run.yaml, chorismate-mutase.mech, cm-prepared.zip, CHEBI-29934.mol, execution-profile.json}
-
-$RX validate cm/run.yaml                         # {"valid": true, "scientific_identity": "…"}
-$RX plan cm/run.yaml --format text               # admits the deployment; launches no science
-
-# Run (long: the CM empty-store run takes ~54 min; the docs ask for a 2 h `capacity` allocation)
-reactra run    cm/run.yaml --store cm/store --request-id cm-example-1
-reactra status cm/store --store cm/store --request-id cm-example-1
-reactra result --store cm/store --request-id cm-example-1 --operation reaction_sampling_candidate_0
-reactra resume --store cm/store --request-id cm-example-1
-```
-
-PBS launcher: `tools/aurora/run_root.pbs` with `REACTRA_ROOT, REACTRA_PYTHON, REACTRA_CONFIG,
-REACTRA_STORE, REACTRA_REQUEST_ID, REACTRA_ACTION=run, REACTRA_THREADS`.
-
-## Arguments and exit codes
-
-GPU tiles come from `native_device_slots[].environment.ZE_AFFINITY_MASK` **in the deployment
-profile**, not the shell. The shared profile pins tiles 0 and 2; for other tiles write your own
-profile (`tools/setup/configure_local_preparation.py --native-only`) and pass it to
-`reactra example --native-profile`.
+The reference file says which interpreter or wrapper stands in for `reactra`, and where the profile,
+weights and force fields live.
 
 | CLI exit | Meaning and next action |
 |---|---|
@@ -144,27 +96,12 @@ reactra export --store STORE --request-id RUN_ID --operation OPERATION_ID \
 Discover real member IDs/slots in the result. Export refuses to overwrite an existing destination,
 and keeps atom maps and provenance with coordinates.
 
+Report the YAML/revision, store/request and operation IDs, model/runtime identity, completed
+sampling versus wall time, outcome counts, exact artifact locations and the next action. Use
+Reactra's reports; do not create a parallel acceptance record.
+
 ## Must-know
 
-- **Without the overlay, every MECH command fails** with `unsupported_configuration: MECH inspection
-  requires mech-format`; with the overlay but no `schema` symlink,
-  `infrastructure_failure: installed MECH schema not found`.
-- **`preview` of a materialized example fails** when the native profile is the shared YAML profile
-  (`NativePreparationProfile native_device_slots: Input should be a valid tuple`). `validate` and
-  `plan` succeed on the same run.yaml. Unresolved version skew.
-- **Don't mix interpreters.** The shared deployment's `control-python` has an older Reactra
-  (`reactra.run/0.3`) and rejects `reactra.run/1` YAML from this checkout.
-- There is no native smoke test without `pixi install`: `tests/native/…` needs the checkout's pixi
-  envs and fails under the deployment `native-python` with FileNotFoundError.
-- The maintained `examples/chorismate-mutase-*.yaml` expect `.reactra/assets/uma-s-1p2p1.pt`, which
-  isn't present, so full validate/preview returns `input_io`. `--authoring-only` works.
-- Packaged MECH files are `maturity: draft`, so the YAML needs `allow_draft_mech: true` (the example
-  YAML already sets it).
-- `uma-s-1p2p1.pt` sha256 must be
-  `b2673b85037b075674c25f55c34ffe1ff1e15db924be977b10a184765df0d5ce`.
-- **For a new enzyme, use its own MECH atom identities, protonation, charge, cofactors, waters,
-  region, CVs, target basin and integrity criteria.** PMD's atom selectors and thresholds are not
-  generic defaults, and a PDB alone is not a prepared system.
 - `resume` takes no replacement YAML and reuses jointly committed engine/bias/clock state. Changed
   chemistry, model, CVs, restraints, stopping rules or sampling budgets are a **new experiment with
   a new request ID**. Reuse a compatible accepted prefix via `--reuse-prefix-from` /
@@ -175,4 +112,10 @@ and keeps atom maps and provenance with coordinates.
   unavailable, not zero, and never discard censoring or failures to improve a score.
 - A timeout or lost transport response is an **unknown** execution outcome — not a scientific
   negative, and not permission to launch another controller.
+- Stop an unchanged retry loop when the same error repeats; identify the cause or ask for the
+  missing decision instead of consuming further allocations.
+- Packaged MECH files are `maturity: draft`, so the YAML needs `allow_draft_mech: true` (the example
+  YAML already sets it).
+- `uma-s-1p2p1.pt` sha256 must be
+  `b2673b85037b075674c25f55c34ffe1ff1e15db924be977b10a184765df0d5ce`.
 - No runs on login nodes; don't restart a user-stopped calculation without permission.
