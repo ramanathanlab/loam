@@ -103,7 +103,7 @@ def test_each_inference_host_runs_one_replica_behind_one_pool():
 
     assert [step[-6:] for step in steps] == [['vllm', 'serve', '--host', 'a', '--port', '8100'],
                                              ['vllm', 'serve', '--host', 'b', '--port', '8100']]
-    assert all('--nodelist=' + host in step for step, host in zip(steps, 'ab'))
+    assert all('--nodelist=' + host in step and '--cpus-per-task=32' in step for step, host in zip(steps, 'ab'))
     assert pool['model'] == 'served-model' and pool['checkpoint'] == 'org/weights'
     assert [b['base_url'] for b in pool['backends']] == ['http://a:8100/v1', 'http://b:8100/v1']
     assert {b['job_id'] for b in pool['backends']} == {'123'}
@@ -196,10 +196,10 @@ def test_another_interpreter_keeps_its_own_policy(gc_policy):
 def test_a_telemetry_sample_satisfies_startup_readiness(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from loam import telemetry
+    from loam import systems, telemetry
     from loam.allocation_startup import telemetry_ready_hosts
     rows = '\n'.join(f'{i}, GPU-{i}, 50, 10, 1000, 96000, 300, 40' for i in range(4))
-    monkeypatch.setattr(telemetry.subprocess, 'run', lambda *a, **k: SimpleNamespace(stdout=rows, returncode=0))
+    monkeypatch.setattr(systems.subprocess, 'run', lambda *a, **k: SimpleNamespace(stdout=rows, returncode=0))
     allocation = {'job_id': '123', 'started_at': 100.0, 'all_nodes': ['a', 'b'], 'science_nodes': ['a'],
                   'inference_nodes': ['b']}
 

@@ -76,10 +76,10 @@ def test_outside_an_allocation_there_are_no_hosts(system):
 
 
 def test_a_slurm_step_shares_the_allocation_on_exactly_the_chosen_hosts():
-    step = JUPITER.host_step(['jpbo-003', 'jpbo-004'], ['python', 'serve.py'])
+    step = JUPITER.host_step(['jpbo-003', 'jpbo-004'], ['python', 'serve.py'], cpus=32)
 
     assert step[0] == 'srun' and step[-2:] == ['python', 'serve.py']
-    assert {'--overlap', '--nodes=2', '--ntasks=2', '--ntasks-per-node=1', '--nodelist=jpbo-003,jpbo-004',
+    assert {'--overlap', '--nodes=2', '--ntasks=2', '--ntasks-per-node=1', '--cpus-per-task=32', '--nodelist=jpbo-003,jpbo-004',
             '--gpus-per-node=4', '--gpu-bind=none'} <= set(step)
 
 

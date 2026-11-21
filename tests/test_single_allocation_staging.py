@@ -97,7 +97,7 @@ def test_account_and_partition_come_from_the_site_profile(tmp_path, monkeypatch,
     job = stage(tmp_path, monkeypatch, inference_profile)
 
     plan = json.loads((job / 'plan.json').read_text())
-    assert (plan['account'], plan['partition']) == ('profile-account', 'profile-partition')
+    assert (plan['account'], plan['queue']) == ('profile-account', 'profile-partition')
     assert 'deepwing' not in (job / 'campaign' / 'campaign.yaml').read_text()
 
 
@@ -105,7 +105,7 @@ def test_a_campaign_config_value_wins_over_the_site_profile(tmp_path, monkeypatc
     job = stage(tmp_path, monkeypatch, inference_profile, reference_settings={'allocation': {'queue': 'debug'}})
 
     plan = json.loads((job / 'plan.json').read_text())
-    assert (plan['account'], plan['partition']) == ('profile-account', 'debug')
+    assert (plan['account'], plan['queue']) == ('profile-account', 'debug')
 
 
 def test_the_runtime_is_frozen_inside_the_job_and_sealed(tmp_path, monkeypatch, inference_profile):
@@ -321,3 +321,26 @@ def test_site_profile_roots_are_filled_into_the_replica_command_without_a_shell(
 
     staged = json.loads((job / 'inference-profile.json').read_text())
     assert staged['command'] == ['/soft/loam/vllm', '$(reboot)', '${UNSET:-x}']
+
+
+def test_scientific_inputs_inside_the_checkout_are_refused(tmp_path, monkeypatch, inference_profile):
+    with pytest.raises(ValueError, match='outside the loam checkout'):
+        stage(tmp_path, monkeypatch, inference_profile, inputs=staging.REPO / 'examples')
+
+
+def test_submitters_and_ranking_time_grow_with_the_allocation(tmp_path, monkeypatch, inference_profile):
+    small = load(stage(tmp_path, monkeypatch, inference_profile) / 'campaign' / 'campaign.yaml')
+    large = load(staging.stage(tmp_path / 'reference' / 'loam.yaml', tmp_path / 'experiment', label='large',
+                               nodes=256, inference_profile=inference_profile) / 'campaign' / 'campaign.yaml')
+
+    assert (small.execution.hpc.pool_size, small.tournament.max_seconds) == (64, 2400)
+    assert (large.execution.hpc.pool_size, large.tournament.max_seconds) == (64, 10800)
+
+
+def test_a_job_finds_its_site_profile_the_way_staging_did(tmp_path, monkeypatch, inference_profile):
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'xdg'))
+    job = stage(tmp_path, monkeypatch, inference_profile)
+
+    script = (job / 'job.sh').read_text()
+    assert f"export XDG_CONFIG_HOME={tmp_path / 'xdg'}" in script
+    assert f"export LOAM_SITE_PROFILE={tmp_path / 'profiles' / 'jupiter-test.yaml'}" in script

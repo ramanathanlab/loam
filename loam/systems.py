@@ -172,12 +172,12 @@ class System:
                                     text=True, check=True, timeout=30).stdout.split()
         return list(dict.fromkeys(host.split('.')[0] for host in listed))
 
-    def host_step(self, hosts: list[str], command: list[str]) -> list[str]:
-        """`command` run once on each of `hosts`, inside the allocation that already holds them."""
+    def host_step(self, hosts: list[str], command: list[str], *, cpus: int = 1) -> list[str]:
+        """`command` run once on each of `hosts` with `cpus` cores and every GPU, inside the allocation."""
         if self.mpi_flavor == 'srun-overlap':
             return ['srun', '--overlap', '--exact', '--mpi=none', f'--nodes={len(hosts)}', f'--ntasks={len(hosts)}',
-                    '--ntasks-per-node=1', f'--nodelist={",".join(hosts)}', f'--gpus-per-node={self.gpus_per_node}',
-                    '--gpu-bind=none', *command]
+                    '--ntasks-per-node=1', f'--cpus-per-task={cpus}', f'--nodelist={",".join(hosts)}',
+                    f'--gpus-per-node={self.gpus_per_node}', '--gpu-bind=none', *command]
         return ['mpiexec', '-n', str(len(hosts)), '--ppn', '1', '--hosts', ','.join(hosts), *command]
 
     def step_environment(self) -> dict[str, str]:
@@ -190,6 +190,14 @@ class System:
     def check_gpu_telemetry(self) -> None:
         if self.gpu_telemetry != 'nvidia-smi-csv':
             raise NotImplementedError(f'loam cannot read GPU telemetry on {self.name}')
+
+    def gpu_sample(self) -> dict:
+        """One host's GPU part of a telemetry sample, in the form `gpu_busy` and `every_gpu_reported` read."""
+        try:
+            query = subprocess.run(self.gpu_telemetry_query(), capture_output=True, text=True, timeout=8)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return {'nvidia_error': type(error).__name__}
+        return {'gpu_csv': query.stdout.strip(), 'nvidia_returncode': query.returncode}
 
     def gpu_telemetry_query(self) -> list[str]:
         """The command whose output is one host's `gpu_csv` telemetry sample."""

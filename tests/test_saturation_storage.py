@@ -147,6 +147,7 @@ def qualified_trial(tmp_path, monkeypatch):
         receipt.mkdir(parents=True)
         (receipt / 'input.json').write_text('{}')
         (receipt / 'leaf-response.json').write_text('{}')
+        (receipt / 'leaf-request.json').write_text(json.dumps({'prompt': 'ten bytes!'}))
         (receipt / 'manifest.json').write_text(json.dumps({
             'status': 'complete', 'thread_count': 1, 'input_sha256': staging.sha(receipt / 'input.json'),
             'prompt_budget_bytes': 64000, 'calls': [{'node': 'leaf', 'status': 'complete', 'prompt_bytes': 10,

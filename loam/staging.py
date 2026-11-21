@@ -5,7 +5,7 @@
 stages a fresh job under ROOT/LABEL from REFERENCE, an ordinary campaign config, and submits it
 only with --submit. The job runs `loam.coordinator` inside one allocation of NODES nodes: the
 scaling recipe (loam.scaling) splits them into inference and science roles and sizes the
-campaign. Account and partition are the campaign config's, which the Site profile fills in
+campaign. Account and queue (the partition, on Slurm) are the campaign config's, which the Site profile fills in
 where the config leaves them out. Ported from the moeen branch's stage_single_allocation.py and
 check_single_allocation.py.
 
@@ -69,6 +69,18 @@ class InferenceProfile(ConfigModel):
     port: Annotated[int, Field(ge=1, le=65535)] = 8000
     checkpoint: NonEmptyStr | None = None
     startup_timeout: PositiveInt = 5400
+    cpus_per_task: PositiveInt = 32   # cores each replica's step gets on its node
+
+
+def require(condition: bool, problem: str) -> None:
+    if not condition:
+        raise RuntimeError(problem)
+
+
+def check_gc_threshold(value) -> None:
+    """A controller young-generation GC threshold, if set, must be a whole number in [700, 100000]."""
+    if value is not None and (type(value) is not int or not 700 <= value <= 100000):
+        raise ValueError('controller_gc_threshold0 must be an integer in [700, 100000]')
 
 
 def write(path: Path, data) -> None:
@@ -141,9 +153,9 @@ def stage(reference: Path, root: Path, *, label: str, nodes: int, inference_prof
     walltime = walltime or hpc.allocation.walltime
     if not WALLTIME.fullmatch(walltime):
         raise ValueError('walltime must have format HH:MM:SS')
-    if controller_gc_threshold0 is not None and (type(controller_gc_threshold0) is not int
-                                                 or not 700 <= controller_gc_threshold0 <= 100000):
-        raise ValueError('controller_gc_threshold0 must be an integer in [700, 100000]')
+    check_gc_threshold(controller_gc_threshold0)
+    if inputs and Path(inputs).resolve().is_relative_to(REPO):
+        raise ValueError('Scientific inputs must come from outside the loam checkout, never from Git')
     profile = InferenceProfile.model_validate(read(inference_profile))
     roots = hpc.site_profile.roots() if hpc.site_profile else {}
     profile.command = [expand_roots(part, roots) for part in profile.command]
@@ -197,8 +209,8 @@ def stage(reference: Path, root: Path, *, label: str, nodes: int, inference_prof
                              initial_hypotheses=initial_hypotheses, new_per_round=new_per_round,
                              gen_batch_size=generation_batch_size, workers=tournament_workers,
                              scheme='swiss', swiss_rounds=sized.swiss_rounds)
-    if tournament_max_seconds:
-        raw['tournament']['max_seconds'] = tournament_max_seconds
+    # Ranking a large pool takes longer; the moeen branch's measured runs allowed these.
+    raw['tournament']['max_seconds'] = tournament_max_seconds or (2400 if nodes <= 20 else 10800)
     execution = raw['execution']
     execution['workdir'] = str(campaign / 'work')
     deployment = execution['hpc']
@@ -207,6 +219,8 @@ def stage(reference: Path, root: Path, *, label: str, nodes: int, inference_prof
                       server_script=str(runtime / SERVER_SCRIPT),
                       inspect_roots=list(dict.fromkeys([str(campaign), *hpc.inspect_roots])),
                       science_workers_per_gpu=sized.science_workers_per_gpu,
+                      # Submitter agents scale with admitted hypotheses, as measured on the moeen branch.
+                      pool_size=min(64, max(12, concurrency * 2)), startup_timeout=7200,
                       campaign_id=f'single-{label}-{uuid.uuid4().hex[:10]}')
     deployment['allocation'].update(nodes=sized.science, walltime=walltime)
     (campaign / 'campaign.yaml').write_text(yaml.safe_dump(raw, sort_keys=False))
@@ -224,7 +238,7 @@ def stage(reference: Path, root: Path, *, label: str, nodes: int, inference_prof
         'science_count': sized.science, 'recipe_measured': sized.measured,
         'campaign': str(campaign), 'infra': str(infra), 'job_root': str(job),
         'job_name': f'loam-{label}-{uuid.uuid4().hex[:10]}', 'walltime': walltime, 'reservation': reservation,
-        'account': allocation.account, 'partition': allocation.queue, 'created_at': time.time(),
+        'account': allocation.account, 'queue': allocation.queue, 'created_at': time.time(),
         'gpus_per_node': system.gpus_per_node, 'cpus_per_node': len(system.cpu_ids),
         'runtime_repo': str(runtime), 'python': str(python), 'reference': str(reference),
         'inference_profile': str(job / 'inference-profile.json'), 'served_roles': served,
@@ -269,8 +283,10 @@ def write_job_script(job: Path, runtime: Path, python: Path, deployment) -> None
     """The batch script: the Site profile's environment, then the coordinator from the frozen runtime."""
     quote = shlex.quote
     lines = ['#!/usr/bin/env bash', 'set -euo pipefail']
-    if os.environ.get('LOAM_SITE_PROFILE'):
-        lines.append(f'export LOAM_SITE_PROFILE={quote(str(Path(os.environ["LOAM_SITE_PROFILE"]).absolute()))}')
+    # The job starts with no environment of its own, so it finds the Site profile the way staging did.
+    for name in ('XDG_CONFIG_HOME', 'LOAM_SITE_PROFILE'):
+        if os.environ.get(name):
+            lines.append(f'export {name}={quote(str(Path(os.environ[name]).absolute()))}')
     if deployment.site_profile is not None:
         lines.append(deployment.site_profile.full_worker_init(deployment.allocation.endpoint_options.get('worker_init')))
     lines += [f'export LOAM_PYTHON={quote(str(python))}',
@@ -282,11 +298,6 @@ def write_job_script(job: Path, runtime: Path, python: Path, deployment) -> None
     script.chmod(0o700)
 
 
-def _require(condition: bool, problem: str) -> None:
-    if not condition:
-        raise RuntimeError(problem)
-
-
 def verify_seals(job: Path, plan: dict, *, runtime: Path | None = None) -> None:
     """Fail if the staged inputs, the frozen runtime or the inference profile changed since staging."""
     campaign = Path(plan['campaign'])
@@ -294,17 +305,17 @@ def verify_seals(job: Path, plan: dict, *, runtime: Path | None = None) -> None:
     if integrity.exists():
         for name, digest in read(integrity)['input_sha256'].items():
             path = campaign / 'inputs' / name
-            _require(path.is_file() and sha(path) == digest, f'Staged input changed since staging: {name}')
+            require(path.is_file() and sha(path) == digest, f'Staged input changed since staging: {name}')
     seal = read(job / 'prepared-control-source.json')
     frozen = Path(seal['runtime_repo'])
-    _require(frozen.resolve() == Path(plan['runtime_repo']).resolve(), 'The plan names another runtime than the seal')
+    require(frozen.resolve() == Path(plan['runtime_repo']).resolve(), 'The plan names another runtime than the seal')
     if runtime is not None:
-        _require(Path(runtime).resolve() == frozen.resolve(), f'Running from {runtime}, not the frozen runtime {frozen}')
+        require(Path(runtime).resolve() == frozen.resolve(), f'Running from {runtime}, not the frozen runtime {frozen}')
     for name, digest in seal['source_sha256'].items():
         path = frozen / name
-        _require(path.is_file() and sha(path) == digest, f'Frozen runtime source changed since staging: {name}')
-    _require(sha(plan['inference_profile']) == seal['inference_profile_sha256'],
-             'The inference profile changed since staging')
+        require(path.is_file() and sha(path) == digest, f'Frozen runtime source changed since staging: {name}')
+    require(sha(plan['inference_profile']) == seal['inference_profile_sha256'],
+            'The inference profile changed since staging')
 
 
 def check(job: Path) -> dict:
@@ -317,23 +328,23 @@ def check(job: Path) -> dict:
     verify_seals(job, plan)
     hpc = cfg.execution.hpc
     system = hpc.system_definition()
-    _require(plan['mode'] == 'single-allocation' and plan['inference_count'] + plan['science_count'] == plan['nodes'],
-             'The plan does not split its nodes into inference and science')
-    _require(hpc.launch_mode == 'existing', 'A single-allocation campaign must attach to its allocation')
-    _require(hpc.allocation.nodes == plan['science_count'], 'The campaign is not sized to the science nodes')
-    _require(hpc.science_workers_per_gpu == plan['science_workers_per_gpu'], 'Science workers per GPU differ')
-    _require(system.gpus_per_node == plan['gpus_per_node'], 'GPUs per node differ from the System')
-    _require((hpc.allocation.account, hpc.allocation.queue) == (plan['account'], plan['partition']),
-             'Account or partition differ from the plan')
-    _require(cfg.tournament.workers == plan['tournament_workers'], 'Tournament workers differ')
-    _require(cfg.synthesis_concurrency == plan['synthesis_concurrency'], 'Synthesis concurrency differs')
+    require(plan['mode'] == 'single-allocation' and plan['inference_count'] + plan['science_count'] == plan['nodes'],
+            'The plan does not split its nodes into inference and science')
+    require(hpc.launch_mode == 'existing', 'A single-allocation campaign must attach to its allocation')
+    require(hpc.allocation.nodes == plan['science_count'], 'The campaign is not sized to the science nodes')
+    require(hpc.science_workers_per_gpu == plan['science_workers_per_gpu'], 'Science workers per GPU differ')
+    require(system.gpus_per_node == plan['gpus_per_node'], 'GPUs per node differ from the System')
+    require((hpc.allocation.account, hpc.allocation.queue) == (plan['account'], plan['queue']),
+            'Account or queue differ from the plan')
+    require(cfg.tournament.workers == plan['tournament_workers'], 'Tournament workers differ')
+    require(cfg.synthesis_concurrency == plan['synthesis_concurrency'], 'Synthesis concurrency differs')
     admission = {'concurrency': cfg.concurrency, 'top_k': cfg.tournament.top_k,
                  'initial_hypotheses': cfg.tournament.initial_hypotheses,
                  'new_per_round': cfg.tournament.new_per_round}
-    _require(admission == plan['admission'], 'Admission settings differ from the plan')
+    require(admission == plan['admission'], 'Admission settings differ from the plan')
     profile = InferenceProfile.model_validate(read(plan['inference_profile']))
-    _require(all(cfg.models[role].model == profile.model for role in plan['served_roles']),
-             'A served role no longer names the served model')
+    require(all(cfg.models[role].model == profile.model for role in plan['served_roles']),
+            'A served role no longer names the served model')
     result = {'job_root': str(job), 'system': plan['system'], 'nodes': plan['nodes'],
               'inference': plan['inference_count'], 'science': plan['science_count'],
               'concurrent_hypotheses': cfg.concurrency, 'selected_hypotheses_per_round': cfg.tournament.top_k,
@@ -344,8 +355,8 @@ def check(job: Path) -> dict:
     receipt = job / 'submission.json'
     if receipt.exists():
         submitted = read(receipt)
-        _require(submitted['job_name'] == plan['job_name'], 'The submission receipt names another job')
-        _require(submitted['script_sha256'] == sha(job / 'job.sh'), 'job.sh changed since submission')
+        require(submitted['job_name'] == plan['job_name'], 'The submission receipt names another job')
+        require(submitted['script_sha256'] == sha(job / 'job.sh'), 'job.sh changed since submission')
         result['job_id'] = submitted['job_id']
     return result
 
@@ -372,7 +383,7 @@ def submit(root: Path, job: Path) -> str:
     cfg = load(Path(plan['campaign']) / 'campaign.yaml')
     system = cfg.execution.hpc.system_definition()
     args = system.batch_submission(script=str(job / 'job.sh'), name=plan['job_name'], workdir=str(job),
-                                   account=plan['account'], queue=plan['partition'], nodes=plan['nodes'],
+                                   account=plan['account'], queue=plan['queue'], nodes=plan['nodes'],
                                    walltime=plan['walltime'], reservation=plan['reservation'],
                                    dependencies=dependencies)
     intent = {'job_name': plan['job_name'], 'job_root': str(job), 'job_script_sha256': sha(job / 'job.sh'),
@@ -407,7 +418,7 @@ def main(argv: list[str] | None = None) -> None:
     for name in ('concurrency', 'top-k', 'initial-hypotheses', 'new-per-round', 'tournament-workers',
                  'generation-batch-size', 'controller-gc-threshold0'):
         parser.add_argument('--' + name, type=int, help='default: the scaling recipe' if 'gc' not in name else None)
-    parser.add_argument('--tournament-max-seconds', type=float)
+    parser.add_argument('--tournament-max-seconds', type=float, help='default: 2400, or 10800 above 20 nodes')
     parser.add_argument('--after', help='an owned job id this job waits for')
     parser.add_argument('--allow-unmeasured', action='store_true',
                         help='size an unmeasured System or node shape anyway, with a warning')

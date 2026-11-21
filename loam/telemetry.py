@@ -15,7 +15,6 @@ import fcntl
 import json
 import os
 import socket
-import subprocess
 import time
 from pathlib import Path
 
@@ -51,12 +50,7 @@ def sample(system: System, *, host: str, job_id: str, role: str, previous: list[
                 row['cpu_iowait_percent'] = 100 * iowait / total
     except (OSError, ValueError, KeyError, IndexError) as error:
         row['cpu_memory_error'] = type(error).__name__
-    try:
-        query = subprocess.run(system.gpu_telemetry_query(), capture_output=True, text=True, timeout=8)
-        row['gpu_csv'] = query.stdout.strip()
-        row['nvidia_returncode'] = query.returncode
-    except (OSError, subprocess.TimeoutExpired) as error:
-        row['nvidia_error'] = type(error).__name__
+    row.update(system.gpu_sample())
     return row, counters
 
 

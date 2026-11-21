@@ -43,7 +43,7 @@ import yaml
 from .allocation import validate_campaign_paths, validate_role
 from .allocation_startup import wait_for_allocation_telemetry
 from .config import load
-from .staging import InferenceProfile, read, sha, verify_seals, write
+from .staging import InferenceProfile, check_gc_threshold, read, sha, verify_seals, write
 from .systems import System
 
 RUNTIME = Path(__file__).resolve().parents[1]
@@ -72,7 +72,7 @@ def replica_command(profile: InferenceProfile, host: str) -> list[str]:
 
 def replica_steps(system: System, profile: InferenceProfile, hosts: list[str]) -> list[list[str]]:
     """One step per inference host, each serving the model on that host alone."""
-    return [system.host_step([host], replica_command(profile, host)) for host in hosts]
+    return [system.host_step([host], replica_command(profile, host), cpus=profile.cpus_per_task) for host in hosts]
 
 
 def pool_config(profile: InferenceProfile, hosts: list[str], *, job_id: str) -> dict:
@@ -113,9 +113,8 @@ def configure_controller_gc(plan: dict) -> dict:
     """
     before = gc.get_threshold()
     requested = plan.get('controller_gc_threshold0')
+    check_gc_threshold(requested)
     if requested is not None:
-        if type(requested) is not int or not 700 <= requested <= 100000:
-            raise ValueError('controller_gc_threshold0 must be an integer in [700, 100000]')
         if not gc.isenabled():
             raise ValueError('Controller GC tuning requires automatic collection to be enabled')
         gc.set_threshold(requested, *before[1:])
@@ -272,7 +271,9 @@ async def run(job: Path, *, environ: Mapping[str, str] | None = None, runtime: P
 
         status('campaign_running', inference_ready=len(inference))
         controller = children.start('controller', [python, '-m', 'loam.coordinator', '--controller', job],
-                                    {**env, POOL_TOKEN: token, 'HPC_SCIENCE_NODELIST': ','.join(science)})
+                                    # The controller uses no GPU: they all belong to science.
+                                    {**env, POOL_TOKEN: token, 'HPC_SCIENCE_NODELIST': ','.join(science),
+                                     system.gpu_pin_var: ''})
         while controller.poll() is None:
             await asyncio.sleep(5)
         if controller.returncode:
