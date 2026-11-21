@@ -1,10 +1,10 @@
 """The scaling recipe: campaign settings sized to an allocation, from measured workload density.
 
 Moeen measured one dense recipe on Jupiter, at 20 and 256 nodes of four GH200 GPUs
-and 288 CPU cores each (docs/scaling-recipe-book.md). The density formula scales
-to any node count and GPU count, but the numbers are only measured on that System
-and node shape, so `recipe` refuses any other unless the caller accepts an
-unmeasured recipe, and then warns.
+and 288 CPU cores each (docs/scaling-recipe-book.md). A System declares what was
+measured on it (`System.scaling_measurement`). The density formula scales to any
+node count and GPU count, but `recipe` refuses a System or node shape with no
+measurement unless the caller accepts an unmeasured recipe, and then warns.
 
     loam-scaling --system jupiter --nodes 20
     loam-scaling --config loam.yaml
@@ -23,23 +23,11 @@ import warnings
 from dataclasses import asdict, dataclass, fields
 
 from .config import load
-from .systems import SYSTEMS, System
+from .systems import SYSTEMS, ScalingMeasurement, System
 
 
-@dataclass(frozen=True)
-class Measurement:
-    """Where a recipe's numbers were measured: a System, its node shape, and the node counts run."""
-    system: str
-    gpus_per_node: int
-    cpus_per_node: int
-    node_counts: tuple[int, ...]
-    science_workers_per_gpu: int
-    source: str
-
-
-# Jupiter jobs 2979745 (20 nodes, "20i") and 2999784 (256 nodes, "256c"), November 2026.
-JUPITER_DENSE = Measurement(system='jupiter', gpus_per_node=4, cpus_per_node=288, node_counts=(20, 256),
-                            science_workers_per_gpu=2, source='docs/scaling-recipe-book.md')
+# The measured recipe's GPU sharing, used where a System has no measurement of its own.
+DENSE_SCIENCE_WORKERS_PER_GPU = 2
 
 
 class UnmeasuredScaling(ValueError):
@@ -63,8 +51,10 @@ class ScalingRecipe:
     new_per_round: int
     tournament_workers: int
     synthesis_concurrency: int
-    # The measurement this density comes from, and whether this exact configuration is one it ran.
-    basis: Measurement
+    # The System this recipe is for, the measurement its density comes from (None if the System has
+    # none), and whether this exact configuration is one that measurement ran.
+    system: str
+    basis: ScalingMeasurement | None
     measured: bool
     generation_batch_size: int = 4
     swiss_rounds: int = 1
@@ -93,48 +83,47 @@ class ScalingRecipe:
 
 def recipe(system: System, nodes: int, *, inference: int | None = None,
            science_workers_per_gpu: int | None = None, allow_unmeasured: bool = False) -> ScalingRecipe:
-    """Moeen's dense recipe for `nodes` nodes of `system` (with its node shape).
+    """The dense recipe for `nodes` nodes of `system` (with its node shape).
 
     `inference` overrides the inference : science split, and `science_workers_per_gpu` the GPU sharing
-    (by default the measured two, or the System's limit if lower). Raises UnmeasuredScaling for a System
-    or node shape the recipe was not measured on, unless `allow_unmeasured`. A recipe for anything the
+    (by default the measured sharing, or the System's limit if lower). Raises UnmeasuredScaling for a
+    System or node shape with no measurement, unless `allow_unmeasured`. A recipe for anything the
     measurement did not run warns UnmeasuredScalingWarning and says it is not measured.
     """
-    if type(nodes) is not int or nodes < 2:
-        raise ValueError('A recipe needs at least two nodes: one for inference and one for science')
-    basis = JUPITER_DENSE
+    _require_whole('nodes', nodes, 2, 'one for inference and one for science')
     default_inference = max(1, min(nodes - 1, round(.4 * nodes)))
     inference = default_inference if inference is None else inference
-    if type(inference) is not int or not 0 < inference < nodes:
+    _require_whole('inference', inference, 1)
+    if inference >= nodes:
         raise ValueError(f'inference must leave at least one of the {nodes} nodes for science')
-    default_workers = min(basis.science_workers_per_gpu, system.max_science_workers_per_gpu)
+    basis = system.scaling_measurement
+    measured_workers = basis.science_workers_per_gpu if basis else DENSE_SCIENCE_WORKERS_PER_GPU
+    default_workers = min(measured_workers, system.max_science_workers_per_gpu)
     workers = default_workers if science_workers_per_gpu is None else science_workers_per_gpu
-    if type(workers) is not int or workers < 1:
-        raise ValueError('science_workers_per_gpu must be a positive integer')
+    _require_whole('science_workers_per_gpu', workers, 1)
     system.check_science_workers_per_gpu(workers)
 
     gpus, cpus = system.gpus_per_node, len(system.cpu_ids)
-    if (system.name, gpus, cpus) != (basis.system, basis.gpus_per_node, basis.cpus_per_node):
-        problem = (f'The scaling recipe was measured only on {basis.system} with {basis.gpus_per_node} GPUs and '
-                   f'{basis.cpus_per_node} CPUs per node (see {basis.source}); {system.name} with {gpus} GPUs '
-                   f'and {cpus} CPUs per node is unmeasured')
+    if basis is None or (gpus, cpus) != (basis.gpus_per_node, basis.cpus_per_node):
+        problem = (f'{system.name} with {gpus} GPUs and {cpus} CPUs per node has no measured scaling recipe; '
+                   f'it was measured only on {_measured_shapes()}')
         if not allow_unmeasured:
             raise UnmeasuredScaling(problem + '. Pass allow_unmeasured to get an unqualified starting point.')
-        unmeasured = [problem]
+        reasons = [problem]
     else:
-        unmeasured = []
+        reasons = []
         if nodes not in basis.node_counts:
             counts = ' and '.join(str(count) for count in basis.node_counts)
-            unmeasured.append(f'it was measured at {counts} nodes, not at {nodes} nodes')
+            reasons.append(f'it was measured at {counts} nodes, not at {nodes} nodes')
         if inference != default_inference:
-            unmeasured.append(f'it was measured with {default_inference} inference nodes of {nodes}, not {inference}')
+            reasons.append(f'it was measured with {default_inference} inference nodes of {nodes}, not {inference}')
         if workers != basis.science_workers_per_gpu:
-            unmeasured.append(f'it was measured with {basis.science_workers_per_gpu} science workers per GPU, '
-                              f'not {workers}')
-        if unmeasured:
-            unmeasured = [f'The scaling recipe on {basis.system} is unmeasured here: ' + '; '.join(unmeasured)]
-    if unmeasured:
-        warnings.warn(unmeasured[0] + f'. Qualify a small layout before planning on it (see {basis.source}).',
+            reasons.append(f'it was measured with {basis.science_workers_per_gpu} science workers per GPU, '
+                           f'not {workers}')
+        if reasons:
+            reasons = [f'The scaling recipe on {system.name} is unmeasured here: ' + '; '.join(reasons)]
+    if reasons:
+        warnings.warn(reasons[0] + '. Qualify a small layout before planning on it (see docs/scaling-recipe-book.md).',
                       UnmeasuredScalingWarning, stacklevel=2)
 
     science = nodes - inference
@@ -145,7 +134,18 @@ def recipe(system: System, nodes: int, *, inference: int | None = None,
                          science_workers_per_gpu=workers, concurrency=concurrency, top_k=top_k,
                          initial_hypotheses=2 * top_k, new_per_round=math.ceil(top_k / 2),
                          tournament_workers=2 * inference, synthesis_concurrency=inference,
-                         basis=basis, measured=not unmeasured)
+                         system=system.name, basis=basis, measured=not reasons)
+
+
+def _require_whole(name: str, value: object, least: int, why: str = '') -> None:
+    if type(value) is not int or value < least:
+        raise ValueError(f'{name} must be a whole number of at least {least}' + (f': {why}' if why else ''))
+
+
+def _measured_shapes() -> str:
+    """Every System and node shape with a measured scaling recipe, for error messages."""
+    return ', '.join(f'{name} with {m.gpus_per_node} GPUs and {m.cpus_per_node} CPUs per node'
+                     for name, system in SYSTEMS.items() if (m := system.scaling_measurement)) or 'no System'
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -167,7 +167,8 @@ def main(argv: list[str] | None = None) -> None:
         hpc = load(args.config).execution.hpc
         if hpc is None:
             parser.error(f'{args.config} has no execution.hpc deployment to size')
-        system, nodes = hpc.system_definition(), args.nodes or hpc.allocation.nodes
+        system = hpc.system_definition()
+        nodes = hpc.allocation.nodes if args.nodes is None else args.nodes
     else:
         if args.nodes is None:
             parser.error('--nodes is required with --system')
@@ -183,9 +184,9 @@ def main(argv: list[str] | None = None) -> None:
         print(f'loam-scaling: {error}', file=sys.stderr)
         sys.exit(1)
     print(json.dumps({
-        'recipe': {f.name: getattr(result, f.name) for f in fields(result) if f.name not in ('basis', 'measured')},
+        'recipe': {f.name: getattr(result, f.name) for f in fields(result) if f.name not in ('system', 'basis', 'measured')},
         'measured': result.measured,
-        'measured_on': asdict(result.basis),
+        'measured_on': result.basis and {'system': result.system, **asdict(result.basis)},
         'campaign_settings': result.campaign_settings(),
     }, indent=2))
 

@@ -42,20 +42,24 @@ def merge(into, settings):
             into[key] = value
 
 
-@pytest.mark.parametrize('nodes,inference,science,active,k,initial,fresh,rank,synth', [
-    (20, 8, 12, 48, 144, 288, 72, 16, 8),
-    (256, 102, 154, 616, 1848, 3696, 924, 204, 102),
-])
-def test_measured_jupiter_configuration_returns_moeens_recipe(nodes, inference, science, active, k, initial, fresh,
-                                                               rank, synth):
-    r = recipe(JUPITER, nodes)
-    assert (r.inference, r.science, r.concurrency, r.top_k, r.initial_hypotheses,
-            r.new_per_round, r.tournament_workers, r.synthesis_concurrency) == (
-            inference, science, active, k, initial, fresh, rank, synth)
-    assert r.generation_batch_size == 4 and r.swiss_rounds == 1 and r.rounds == 3
-    assert r.measured
-    assert (r.basis.system, r.basis.gpus_per_node, r.basis.cpus_per_node) == ('jupiter', 4, 288)
-    assert nodes in r.basis.node_counts
+@pytest.mark.parametrize(
+    'nodes,inference,science,concurrency,top_k,initial_hypotheses,new_per_round,tournament_workers,'
+    'synthesis_concurrency', [
+        (20, 8, 12, 48, 144, 288, 72, 16, 8),
+        (256, 102, 154, 616, 1848, 3696, 924, 204, 102),
+    ])
+def test_measured_jupiter_configuration_returns_moeens_recipe(nodes, inference, science, concurrency, top_k,
+                                                               initial_hypotheses, new_per_round,
+                                                               tournament_workers, synthesis_concurrency):
+    measured = recipe(JUPITER, nodes)
+    assert (measured.inference, measured.science, measured.concurrency, measured.top_k,
+            measured.initial_hypotheses, measured.new_per_round, measured.tournament_workers,
+            measured.synthesis_concurrency) == (inference, science, concurrency, top_k, initial_hypotheses,
+                                                new_per_round, tournament_workers, synthesis_concurrency)
+    assert measured.generation_batch_size == 4 and measured.swiss_rounds == 1 and measured.rounds == 3
+    assert measured.measured
+    assert (measured.system, measured.basis.gpus_per_node, measured.basis.cpus_per_node) == ('jupiter', 4, 288)
+    assert nodes in measured.basis.node_counts
 
 
 @pytest.mark.parametrize('system', [AURORA, POLARIS, JUPITER.with_node_shape(gpus=8), JUPITER.with_node_shape(cpus=96)],
@@ -112,6 +116,12 @@ def test_invalid_budget_is_rejected(nodes, overrides):
         recipe(JUPITER, nodes, **overrides)
 
 
+@pytest.mark.parametrize('gpus', [0, -1])
+def test_a_node_without_gpus_is_rejected(gpus):
+    with pytest.raises(ValueError):
+        recipe(JUPITER.with_node_shape(gpus=gpus), 20, allow_unmeasured=True)
+
+
 def test_a_campaign_config_gets_the_recipe_for_its_system_and_nodes_and_takes_its_settings(tmp_path, monkeypatch):
     hpc = load(jupiter_campaign_config(tmp_path, monkeypatch, 20)).execution.hpc
     assert json.loads(hpc.environment()['HPC_ENDPOINT_CONFIG_JSON'])['account'] == 'test-account'
@@ -121,8 +131,9 @@ def test_a_campaign_config_gets_the_recipe_for_its_system_and_nodes_and_takes_it
 
     cfg = load(jupiter_campaign_config(tmp_path / 'with-recipe', monkeypatch, 20, **r.campaign_settings()))
     assert (cfg.rounds, cfg.concurrency, cfg.synthesis_concurrency) == (3, 48, 8)
-    t = cfg.tournament
-    assert (t.top_k, t.initial_hypotheses, t.new_per_round, t.gen_batch_size, t.swiss_rounds, t.workers) == (
+    tournament = cfg.tournament
+    assert (tournament.top_k, tournament.initial_hypotheses, tournament.new_per_round, tournament.gen_batch_size,
+            tournament.swiss_rounds, tournament.workers) == (
         144, 288, 72, 4, 1, 16)
     assert cfg.execution.hpc.science_workers_per_gpu == 2
 

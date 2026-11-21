@@ -29,6 +29,17 @@ from typing import Literal
 
 
 @dataclass(frozen=True)
+class ScalingMeasurement:
+    """A dense scaling recipe measured on a System: the node shape and node counts it ran at (loam.scaling)."""
+    gpus_per_node: int
+    cpus_per_node: int
+    node_counts: tuple[int, ...]
+    science_workers_per_gpu: int
+    # Where the measurements are written up.
+    source: str
+
+
+@dataclass(frozen=True)
 class System:
     name: str
     scheduler: Literal['pbs', 'slurm']
@@ -56,6 +67,8 @@ class System:
     allocation_accounting: Literal['sacct'] | None = None
     # The format of one host's GPU telemetry sample, if loam can read it.
     gpu_telemetry: Literal['nvidia-smi-csv'] | None = None
+    # The scaling recipe measured on this System, if any; loam.scaling refuses to size other Systems.
+    scaling_measurement: ScalingMeasurement | None = None
 
     @property
     def gpus_per_node(self) -> int:
@@ -67,6 +80,8 @@ class System:
             return self
         if not self.node_shape_overrides:
             raise ValueError(f'{self.name} does not allow GPU/CPU count overrides')
+        if (gpus is not None and gpus < 1) or (cpus is not None and cpus < 1):
+            raise ValueError('GPU and CPU counts per node must be positive')
         return replace(self, gpu_ids=self.gpu_ids if gpus is None else tuple(range(gpus)),
                        cpu_ids=self.cpu_ids if cpus is None else tuple(range(cpus)))
 
@@ -258,6 +273,9 @@ JUPITER = System(
     max_science_workers_per_gpu=2,
     allocation_accounting='sacct',
     gpu_telemetry='nvidia-smi-csv',
+    # Jobs 2979745 (20 nodes, "20i") and 2999784 (256 nodes, "256c"), November 2026.
+    scaling_measurement=ScalingMeasurement(gpus_per_node=4, cpus_per_node=288, node_counts=(20, 256),
+                                           science_workers_per_gpu=2, source='docs/scaling-recipe-book.md'),
 )
 
 SYSTEMS: dict[str, System] = {system.name: system for system in (AURORA, POLARIS, JUPITER)}

@@ -103,7 +103,7 @@ Don't multiply every timer by `N`: per-row numerical work doesn't change with mo
 
 ## Qualifying a new System or node shape
 
-The formula generalizes workload density, not demonstrated saturation. For a new System, accelerator, memory size, model, target, GPU count or scheduler: run one small layout, measure inference and science service times, and adjust the split. Inspect per-role GPU busy, request latency, queue depth, row submission and dispatch times, logical slot occupancy, and stage production per science-node-hour and per total allocated GPU-hour. Adding science nodes without a ready science backlog can lower efficiency; 256c still had substantial science starvation, round barriers and long hypothesis tails. Record a new measurement in `loam/scaling.py` and here only once it has passed the same audits: a successful scheduler exit isn't enough.
+The formula generalizes workload density, not demonstrated saturation. For a new System, accelerator, memory size, model, target, GPU count or scheduler: run one small layout, measure inference and science service times, and adjust the split. Inspect per-role GPU busy, request latency, queue depth, row submission and dispatch times, logical slot occupancy, and stage production per science-node-hour and per total allocated GPU-hour. Adding science nodes without a ready science backlog can lower efficiency; 256c still had substantial science starvation, round barriers and long hypothesis tails. Record a new measurement as the System's `scaling_measurement` in `loam/systems.py`, and here, only once it has passed the same audits: a successful scheduler exit isn't enough.
 
 ## Where the numbers come from
 
