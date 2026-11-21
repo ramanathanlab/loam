@@ -43,17 +43,52 @@ from collections import Counter, OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Annotated, Literal
 
 import aiohttp
 from aiohttp import web
+from pydantic import ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
 
-POLICIES = ('round_robin', 'least_loaded', 'least_loaded_affinity')
+from .config import ConfigModel, NonEmptyStr
+
 RETRYABLE = (429, 500, 502, 503, 504)
 MAX_ATTEMPTS = 3
 QUEUE_TIMEOUT = 590
 REFRESH_SECONDS = 2
 REPLICA_HEADER = 'X-Loam-Replica'
 RESOLVE_ERRORS = (OSError, ValueError, KeyError, TypeError, RuntimeError)
+
+
+class PoolBackendEntry(ConfigModel):
+    """One replica in pool.json. Keys beyond these belong to the resolver (the default reads
+    `base_url`, `token_file`, `token_env` and `checkpoint`), so they are kept, not refused."""
+
+    model_config = ConfigDict(extra='allow')
+
+    id: NonEmptyStr
+    # A scheduler job id is often written as a number; it only marks when an id is reused.
+    job_id: StrictStr | StrictInt = ''
+    enabled: StrictBool = True
+
+
+class PoolConfig(ConfigModel):
+    """pool.json, re-read while the pool runs."""
+
+    model: NonEmptyStr
+    checkpoint: NonEmptyStr | None = None
+    policy: Literal['round_robin', 'least_loaded', 'least_loaded_affinity'] = 'least_loaded_affinity'
+    max_inflight_per_backend: Annotated[StrictInt, Field(ge=1, le=64)] = 16
+    # A free-form label (e.g. the campaign stage) copied into each timing record.
+    phase: Annotated[str, Field(max_length=128)] = 'unassigned'
+    backends: list[PoolBackendEntry]
+
+    @field_validator('backends')
+    @classmethod
+    def ids_are_unique(cls, backends):
+        ids = [b.id for b in backends]
+        if len(set(ids)) != len(ids):
+            raise ValueError('backend ids must be unique')
+        return backends
 
 
 @dataclass(frozen=True)
@@ -199,31 +234,23 @@ class InferencePool:
             raise web.HTTPBadRequest(text=f'Expected a chat request for model {self.model!r} with a messages list')
 
     async def refresh(self):
-        config = json.loads((self.root / 'pool.json').read_text())
-        model, checkpoint = config.get('model'), config.get('checkpoint')
-        if not isinstance(model, str) or not model or (checkpoint is not None and not isinstance(checkpoint, str)):
-            raise ValueError('pool.json must name a model, and any checkpoint as a string')
-        if self.model is not None and (model, checkpoint) != (self.model, self.checkpoint):
+        config = PoolConfig.model_validate_json((self.root / 'pool.json').read_text())
+        if self.model is not None and (config.model, config.checkpoint) != (self.model, self.checkpoint):
             raise ValueError('pool.json cannot change the model or checkpoint of a running pool')
-        if config.get('policy', 'least_loaded_affinity') not in POLICIES:
-            raise ValueError(f'policy must be one of {POLICIES}')
-        capacity = int(config.get('max_inflight_per_backend', 16))
-        if not 1 <= capacity <= 64:
-            raise ValueError('max_inflight_per_backend must be between 1 and 64')
-        self.model, self.checkpoint = model, checkpoint
-        self.policy = config.get('policy', 'least_loaded_affinity')
-        self.phase = str(config.get('phase', 'unassigned'))[:128]
+        self.model, self.checkpoint = config.model, config.checkpoint
+        self.policy, self.phase = config.policy, config.phase
         seen = set()
-        for entry in config['backends']:
-            name, job = str(entry['id']), str(entry.get('job_id', ''))
+        for item in config.backends:
+            entry = item.model_dump()
+            name, job = item.id, str(item.job_id)
             seen.add(name)
             if name in self.backends and self.backends[name].job_id != job:
                 if self.backends[name].inflight:
                     raise RuntimeError('Cannot replace a busy backend identity')
                 del self.backends[name]
             backend = self.backends.setdefault(name, Backend(name, job))
-            backend.enabled = bool(entry.get('enabled', True))
-            backend.capacity = capacity
+            backend.enabled = item.enabled
+            backend.capacity = config.max_inflight_per_backend
             try:
                 # A resolver may read files or load TLS material; with many replicas that must not
                 # stall the event loop while it serves campaign requests.

@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import aiohttp
 import pytest
 from aiohttp import web
+from pydantic import ValidationError
 
 import loam.inference_pool
 from loam.inference_pool import InferencePool, ReplicaEndpoint, safe_error
@@ -327,3 +328,39 @@ def test_resolver_returning_something_else_leaves_replica_not_ready(tmp_path):
         finally:
             await pool.close()
     asyncio.run(run())
+
+
+GOOD = {'model': MODEL, 'backends': [{'id': 'a', 'base_url': 'http://127.0.0.1:1/v1'}]}
+
+
+@pytest.mark.parametrize('change', [
+    {'model': ''},
+    {'checkpoint': 7},
+    {'policy': 'fastest'},
+    {'max_inflight_per_backend': 0},
+    {'max_inflight_per_backend': 65},
+    {'max_inflight_per_backend': True},
+    {'polciy': 'round_robin'},
+    {'backends': [{'id': 'a', 'base_url': 'http://h/v1'}, {'id': 'a', 'base_url': 'http://h/v1'}]},
+    {'backends': [{'base_url': 'http://h/v1'}]},
+    {'backends': [{'id': 'a', 'enabled': 'no'}]},
+], ids=lambda change: next(iter(change)) + '=' + json.dumps(next(iter(change.values())))[:30])
+def test_invalid_pool_config_is_refused(tmp_path, change):
+    (tmp_path / 'pool.json').write_text(json.dumps({**GOOD, **change}))
+    with pytest.raises(ValidationError):
+        asyncio.run(InferencePool(tmp_path).refresh())
+
+
+def test_resolver_sees_its_own_entry_keys(tmp_path):
+    seen = []
+
+    def resolver(entry):
+        seen.append(dict(entry))
+        return ReplicaEndpoint('http://127.0.0.1:1/v1')
+
+    entry = {'id': 'a', 'job_id': 42, 'campaign': '/runs/c1', 'hostname': 'node7'}
+    (tmp_path / 'pool.json').write_text(json.dumps({'model': MODEL, 'backends': [entry]}))
+    pool = InferencePool(tmp_path, resolver=resolver)
+    asyncio.run(pool.refresh())
+    assert seen[0]['campaign'] == '/runs/c1' and seen[0]['hostname'] == 'node7'
+    assert pool.backends['a'].job_id == '42' and pool.backends['a'].ready
