@@ -30,9 +30,26 @@ which to pick.
 
 ## Skill layout
 
-Each skill is one `SKILL.md` with a fixed shape — install path, environment, a runnable example,
-arguments, outputs, and a short must-know list — plus a `scripts/` directory holding a minimal
-execution script (and any launcher or shim the tool genuinely needs).
+A skill is being converted, one family at a time, to a System-neutral layout (see
+`docs/adr/0004-system-neutral-core-and-out-of-repo-site-profiles.md`):
+
+```
+<skill>/
+  SKILL.md               # inputs, outputs and method; no System-specific or personal paths
+                         # frontmatter: systems: [aurora, jupiter]
+  references/<system>.md # one per claimed System: environment, device selection, launch commands
+  scripts/<system>/      # that System's runners, launchers and smoke workloads
+  examples/              # inputs valid on any System
+```
+
+The agent reads `references/$HPC_SYSTEM.md`; a skill with no reference file for a System is
+unsupported there and its `SKILL.md` says so. Paths go only through Site profile variables such as
+`$LOAM_SOFTWARE_ROOT`. `tests/test_skill_layout.py` enforces this for the converted skills (so far
+the structure-prediction family: boltz, chai, esmfold2, protenix).
+
+Skills not yet converted are one Aurora `SKILL.md` with a fixed shape — install path, environment, a
+runnable example, arguments, outputs, and a short must-know list — plus a `scripts/` directory
+holding a minimal execution script (and any launcher or shim the tool genuinely needs).
 
 ## Recommended permanent fixes (software dirs were left untouched)
 

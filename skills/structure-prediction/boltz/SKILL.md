@@ -1,39 +1,27 @@
 ---
 name: boltz
-description: Predict biomolecular structures (proteins, complexes, protein-ligand, DNA/RNA) and protein-ligand binding affinity with Boltz-2 on Aurora Intel XPU. Use when asked to fold a sequence or complex, dock a SMILES/CCD ligand, or estimate binding affinity on Aurora.
+description: Predict biomolecular structures (proteins, complexes, protein-ligand, DNA/RNA) and protein-ligand binding affinity with Boltz-2. Use when asked to fold a sequence or complex, dock a SMILES/CCD ligand, or estimate protein-ligand binding affinity.
+systems: [aurora, jupiter]
 ---
 
-# Boltz-2 on Aurora (Intel XPU)
+# Boltz-2
 
-Install: `/flare/FRAME-IDP/msinclair/software/boltz` — a fork with PyTorch Lightning removed
-(vanilla inference loop) and `--accelerator xpu` added. Do not edit the install directory.
+## Before you run it: read the reference file for this System
 
-## Environment
+The environment, accelerator flags and launch command differ per System. Read
+`references/<HPC_SYSTEM>.md` (for example `read_skill(name="boltz", file="references/aurora.md")`)
+and follow it; it is authoritative over this file for anything System-specific. This skill has
+reference files for **aurora** and **jupiter**. It is **unsupported** on any other System: report the
+step as blocked rather than adapting another System's instructions.
 
-```bash
-BOLTZ=/flare/FRAME-IDP/msinclair/software/boltz/.venv/bin/boltz   # no module load or activate needed
-export ZE_AFFINITY_MASK=2                   # ONE tile (0-11 in FLAT mode); appears as xpu:0
-export http_proxy=http://proxy.alcf.anl.gov:3128 https_proxy=$http_proxy   # only for --use_msa_server
-```
+Software is found only through Site profile variables: the install is under `$LOAM_SOFTWARE_ROOT`.
+Never edit the install directory; write outputs to the campaign workspace.
 
-Weights and the CCD cache are already in `~/.boltz` (`boltz2_conf.ckpt`, `boltz2_aff.ckpt`, `mols/`);
-pass `--cache ~/.boltz`. Copies live in `/flare/FRAME-IDP/msinclair/software/checkpoints/`.
+## Input
 
-## Example
-
-```bash
-# Minimal runner: scripts/run_boltz_xpu.sh <input> <out_dir> [tile] [extra args...]
-bash scripts/run_boltz_xpu.sh prot_no_msa.yaml out 2
-
-# Equivalent direct call (production settings)
-$BOLTZ predict prot_no_msa.yaml --out_dir out --cache ~/.boltz --accelerator xpu --devices 1 \
-  --recycling_steps 3 --sampling_steps 200 --diffusion_samples 5 \
-  --output_format pdb --override --num_workers 0
-```
-
-Input is YAML (recommended) or FASTA; `DATA` may be one file or a directory (batch).
-Examples: `scripts/prot_no_msa.yaml`, `scripts/lig_aff.yaml`, `scripts/ubq_msa.fasta`;
-more in `<install>/examples/`, full schema in `<install>/docs/prediction.md`.
+YAML (recommended) or FASTA; `DATA` may be one file or a directory (batch). Full schema in
+`<install>/docs/prediction.md`, more in `<install>/examples/`. Examples here: `examples/prot_no_msa.yaml`,
+`examples/lig_aff.yaml`, `examples/ubq_msa.fasta`.
 
 ```yaml
 version: 1
@@ -50,16 +38,17 @@ properties:                   # optional, exactly ONE ligand binder
       binder: B
 ```
 
-Multimers use several `protein` entries (or `id: [A, B]` for homo-copies); nucleic acids use
-`dna:` / `rna:`. FASTA headers are `>CHAIN_ID|ENTITY_TYPE|MSA_PATH` with type
-protein/dna/rna/smiles/ccd.
+Entity ids must be unique. Every protein needs an explicit MSA choice: `msa: empty`, an MSA path,
+or `--use_msa_server`, matching the intended experiment. Multimers use several `protein` entries
+(or `id: [A, B]` for homo-copies); nucleic acids use `dna:` / `rna:`. FASTA headers are
+`>CHAIN_ID|ENTITY_TYPE|MSA_PATH` with type protein/dna/rna/smiles/ccd.
 
 ## Arguments (`predict DATA`)
 
 | flag | default | meaning |
 |---|---|---|
-| `--accelerator xpu` | auto | required on Aurora (`auto`/`gpu` fall through when CUDA is absent) |
-| `--out_dir`, `--cache` | — | output dir; weight cache (`~/.boltz`) |
+| `--accelerator`, `--devices` | auto | set per System (see the reference file); always one device |
+| `--out_dir`, `--cache` | — | output dir; weight cache |
 | `--recycling_steps` | 3 | trunk recycles |
 | `--sampling_steps` | 200 | diffusion steps |
 | `--diffusion_samples` | 1 | structures generated; 5 is typical for production |
@@ -68,13 +57,13 @@ protein/dna/rna/smiles/ccd.
 | `--step_scale` | 1.5 | diversity vs designability |
 | `--output_format` | mmcif | `pdb` or `mmcif` |
 | `--seed` | — | reproducibility |
-| `--use_msa_server`, `--msa_server_url`, `--msa_pairing_strategy` | off | ColabFold MSAs (needs the proxy) |
+| `--use_msa_server`, `--msa_server_url`, `--msa_pairing_strategy` | off | ColabFold MSAs (needs network access) |
 | `--use_potentials` | off | physics steering |
 | `--write_full_pae`, `--write_full_pde`, `--write_embeddings` | off | extra arrays |
 | `--override` | off | overwrite existing predictions |
 | `--num_workers` | — | use `0` |
 | `--model` | boltz2 | `boltz1` or `boltz2` |
-| `--no_kernels` | off | disables CUDA-only cuequivariance kernels (not needed on XPU) |
+| `--no_kernels` | off | disables the CUDA-only cuequivariance kernels |
 
 ## Outputs
 
@@ -95,13 +84,15 @@ out/boltz_results_<name>/
 
 ## Must-know
 
-- Always pin `ZE_AFFINITY_MASK` to one tile. Multi-device inference is not implemented: `--devices >1`
-  warns and uses one device. For many inputs, run one process per tile with a different mask.
+- Multi-device inference is not implemented: `--devices >1` warns and uses one device. For many
+  inputs, run one process per GPU.
 - Use `--num_workers 0` to avoid dataloader fork issues.
-- Without `--override`, existing predictions in `out_dir` are silently skipped.
-- `--use_msa_server` needs the proxy env vars, or it hangs.
-- Harmless noise: `aten::topk` kernel-override warnings, `RequestsDependencyWarning`, dropped
-  checkpoint `hyper_parameters`, and `Aten Op fallback from XPU to CPU` for `torch.linalg.svd`
-  (slow but correct).
+- Without `--override`, existing predictions in `out_dir` are silently skipped. Prefer a fresh
+  output directory over overriding prior predictions.
+- `--use_msa_server` needs network access (the System's proxy), or it hangs.
 - `Number of failed examples: N>0` means bad input — check unique chain ids, valid SMILES, and that
-  any `ccd` code exists in `~/.boltz/mols`.
+  any `ccd` code exists in the cache's `mols/`.
+- Verify all requested chains and ligands are present in the actual output. Preserve input and
+  checkpoint ids, seeds, MSA choice and failures.
+- The affinity head is for protein-ligand pairs. It is not a protein-binder MM/GBSA calculation or a
+  measured binding affinity; never report it as a protein-binder free energy.

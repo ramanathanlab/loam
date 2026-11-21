@@ -58,6 +58,9 @@ def build(cfg: Config) -> Agents:
                              '\nPROVENANCE: read anything here, but a CLAIM may cite only a path inside a run '
                              'opened for this hypothesis, or a batch that run submitted. A directory you '
                              'created yourself, or another round\'s output, is discarded whatever it contains.'
+                             + (f'\nSYSTEM (HPC_SYSTEM): {ex.hpc.system} -- for a skill, follow its '
+                                f'references/{ex.hpc.system}.md; a skill without one is unsupported here.'
+                                if ex.mode == 'hpc' and ex.hpc else '')
                              + (f'\nYOUR RUN DIRECTORY (write only here): {ctx.deps.run_dir}' if ctx.deps.run_dir else '')
                              + (f'\nENVIRONMENT SETUP:\n{ex.setup}' if ex.setup else ''))
             return '\n\n'.join(parts)
