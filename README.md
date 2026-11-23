@@ -248,6 +248,14 @@ If a campaign is interrupted mid-round, restarting `python -m loam <config.yaml>
    ```
    The resulting whole-pool table (`priority`, `rank_evidence_disagreement`, and `recommended_action`) guides the `reasoner` in writing the next round's `tournament_brief`.
 
+### Single-Allocation Campaigns
+
+`loam-stage REFERENCE ROOT --label trial-20 --nodes 20 --inference-profile vllm.json` stages a whole campaign to run inside one batch job of NODES whole nodes, and `--submit` submits it. REFERENCE is an ordinary HPC campaign config. The scaling recipe splits the nodes into inference and science roles and sizes the campaign (any setting can be overridden; see `loam-stage --help`). The account and queue (the partition, on Slurm) are the campaign config's, filled in from your Site profile where the config leaves them out, so nothing needs editing per user. The inference profile (example: [examples/inference-profiles/vllm.json](examples/inference-profiles/vllm.json)) is the command each inference node runs to serve the model, with `{host}`, `{port}` and the Site profile's roots (`${LOAM_SOFTWARE_ROOT}`) filled in. It runs without a shell.
+
+The job directory, ROOT/LABEL, owns everything it runs. That covers the campaign config, goal, inputs (`--inputs`, copied from outside Git), state and work, plus a frozen copy of loam and its skills. Each one is sealed, so edits made while the job waits in the queue cannot change what runs. ROOT's `experiment.json` is the ledger of job ids the experiment owns. Inside the allocation, the job runs `python -m loam.coordinator`. The coordinator checks the job's paths, seals and job id before it asks the scheduler anything. It then splits the hosts into roles (`allocation.json`) and waits until every GPU reports telemetry. Next it starts one replica per inference host behind a `loam-inference-pool`, and runs the campaign with the MCP server attached to the science hosts. Finally it waits for submitted science to finish. Submission, host discovery and per-host steps come from the System. Only Slurm Systems (Jupiter) can be submitted to so far, and a System without GPU telemetry (Aurora) cannot start one.
+
+`loam-scaleup TRIAL --nodes 256 --label unified-256` stages a larger successor to a trial job once `loam-saturation` has passed its principle gate. The successor keeps the trial's per-science-node density, inputs and inference profile. `--check-only` prints the settings, `--output-root` puts the job on another filesystem that shares the ledger, and `--submit` submits it.
+
 ### Saturation Accounting
 
 `loam-saturation JOB --baseline BASELINE_JOB` audits a completed single-allocation job: every allocation attempt's GPU-hours from the scheduler's accounting (requeued boots included), time-weighted GPU busy from the job's telemetry, science-slot occupancy, distinct trials per allocated GPU-hour, and how many hypotheses got a reviewed, completed test. It writes `JOB/saturation-audit.json` and prints the gains over the baseline job and whether the scale-up gates pass. The job's System (`execution.hpc.system` in its campaign config) says how to read allocated time and the per-host GPU telemetry in `campaign/telemetry/*.jsonl`. A System that declares neither (`allocation_accounting`, `gpu_telemetry` in `loam/systems.py`) cannot be audited; Jupiter declares both, Aurora and Polaris neither yet. The node shape is the plan's `gpus_per_node`, else the System's. Samples that don't cover every GPU on the node count as unobserved. The audit never submits or changes jobs.
@@ -357,7 +365,11 @@ loam/
 ├── skills.py          # SKILL.md discovery, prompt catalog, and read_skill helper
 ├── inference_pool.py  # One OpenAI-compatible endpoint over a pool of replicas (`loam-inference-pool`)
 ├── scaling.py         # Scaling recipe from measured density, refusing unmeasured Systems (`loam-scaling`)
-├── saturation/        # Saturation accounting: allocated GPU-hours, GPU busy, reviewed hypothesis counts, scale-up gates (`loam-saturation`)
+├── staging.py         # Single-allocation staging, preflight and submission (`loam-stage`)
+├── coordinator.py     # Runs a staged job inside its allocation: roles, telemetry, inference pool, campaign
+├── telemetry.py       # Per-host CPU/GPU telemetry sampler inside a single-allocation job
+├── allocation.py      # Allocation role manifest and staged-campaign path checks
+├── saturation/        # Saturation accounting: allocated GPU-hours, GPU busy, reviewed hypothesis counts, scale-up gates (`loam-saturation`), successor staging (`loam-scaleup`)
 └── prompts/           # Role system instructions (validator, code_generator, reviewer, reasoner)
 examples/              # Aurora EGFR binder campaign YAML, goal, campaign rules, redacted Site profiles
 skills/                # Scientific tool skills and managed HPC deployment server

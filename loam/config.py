@@ -228,6 +228,11 @@ class HPCDeployment(ConfigModel):
             raise ValueError('execution.hpc.exchange_url must be an HTTP(S) URL')
         return self
 
+    @property
+    def site_profile(self) -> SiteProfile | None:
+        """The Site profile `load` found for this campaign, if any."""
+        return self._site_profile
+
     def system_definition(self):
         """The System, with this campaign's node shape."""
         return SYSTEMS[self.system].with_node_shape(gpus=self.gpus_per_node, cpus=self.cpus_per_node)
