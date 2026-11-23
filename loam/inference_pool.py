@@ -154,20 +154,25 @@ def safe_error(status, payload):
     if status != 400 or len(payload) > 16384:
         return fallback
     try:
-        error = json.loads(payload).get('error', {})
-    except (ValueError, AttributeError):
+        data = json.loads(payload)
+    except ValueError:
         return fallback
-    if not isinstance(error, dict) or error.get('code') != 'context_length_exceeded':
+    error = data.get('error', data) if isinstance(data, dict) else None
+    if not isinstance(error, dict):
         return fallback
     message = error.get('message', '')
     message = message if isinstance(message, str) else ''
     context = re.search(r'maximum context length is\s+(\d{1,10})\s+tokens', message, re.I)
-    count = re.search(r'prompt contains\s+(?:at least\s+)?(\d{1,10})\s+input tokens', message, re.I)
+    count = re.search(r'prompt contains\s+(at least\s+)?(\d{1,10})\s+input tokens', message, re.I)
     detail = 'Maximum context length exceeded. Please reduce the length of the input prompt.'
-    if context and count:
+    # Native vLLM uses numeric code 400; only recognized overflow counts survive the filter.
+    if context and count and int(count[2]) > int(context[1]):
+        qualifier = 'at least ' if count[1] else ''
         detail = (f"This model's maximum context length is {int(context[1])} tokens. However, your prompt "
-                  f'contains {int(count[1])} input tokens, which exceeds this limit even without any output '
+                  f'contains {qualifier}{int(count[2])} input tokens, which exceeds this limit even without any output '
                   'tokens. Please reduce the length of the input prompt.')
+    elif error.get('code') != 'context_length_exceeded':
+        return fallback
     return {'error': {'message': detail, 'type': 'invalid_request_error',
                       'code': 'context_length_exceeded', 'param': 'input_tokens'}}
 

@@ -7,6 +7,7 @@ import asyncio
 import copy
 import gc
 import json
+import os
 import subprocess
 import sys
 from contextlib import asynccontextmanager
@@ -153,6 +154,32 @@ def test_served_roles_are_pointed_at_the_pool_and_nothing_else(job):
     assert raw['execution']['hpc']['port'] == 4321
 
 
+def test_redirected_models_keep_pool_credentials_when_external_tokens_refresh(job, monkeypatch, alcf_tokens):
+    from loam.config import load
+    from loam.token_refresh import refresh_tokens
+
+    path = job / 'campaign/campaign.yaml'
+    raw = yaml.safe_load(path.read_text())
+    raw['models']['reviewer']['model'] = 'external-model'
+    raw['models']['validator']['settings'] = {'max_tokens': 4096}
+    raw['tournament']['generation']['model'] = 'served-model'
+    for spec in [*raw['models'].values(), raw['tournament']['generation'], raw['tournament']['ranking']]:
+        spec.update(api_key_env='ALCF_INFERENCE_TOKEN', token_refresh='alcf')
+    path.write_text(yaml.safe_dump(raw))
+    monkeypatch.setenv('LOAM_POOL_TOKEN', 'private-pool-token')
+
+    coordinator.point_models_at_pool(path, ['validator', 'code_generator', 'reasoner'], 'http://127.0.0.1:9/v1',
+                                     mcp_port=4321)
+    cfg = load(path)
+    asyncio.run(refresh_tokens(cfg))
+
+    served = [cfg.models[role] for role in ('validator', 'code_generator', 'reasoner')]
+    assert [spec.api_key() for spec in [*served, cfg.tournament.generation]] == ['private-pool-token'] * 4
+    assert cfg.models['reviewer'].api_key() == cfg.tournament.ranking.api_key() == 'refreshed-token'
+    assert cfg.models['validator'].settings == {'max_tokens': 4096}
+    assert alcf_tokens() == ['get-token inference']
+
+
 @pytest.fixture
 def science_service(job, monkeypatch):
     """One submitted row can finish only while the controller's science service is alive."""
@@ -178,7 +205,7 @@ def science_service(job, monkeypatch):
 
     class CampaignWorkload:
         def __init__(self, cfg):
-            pass
+            state['model_keys'] = {role: spec.api_key(custom_endpoint=True) for role, spec in cfg.models.items()}
 
         async def run(self, rounds):
             staging.write(batch / 'batch.json', {'batch_id': 'pending', 'total': 1})
@@ -186,6 +213,54 @@ def science_service(job, monkeypatch):
     monkeypatch.setattr(launcher, 'managed_hpc_server', service)
     monkeypatch.setattr(orchestrator, 'Campaign', CampaignWorkload)
     return state
+
+
+@pytest.mark.parametrize('refresh', ['alcf', None])
+def test_controller_refreshes_only_requested_tokens_after_allocation_wait(
+        job, monkeypatch, science_service, alcf_tokens, refresh):
+    from loam import launcher
+
+    path = job / 'campaign/campaign.yaml'
+    raw = yaml.safe_load(path.read_text())
+    raw['models']['reasoner'].update(api_key_env='ALCF_INFERENCE_TOKEN', token_refresh=refresh)
+    path.write_text(yaml.safe_dump(raw))
+    staging.write(science_service['row'] / 'status.json', {'returncode': 0})
+    (science_service['row'] / 'done').touch()
+    service = launcher.managed_hpc_server
+
+    @asynccontextmanager
+    async def queued_service(cfg):
+        async with service(cfg):
+            monkeypatch.setenv('ALCF_INFERENCE_TOKEN', 'expired-while-queued')
+            yield
+
+    monkeypatch.setattr(launcher, 'managed_hpc_server', queued_service)
+
+    asyncio.run(coordinator.control(job, environ={'SLURM_JOB_ID': '123'}))
+
+    expected = 'refreshed-token' if refresh else 'expired-while-queued'
+    assert science_service['model_keys']['reasoner'] == expected
+    assert os.environ['ALCF_INFERENCE_TOKEN'] == expected
+    assert alcf_tokens() == (['get-token inference'] if refresh else [])
+    assert not science_service['alive']
+
+
+def test_failed_controller_refresh_stops_before_campaign_and_closes_service(job, monkeypatch, science_service,
+                                                                          alcf_tokens):
+    path = job / 'campaign/campaign.yaml'
+    raw = yaml.safe_load(path.read_text())
+    raw['models']['reasoner'].update(api_key_env='ALCF_INFERENCE_TOKEN', token_refresh='alcf')
+    path.write_text(yaml.safe_dump(raw))
+    monkeypatch.setenv('FAIL', '1')
+    monkeypatch.setattr(coordinator, 'DRAIN_TIMEOUT', 0)
+
+    with pytest.raises(RuntimeError, match='alcf-tokens login inference'):
+        asyncio.run(coordinator.control(job, environ={'SLURM_JOB_ID': '123'}))
+
+    assert 'model_keys' not in science_service
+    assert not science_service['alive']
+    assert os.environ['ALCF_INFERENCE_TOKEN'] == 'stale-token'
+    assert alcf_tokens() == ['get-token inference']
 
 
 def test_submitted_science_finishes_before_its_service_stops(job, monkeypatch, science_service):

@@ -249,19 +249,50 @@ def test_the_relay_refuses_what_the_pool_would_never_send(method, path, kwargs, 
     assert asyncio.run(through_relay(completion, method, path, **kwargs))[0] == status
 
 
-def test_the_relay_passes_on_context_overflow_numbers_but_no_other_backend_text():
+@pytest.mark.parametrize('format', ['openai', 'vllm', 'legacy-vllm'])
+def test_the_relay_passes_on_context_overflow_numbers_but_no_other_backend_text(format):
     async def overflow(request):
-        return web.json_response({'error': {'code': 'context_length_exceeded', 'private': 'secret', 'message':
-                                 "This model's maximum context length is 100 tokens. However, your prompt "
-                                 'contains 101 input tokens.'}}, status=400)
+        error = {'code': 'context_length_exceeded' if format == 'openai' else 400,
+                 'type': 'BadRequestError', 'private': 'secret', 'message':
+                 "This model's maximum context length is 100 tokens. However, your prompt "
+                 'contains at least 101 input tokens. Private path: /secret/model'}
+        payload = error if format == 'legacy-vllm' else {'error': error}
+        return web.json_response(payload, status=400)
 
     async def crash(request):
         return web.json_response({'error': {'message': 'secret /path/on/node'}}, status=500)
 
     status, data = asyncio.run(through_relay(overflow, 'POST', '/v1/chat/completions', json=chat()))
-    assert status == 400 and b'101' in data and b'secret' not in data
+    assert status == 400
+    assert json.loads(data) == {'error': {
+        'message': "This model's maximum context length is 100 tokens. However, your prompt contains "
+                   'at least 101 input tokens, which exceeds this limit even without any output tokens. '
+                   'Please reduce the length of the input prompt.',
+        'type': 'invalid_request_error', 'code': 'context_length_exceeded', 'param': 'input_tokens'}}
     status, data = asyncio.run(through_relay(crash, 'POST', '/v1/chat/completions', json=chat()))
     assert status == 500 and b'secret' not in data
+
+
+@pytest.mark.parametrize('payload', [
+    b'not json: secret',
+    b'["secret"]',
+    b'{"error": "secret"}',
+    b'{"error": {"code": 400, "message": ["secret"]}}',
+    b'{"error": {"code": 400, "message": "Invalid request at /secret/model"}}',
+    json.dumps({'error': {'code': 400, 'message': "This model's maximum context length is 100 tokens. "
+                        'However, your prompt contains 99 input tokens. /secret/model'}}).encode(),
+    json.dumps({'error': {'code': 400, 'message': "This model's maximum context length is 100 tokens. "
+                        'However, your prompt contains 101 input tokens.', 'private': 'x' * 16384}}).encode(),
+], ids=['invalid-json', 'non-object', 'non-object-error', 'non-string-message', 'unrelated-error',
+        'within-context-limit', 'oversized-error'])
+def test_the_relay_scrubs_unrecognized_or_oversized_errors(payload):
+    async def error(request):
+        return web.Response(body=payload, content_type='application/json', status=400)
+
+    status, data = asyncio.run(through_relay(error, 'POST', '/v1/chat/completions', json=chat()))
+
+    assert status == 400
+    assert json.loads(data) == {'error': {'message': 'Inference backend returned HTTP 400'}}
 
 
 def test_the_relay_reports_an_ended_replica_as_unavailable():

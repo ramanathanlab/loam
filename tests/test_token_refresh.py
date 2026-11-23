@@ -1,7 +1,6 @@
 """ALCF inference tokens are refreshed only for the endpoints configured to need it."""
 import asyncio
 import os
-import stat
 
 import pytest
 from pydantic import ValidationError
@@ -19,19 +18,6 @@ def campaign(tmp_path, **models):
     return Config(goal='goal', state_dir=tmp_path / 'state', models={role: models.get(role, test) for role in ROLES},
                   tournament={'jnana_root': tmp_path, 'generation': models.get('generation', test),
                               'ranking': test})
-
-
-@pytest.fixture
-def alcf_tokens(tmp_path, monkeypatch):
-    """A stand-in `alcf-tokens` that records each call and prints a fresh token (or fails, if told to)."""
-    calls = tmp_path / 'calls'
-    script = tmp_path / 'alcf-tokens'
-    script.write_text(f'#!/bin/sh\necho "$@" >> {calls}\n'
-                      '[ -n "$FAIL" ] && exit 1\necho refreshed-token\n')
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv('ALCF_TOKENS_BIN', str(script))
-    monkeypatch.setenv('ALCF_INFERENCE_TOKEN', 'stale-token')
-    return lambda: calls.read_text().splitlines() if calls.exists() else []
 
 
 def test_an_endpoint_configured_for_alcf_gets_a_fresh_token(tmp_path, alcf_tokens):
