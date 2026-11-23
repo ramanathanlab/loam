@@ -9,6 +9,7 @@ import gc
 import json
 import subprocess
 import sys
+from contextlib import asynccontextmanager
 
 import pytest
 import yaml
@@ -59,6 +60,32 @@ def test_a_job_that_is_not_the_submitted_one_starts_nothing(job, monkeypatch):
 
     with pytest.raises(RuntimeError, match='not the submitted job 123'):
         run(job, {'SLURM_JOB_ID': '456'})
+
+
+@pytest.mark.parametrize(('field', 'value', 'problem'), [
+    ('concurrency', 1, 'Admission settings differ'),
+    ('tournament.workers', 1, 'Tournament workers differ'),
+    ('synthesis_concurrency', 1, 'Synthesis concurrency differs'),
+    ('execution.hpc.allocation.nodes', 1, 'not sized to the science nodes'),
+    ('execution.hpc.allocation.queue', 'changed', 'Account or queue differ'),
+    ('execution.hpc.science_workers_per_gpu', 1, 'Science workers per GPU differ'),
+    ('models.validator.model', 'changed', 'no longer names the served model'),
+])
+def test_configuration_drift_is_rejected_before_any_service(job, monkeypatch, field, value, problem):
+    path = job / 'campaign/campaign.yaml'
+    raw = yaml.safe_load(path.read_text())
+    target = raw
+    *parents, name = field.split('.')
+    for parent in parents:
+        target = target[parent]
+    target[name] = value
+    path.write_text(yaml.safe_dump(raw))
+    forbid_processes(monkeypatch)
+
+    with pytest.raises(RuntimeError, match=problem):
+        staging.check(job)
+    with pytest.raises(RuntimeError, match=problem):
+        run(job, {'SLURM_JOB_ID': '123'})
 
 
 def test_the_coordinator_runs_only_from_the_frozen_runtime(job, monkeypatch, tmp_path):
@@ -124,6 +151,67 @@ def test_served_roles_are_pointed_at_the_pool_and_nothing_else(job):
     assert raw['models']['reviewer']['model'] == 'other-model'
     assert raw['models']['reviewer']['base_url'] == 'http://127.0.0.1:1/v1'
     assert raw['execution']['hpc']['port'] == 4321
+
+
+@pytest.fixture
+def science_service(job, monkeypatch):
+    """One submitted row can finish only while the controller's science service is alive."""
+    from loam import launcher, orchestrator
+
+    host = coordinator.socket.gethostname().split('.')[0]
+    hosts = [host, *(f'worker-{i}' for i in range(19))]
+    allocation = coordinator.plan_allocation(plan_of(job), hosts, job_id='123', hostname=host)
+    staging.write(job / 'allocation.json', allocation)
+    staging.write(job / 'status.json', allocation)
+    batch = job / 'campaign/batches/pending'
+    row = batch / 'run_1'
+    row.mkdir(parents=True)
+    state = {'alive': False, 'row': row}
+
+    @asynccontextmanager
+    async def service(cfg):
+        state['alive'] = True
+        try:
+            yield
+        finally:
+            state['alive'] = False
+
+    class CampaignWorkload:
+        def __init__(self, cfg):
+            pass
+
+        async def run(self, rounds):
+            staging.write(batch / 'batch.json', {'batch_id': 'pending', 'total': 1})
+
+    monkeypatch.setattr(launcher, 'managed_hpc_server', service)
+    monkeypatch.setattr(orchestrator, 'Campaign', CampaignWorkload)
+    return state
+
+
+def test_submitted_science_finishes_before_its_service_stops(job, monkeypatch, science_service):
+    async def finish_pending_row(delay):
+        if science_service['alive']:
+            staging.write(science_service['row'] / 'status.json', {'returncode': 0})
+            (science_service['row'] / 'done').touch()
+
+    monkeypatch.setattr(coordinator.asyncio, 'sleep', finish_pending_row)
+
+    asyncio.run(coordinator.control(job, environ={'SLURM_JOB_ID': '123'}))
+
+    assert coordinator.pending_batches(job / 'campaign') == []
+    assert not science_service['alive']
+    status = staging.read(job / 'status.json')
+    assert status['phase'] == 'science_drained' and status['pending_batches'] == []
+
+
+def test_a_science_drain_timeout_still_stops_the_service(job, monkeypatch, science_service):
+    monkeypatch.setattr(coordinator, 'DRAIN_TIMEOUT', 0)
+
+    with pytest.raises(TimeoutError, match='Submitted science did not finish: pending'):
+        asyncio.run(coordinator.control(job, environ={'SLURM_JOB_ID': '123'}))
+
+    assert not science_service['alive']
+    assert coordinator.pending_batches(job / 'campaign') == ['pending']
 
 
 # --- Controller garbage collection, ported from the moeen branch's test_controller_gc.py ---

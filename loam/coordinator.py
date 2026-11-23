@@ -35,6 +35,7 @@ import subprocess
 import time
 import traceback
 from collections.abc import Mapping
+from functools import partial
 from pathlib import Path
 
 import httpx
@@ -43,7 +44,7 @@ import yaml
 from .allocation import validate_campaign_paths, validate_role
 from .allocation_startup import wait_for_allocation_telemetry
 from .config import load
-from .staging import InferenceProfile, check_gc_threshold, read, sha, verify_seals, write
+from .staging import InferenceProfile, check, check_gc_threshold, read, write
 from .systems import System
 
 RUNTIME = Path(__file__).resolve().parents[1]
@@ -166,17 +167,14 @@ class Children:
 
 def check_job(job: Path, plan: dict, environ: Mapping[str, str], runtime: Path) -> tuple:
     """Everything checked before the scheduler is asked anything. Returns (config, System, job id)."""
+    check(job, runtime=runtime)
     campaign = Path(plan['campaign'])
     cfg = load(campaign / 'campaign.yaml')
-    validate_campaign_paths(cfg, campaign)
-    verify_seals(job, plan, runtime=runtime)
     system = cfg.execution.hpc.system_definition()
     receipt = read(job / 'submission.json')
     job_id = environ.get(system.job_id_variable)
     if job_id != receipt['job_id']:
         raise RuntimeError(f'Running in job {job_id}, not the submitted job {receipt["job_id"]}')
-    if receipt['job_name'] != plan['job_name'] or receipt['script_sha256'] != sha(job / 'job.sh'):
-        raise RuntimeError('The submission receipt does not match this staged job')
     system.check_gpu_telemetry()
     return cfg, system, job_id
 
@@ -224,6 +222,15 @@ def pending_batches(campaign: Path) -> list[str]:
     return pending
 
 
+def report_status(job: Path, phase: str, **details) -> None:
+    """Update progress from the coordinator or its controller while the other waits."""
+    path = job / 'status.json'
+    state = read(path) if path.exists() else {}
+    state.update(phase=phase, updated_at=time.time(), **details)
+    write(path, state)
+    print(json.dumps({'phase': phase, **details}), flush=True)
+
+
 async def run(job: Path, *, environ: Mapping[str, str] | None = None, runtime: Path = RUNTIME) -> None:
     """Run the staged job's campaign inside the allocation it was submitted as."""
     environ = os.environ if environ is None else environ
@@ -238,12 +245,8 @@ async def run(job: Path, *, environ: Mapping[str, str] | None = None, runtime: P
     python = plan['python']
     env = {**environ, **system.step_environment(),
            'PYTHONPATH': os.pathsep.join(filter(None, [str(runtime), environ.get('PYTHONPATH')]))}
-    state = dict(allocation)
-
-    def status(phase, **details):
-        state.update(phase=phase, updated_at=time.time(), **details)
-        write(job / 'status.json', state)
-        print(json.dumps({'phase': phase, **details}), flush=True)
+    write(job / 'status.json', allocation)
+    status = partial(report_status, job)
 
     children = Children(job, job_id)
     try:
@@ -279,12 +282,6 @@ async def run(job: Path, *, environ: Mapping[str, str] | None = None, runtime: P
         if controller.returncode:
             raise RuntimeError(f'The campaign controller failed with status {controller.returncode}; see controller.log')
 
-        deadline = time.monotonic() + DRAIN_TIMEOUT
-        while pending := pending_batches(campaign):
-            if time.monotonic() > deadline:
-                raise TimeoutError('Submitted science did not finish: ' + ', '.join(pending))
-            status('draining_submitted_science', pending_batches=pending)
-            await asyncio.sleep(15)
         status('completed', controller_returncode=0)
     except Exception as error:
         status('failed', error_type=type(error).__name__, error=str(error)[:2000])
@@ -295,7 +292,7 @@ async def run(job: Path, *, environ: Mapping[str, str] | None = None, runtime: P
 
 
 async def control(job: Path, *, environ: Mapping[str, str] | None = None) -> None:
-    """The campaign controller: attach the MCP server to the science hosts and run every round."""
+    """Run every round and drain submitted science before releasing the MCP server and its workers."""
     from .launcher import managed_hpc_server
     from .orchestrator import Campaign
 
@@ -315,6 +312,13 @@ async def control(job: Path, *, environ: Mapping[str, str] | None = None) -> Non
     write(diagnostics / 'controller-gc-policy.json', {'at': time.time(), 'controller_pid': os.getpid(), **policy})
     async with managed_hpc_server(cfg):
         await Campaign(cfg).run(cfg.rounds)
+        deadline = time.monotonic() + DRAIN_TIMEOUT
+        while pending := pending_batches(campaign):
+            if time.monotonic() > deadline:
+                raise TimeoutError('Submitted science did not finish: ' + ', '.join(pending))
+            report_status(job, 'draining_submitted_science', pending_batches=pending)
+            await asyncio.sleep(15)
+        report_status(job, 'science_drained', pending_batches=[])
 
 
 def main(argv: list[str] | None = None) -> None:

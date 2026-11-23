@@ -100,7 +100,7 @@ def python_executable() -> Path:
     return Path(os.environ.get('LOAM_PYTHON') or REPO / '.venv/bin/python').absolute()
 
 
-def freeze_runtime(infra: Path) -> Path:
+def freeze_runtime(infra: Path, *, rules: list[Path], source: Path) -> Path:
     """Copy loam's source (never environments, weights or results) into the job."""
     target = infra / 'control-runtime'
     target.mkdir()
@@ -109,6 +109,11 @@ def freeze_runtime(infra: Path) -> Path:
     for name in RUNTIME_FILES:
         if (REPO / name).is_file():
             shutil.copyfile(REPO / name, target / name)
+    for rule in rules:
+        if rule.is_relative_to(source):
+            frozen = target / rule.relative_to(source)
+            frozen.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(rule, frozen)
     return target
 
 
@@ -188,8 +193,8 @@ def stage(reference: Path, root: Path, *, label: str, nodes: int, inference_prof
     campaign.mkdir()
     infra = job / 'infra'
     infra.mkdir(mode=0o700)
-    runtime = freeze_runtime(infra)
     source = Path(source).resolve()
+    runtime = freeze_runtime(infra, rules=cfg.rules, source=source)
     if inputs:
         inputs = Path(inputs).resolve(strict=True)
         shutil.copytree(inputs, campaign / 'inputs', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
@@ -318,14 +323,16 @@ def verify_seals(job: Path, plan: dict, *, runtime: Path | None = None) -> None:
             'The inference profile changed since staging')
 
 
-def check(job: Path) -> dict:
+def check(job: Path, *, runtime: Path | None = None) -> dict:
     """Read-only preflight of a staged job: its seals, paths and sizing agree with its plan. Returns the proof."""
     job = Path(job).resolve()
     plan = read(job / 'plan.json')
     campaign = Path(plan['campaign'])
     cfg = load(campaign / 'campaign.yaml')
     bindings = validate_campaign_paths(cfg, campaign)
-    verify_seals(job, plan)
+    verify_seals(job, plan, runtime=runtime)
+    for rule in cfg.rules:
+        require(rule.is_file(), f'Campaign rule is missing: {rule}')
     hpc = cfg.execution.hpc
     system = hpc.system_definition()
     require(plan['mode'] == 'single-allocation' and plan['inference_count'] + plan['science_count'] == plan['nodes'],

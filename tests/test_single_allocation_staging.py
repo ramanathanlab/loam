@@ -135,6 +135,46 @@ def test_changed_frozen_source_is_rejected_at_preflight(tmp_path, monkeypatch, i
         staging.check(job)
 
 
+def test_repository_rules_are_readable_from_the_frozen_campaign(tmp_path, monkeypatch, inference_profile):
+    rules = [staging.REPO / 'examples/rules/binder-protocol.md',
+             staging.REPO / 'examples/rules/binder-constraint.md']
+    expected = '\n\n'.join(rule.read_text() for rule in rules)
+
+    job = stage(tmp_path, monkeypatch, inference_profile,
+                reference_settings={'rules': [str(rule) for rule in rules]})
+
+    cfg = load(job / 'campaign/campaign.yaml')
+    assert cfg.rules_text() == expected
+    assert all(rule.is_relative_to(job) for rule in cfg.rules)
+    cfg.rules[0].write_text('Changed while queued')
+    with pytest.raises(RuntimeError, match='Frozen runtime source changed'):
+        staging.check(job)
+
+
+def test_rules_are_frozen_from_the_named_source_checkout(tmp_path, monkeypatch, inference_profile):
+    source = tmp_path / 'previous-runtime'
+    rule = source / 'docs/protocol.md'
+    rule.parent.mkdir(parents=True)
+    rule.write_text('Use independently verified evidence.')
+
+    job = stage(tmp_path, monkeypatch, inference_profile, source=source,
+                reference_settings={'rules': [str(rule)]})
+    rule.unlink()
+
+    assert load(job / 'campaign/campaign.yaml').rules_text() == 'Use independently verified evidence.'
+    staging.check(job)
+
+
+def test_preflight_rejects_a_missing_external_rule(tmp_path, monkeypatch, inference_profile):
+    rule = tmp_path / 'external-rule.md'
+    rule.write_text('Use independently verified evidence.')
+    job = stage(tmp_path, monkeypatch, inference_profile, reference_settings={'rules': [str(rule)]})
+    rule.unlink()
+
+    with pytest.raises(RuntimeError, match='Campaign rule is missing'):
+        staging.check(job)
+
+
 def test_a_separate_input_bundle_is_copied_and_its_hashes_sealed(tmp_path, monkeypatch, inference_profile, inputs):
     job = stage(tmp_path, monkeypatch, inference_profile, inputs=inputs)
 
