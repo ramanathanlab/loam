@@ -49,6 +49,28 @@ def validate_role(path: Path, role: str, *, job_id: str | None, hostname: str | 
     return data
 
 
+def validate_campaign_paths(cfg, campaign: Path) -> dict[str, str]:
+    """The staged campaign's own paths, if every path the campaign writes or reads its goal from is one.
+
+    A staged job must never run against an earlier campaign's state, so each path must resolve
+    (symlinks followed) to its place under `campaign`.
+    """
+    base = Path(campaign).resolve()
+    expected = {
+        'state_dir': (cfg.state_dir, base / 'state'),
+        'goal': (cfg.goal, base / 'goal.md'),
+        'execution.hpc.base_dir': (cfg.execution.hpc.base_dir, base),
+        'execution.workdir': (cfg.execution.workdir, base / 'work'),
+    }
+    bindings = {}
+    for name, (value, place) in expected.items():
+        actual = Path(value).resolve()
+        if actual != place:
+            raise RuntimeError(f'Single-allocation {name} must be {place}; got {actual}')
+        bindings[name] = str(actual)
+    return bindings
+
+
 def pooled_overlap(science: dict, inference_jobs: list[dict], replicas: int) -> list[dict]:
     """When the science job and every inference replica ran at once: their intersection, never a sum.
 

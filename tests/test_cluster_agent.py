@@ -1,6 +1,7 @@
 """The cluster agent builds its cluster setup from the deployment environment alone."""
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -351,3 +352,31 @@ def test_cluster_agent_rejects_a_malformed_science_worker_count(tmp_path, worker
     environment = {**Config.model_validate(values).execution.hpc.environment(), 'HPC_SCIENCE_WORKERS_PER_GPU': workers}
     with pytest.raises(RuntimeError, match='HPC_SCIENCE_WORKERS_PER_GPU'):
         hpc_agent.SystemSpec.from_environment(environment)
+
+
+@pytest.mark.parametrize(('system', 'pin_var', 'other_var'), [
+    ('aurora', 'ZE_AFFINITY_MASK', 'CUDA_VISIBLE_DEVICES'),
+    ('polaris', 'CUDA_VISIBLE_DEVICES', 'ZE_AFFINITY_MASK'),
+])
+def test_agents_report_the_accelerator_pinned_by_the_systems_pin_variable(tmp_path, monkeypatch, system, pin_var,
+                                                                          other_var):
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setattr(hpc_agent, '_MIN_BATCH_ROWS', 1)
+    monkeypatch.setattr(hpc_agent, '_MIN_BATCH_DISTINCT', 1)
+    spec = hpc_agent.SystemSpec.from_environment(deployment_environment(tmp_path, system))
+    monkeypatch.setenv(pin_var, '3')
+    monkeypatch.setenv(other_var, '7')  # another vendor's variable, which this System does not pin with
+    agent = hpc_agent.HpcClientAgent('campaign', str(tmp_path), 'ckpt', gpu_pin_var=spec.gpu_pin_var)
+    agent._client, agent._el_pool = InlineCluster(), ThreadPoolExecutor(max_workers=1)
+    script = tmp_path / 'row.py'
+    script.write_text('pass\n')
+    inputs = tmp_path / 'rows.jsonl'
+    inputs.write_text('{"id": "r1"}\n')
+
+    probe = asyncio.run(agent.probe())
+    batch = asyncio.run(agent.run_batch(str(script), str(inputs)))
+    batch_dir = asyncio.run(agent.batch_status(batch['batch_id']))['dir']
+
+    assert probe['device_pin'] == '3'
+    assert [json.loads(p.read_text())['gpu'] for p in Path(batch_dir).glob('run_*/status.json')] == ['3']

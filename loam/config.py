@@ -53,6 +53,9 @@ class ModelSpec(ConfigModel):
     model: str
     base_url: str | None = None
     api_key_env: str | None = None
+    # pydantic-ai model settings for this role's agent, e.g. {max_tokens: 32768}. Synthesis reserves
+    # the reasoner's max_tokens in its request budget. model_retries and timeouts.model_request win.
+    settings: dict[str, Any] = Field(default_factory=dict)
     # 'alcf': before round 1 (after any allocation queue wait, which can outlive a token), loam fetches
     # a fresh ALCF inference token into api_key_env. Needs the alcf-auth extra; see loam.token_refresh.
     token_refresh: Literal['alcf'] | None = None
@@ -233,6 +236,11 @@ class HPCDeployment(ConfigModel):
         if exchange.scheme not in {'http', 'https'} or not exchange.netloc:
             raise ValueError('execution.hpc.exchange_url must be an HTTP(S) URL')
         return self
+
+    @property
+    def site_profile(self) -> SiteProfile | None:
+        """The Site profile `load` found for this campaign, if any."""
+        return self._site_profile
 
     def system_definition(self):
         """The System, with this campaign's node shape."""

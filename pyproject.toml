@@ -18,6 +18,8 @@ loam-saturation = "loam.saturation.__main__:main"
 loam-inference-pool = "loam.inference_pool:main"
 loam-nemotron = "loam.nemotron:main"
 loam-scaling = "loam.scaling:main"
+loam-stage = "loam.staging:main"
+loam-scaleup = "loam.saturation.scaleup:main"
 
 [project.optional-dependencies]
 dev = ["pytest"]

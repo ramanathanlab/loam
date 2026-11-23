@@ -597,6 +597,17 @@ def test_config_rejects_unknown_keys(tmp_path):
     with pytest.raises(ValueError, match='Extra inputs'):
         Config.model_validate(values)
 
+def test_per_model_settings_apply_only_to_that_roles_agent(tmp_path):
+    values = make_cfg(tmp_path).model_dump()
+    values['models']['reasoner']['settings'] = {'max_tokens': 32768, 'max_retries': 99}
+    cfg = Config.model_validate(values)
+    agents = build(cfg)
+    # A role's settings never override the campaign-wide retry and timeout policy.
+    assert agents.reasoner.model_settings == {'max_tokens': 32768, 'max_retries': cfg.model_retries,
+                                              'request_timeout': cfg.timeouts.model_request}
+    assert 'max_tokens' not in agents.validator.model_settings
+
+
 def test_config_requires_every_model_role_and_positive_limits(tmp_path):
     values = make_cfg(tmp_path).model_dump()
     values['models'].pop('reviewer')
