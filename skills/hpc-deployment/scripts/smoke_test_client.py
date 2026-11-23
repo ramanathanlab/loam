@@ -14,12 +14,12 @@ async def main() -> None:
     async with Client(url, timeout=180) as client:
         names = {tool.name for tool in await client.list_tools()}
         expected = {"run_code", "write_files", "inspect_filesystem", "run_batch",
-                    "batch_status", "list_batches", "pool_status"}
+                    "register_tool", "list_tools", "batch_status", "list_batches", "pool_status"}
         if names != expected:
             raise RuntimeError(
                 f"cluster-mode tools differ: missing={expected - names}, unexpected={names - expected}"
             )
-        # Do not submit science (or even a batch) here. Listing the seven-tool
+        # Do not submit science (or even a batch) here. Listing the nine-tool
         # contract proves run_batch was registered after the full pool started.
         probe = "print('hpc smoke ok')"
         code = await client.call_tool("run_code", {"payload": probe})

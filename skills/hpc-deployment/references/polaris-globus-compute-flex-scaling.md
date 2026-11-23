@@ -25,7 +25,7 @@ A permissive endpoint schema alone does not prove routing. Confirm that the Jinj
 - `init_blocks`, `min_blocks`, `max_blocks`
 - filesystem/placement scheduler options
 
-An intentionally minimal manager `config.yaml` with the engine in the per-submission template is a valid design: it permits one manager UUID to provision distinct allocation shapes. Record the manager UUID separately in campaign configuration (`HPC_GLOBUS_ENDPOINT_ID`); never bake it into this skill.
+An intentionally minimal manager `config.yaml` with the engine in the per-submission template is a valid design: it permits one manager UUID to provision distinct allocation shapes. Record the manager UUID in campaign YAML as `execution.hpc.endpoint_id`; loam generates `HPC_GLOBUS_ENDPOINT_ID` internally.
 
 ## Polaris queue checks
 
