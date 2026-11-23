@@ -4,6 +4,8 @@ Aurora-specific notes for this skill. The System itself (cores, the 12 tiles
 per node, `ZE_AFFINITY_MASK` pinning, PBS node discovery, the MPI launcher) is
 defined in `loam.systems`; this file only covers what an operator does by hand.
 
+Before deployment, follow the [PBS endpoint and scheduler checks](pbs.md).
+
 ## Direct mode
 
 Request 12 addressable tiles per node and pin each worker with

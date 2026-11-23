@@ -21,6 +21,7 @@ fastmcp = pytest.importorskip('fastmcp')
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'skills' / 'hpc-deployment' / 'scripts'))
 import mcp_server  # noqa: E402
+import smoke_test_client  # noqa: E402
 
 
 class Services:
@@ -67,6 +68,17 @@ class Services:
 
             async def stop(self):
                 pass
+
+            async def next_agent(self, launch_one):
+                async def action(name, *args, **kwargs):
+                    services.submitted.append(('action', name))
+                    if name == 'run_code':
+                        return {'returncode': '0', 'stdout': 'hpc smoke ok', 'stderr': ''}
+                    if name == 'inspect_filesystem':
+                        return {'entries': []}
+                    raise AssertionError(f'Unexpected smoke-test action: {name}')
+
+                return SimpleNamespace(handle=SimpleNamespace(action=action))
 
         async def endpoint_ready(*args, **kwargs):
             services.submitted.append(('probe', args))
@@ -179,3 +191,17 @@ def test_globus_submission_still_launches_through_the_endpoint(tmp_path, service
     assert 'executor' in kinds and 'probe' in kinds
     cluster = next(agent for kind, agent in services.submitted if kind == 'agent')
     assert cluster.nodes is None  # found by the worker the endpoint starts, inside its allocation
+
+
+def test_deployment_smoke_client_accepts_the_current_server(tmp_path, services, monkeypatch, capsys):
+    environment = hpc_environment(tmp_path, 'polaris')
+    server = mcp_server.create_server(cluster=True, nnodes=2, environ=environment)
+    monkeypatch.setenv('HPC_MCP_URL', 'http://unused.invalid/mcp')
+    monkeypatch.setenv('HPC_BASE_DIR', environment['HPC_BASE_DIR'])
+    monkeypatch.setattr(smoke_test_client, 'Client', lambda url, **kwargs: fastmcp.Client(server, **kwargs))
+
+    asyncio.run(smoke_test_client.main())
+
+    assert [name for kind, name in services.submitted if kind == 'action'] == ['run_code', 'inspect_filesystem']
+    output = capsys.readouterr().out
+    assert 'hpc smoke ok' in output and 'INSPECT' in output and 'POOL' in output

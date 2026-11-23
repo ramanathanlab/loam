@@ -33,8 +33,8 @@ which to pick.
 
 ## Skill layout
 
-A skill is being converted, one family at a time, to a System-neutral layout (see
-`docs/adr/0004-system-neutral-core-and-out-of-repo-site-profiles.md`):
+Every skill follows a System-neutral layout (see
+[ADR 0004](../docs/adr/0004-system-neutral-core-and-out-of-repo-site-profiles.md)):
 
 ```
 <skill>/
@@ -47,20 +47,18 @@ A skill is being converted, one family at a time, to a System-neutral layout (se
 
 The agent reads `references/$HPC_SYSTEM.md`; a skill with no reference file for a System is
 unsupported there and its `SKILL.md` says so. Paths go only through Site profile variables such as
-`$LOAM_SOFTWARE_ROOT`. `tests/test_skill_layout.py` enforces this for the converted skills (so far
-the structure-prediction family: boltz, chai, esmfold2, protenix; the md-simulation family:
-molecular-simulations, openmm; the qm family: uma, and reactra, which is Aurora-only; and the
-diffusion-models family: rfd4-proteina, and rfdiffusion3, which is Aurora-only; inverse-folding:
-proteinmpnn; analysis: pyrosetta, and foundation-language-models: genslm-esm, both Aurora-only; and
-fetch-literature, rag-build-index and rag-query, which claim `systems: all`). It also fails when any
-file a converted skill bundles holds a personal path.
+`$LOAM_SOFTWARE_ROOT`. `tests/test_skill_layout.py` discovers every `SKILL.md` under `skills/`,
+including newly added skills, and checks its declared Systems, reference files, paths and accounts.
+It also fails when any readable file a skill bundles holds a personal path.
 
 A skill that runs the same way everywhere claims `systems: all` instead of naming Systems: it has no
 reference file (and may not ship one), and takes its interpreter, caches, network and inference
 endpoints from the Site profile rather than from a System.
 
-Every tool skill in the table above is now converted. `hpc-deployment`, which is not a tool skill,
-still has its own shape; #62 widens the check to it.
+[hpc-deployment](hpc-deployment/SKILL.md) follows the same layout and supports Aurora, Polaris and
+Jupiter. Its shared MCP server and agent scripts remain bundled with the skill; they are distinct
+from the old repository-root `scripts/` directory whose campaign tools became `loam` modules.
+See the [port inventory](../docs/moeen-port-inventory.md) for material deliberately left behind.
 
 ## Recommended permanent fixes (software dirs were left untouched)
 

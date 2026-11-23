@@ -1,7 +1,4 @@
-"""The skill layout check: a System-neutral SKILL.md, plus one reference file per System it supports.
-
-Covers only the skills converted so far; the final cleanup of #43 widens it to every skill.
-"""
+"""Check every skill: System-neutral instructions and references for each supported System."""
 
 from pathlib import Path
 
@@ -10,18 +7,11 @@ import pytest
 from loam import skills
 
 SKILLS = Path(__file__).resolve().parent.parent / 'skills'
-CONVERTED = ['structure-prediction/chai', 'structure-prediction/boltz',
-             'structure-prediction/protenix', 'structure-prediction/esmfold2',
-             'md-simulation/openmm', 'md-simulation/molecular-simulations',
-             'qm/uma', 'qm/reactra',
-             'diffusion-models/rfd4-proteina', 'diffusion-models/rfdiffusion3',
-             'inverse-folding/proteinmpnn', 'analysis/pyrosetta',
-             'foundation-language-models/genslm-esm',
-             'fetch-literature', 'rag-build-index', 'rag-query']
 
 
-@pytest.mark.parametrize('skill', CONVERTED)
-def test_converted_skill_passes_the_layout_check(skill):
+@pytest.mark.parametrize('skill', sorted(path.parent.relative_to(SKILLS)
+                                        for path in SKILLS.rglob('SKILL.md')), ids=str)
+def test_every_skill_passes_the_layout_check(skill):
     assert skills.layout_problems(SKILLS / skill) == []
 
 
