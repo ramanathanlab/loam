@@ -97,6 +97,7 @@ def point_models_at_pool(config: Path, roles: list[str], base_url: str, *, mcp_p
                if spec['model'] in served)]
     for spec in specs:
         spec.update(base_url=base_url, api_key_env=POOL_TOKEN)
+        spec.pop('token_refresh', None)  # the local pool owns its token; external refresh no longer applies
     raw['execution']['hpc']['port'] = mcp_port
     config.write_text(yaml.safe_dump(raw, sort_keys=False))
 
@@ -295,6 +296,7 @@ async def control(job: Path, *, environ: Mapping[str, str] | None = None) -> Non
     """Run every round and drain submitted science before releasing the MCP server and its workers."""
     from .launcher import managed_hpc_server
     from .orchestrator import Campaign
+    from .token_refresh import refresh_tokens
 
     environ = os.environ if environ is None else environ
     job = Path(job).resolve()
@@ -311,6 +313,7 @@ async def control(job: Path, *, environ: Mapping[str, str] | None = None) -> Non
     diagnostics.mkdir(exist_ok=True)
     write(diagnostics / 'controller-gc-policy.json', {'at': time.time(), 'controller_pid': os.getpid(), **policy})
     async with managed_hpc_server(cfg):
+        await refresh_tokens(cfg)  # the allocation wait can outlive an endpoint's token
         await Campaign(cfg).run(cfg.rounds)
         deadline = time.monotonic() + DRAIN_TIMEOUT
         while pending := pending_batches(campaign):

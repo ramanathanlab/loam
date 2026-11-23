@@ -279,6 +279,20 @@ wheels = [
 ]
 
 [[package]]
+name = "alcf-tokens"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "globus-sdk" },
+    { name = "httpx" },
+    { name = "typer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7b/86/74bba489f67d044863c674ce20b6c18f8cb814d7e32003b7af5e37dc8c83/alcf_tokens-0.4.0.tar.gz", hash = "sha256:c283e7fdff92f6c1ad9f4b5c808b0a6d4c1915cebd878e964d6ebf66b693a325", size = 12826 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/f0/958295654faeb7c22b9fa4d2e838186427b0321fff0ae47d2312d157137b/alcf_tokens-0.4.0-py3-none-any.whl", hash = "sha256:394be77a1113d63a827e54a79843a4a508355dd2b03f464b3f443535ed4bb0e8", size = 10625 },
+]
+
+[[package]]
 name = "alembic"
 version = "1.20.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1967,8 +1981,8 @@ name = "httpcore2"
 version = "2.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "h11", marker = "python_full_version < '3.12' or python_full_version >= '3.15' or sys_platform != 'emscripten'" },
-    { name = "truststore", marker = "python_full_version < '3.12' or python_full_version >= '3.15' or sys_platform != 'emscripten'" },
+    { name = "h11", marker = "sys_platform != 'emscripten'" },
+    { name = "truststore", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c0/61/afa9d6b7452f9eca73f73d45324eb0bb52f098fd5e6049bf6b8263be9b4e/httpcore2-2.16.0.tar.gz", hash = "sha256:c72cd0413563b17e1cd8354677dff887466f8ec2551679759e93126534428643", size = 69886 }
 wheels = [
@@ -2435,6 +2449,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+alcf-auth = [
+    { name = "alcf-tokens" },
+]
 dev = [
     { name = "pytest" },
 ]
@@ -2451,11 +2468,16 @@ memory = [
     { name = "hindsight-api-slim", extra = ["embedded-db"] },
     { name = "hindsight-client" },
 ]
+nemotron = [
+    { name = "aiohttp" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "academy-py", marker = "extra == 'hpc'" },
     { name = "aiohttp", marker = "extra == 'inference-pool'", specifier = ">=3.9" },
+    { name = "aiohttp", marker = "extra == 'nemotron'", specifier = ">=3.9" },
+    { name = "alcf-tokens", marker = "extra == 'alcf-auth'", specifier = "==0.4.0" },
     { name = "ensemble-launcher", marker = "extra == 'hpc'" },
     { name = "fastmcp", marker = "extra == 'hpc'" },
     { name = "globus-compute-sdk", marker = "extra == 'hpc'" },

@@ -1,0 +1,12 @@
+{
+  "model": "nemotron-3.5-super-vl",
+  "checkpoint": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+  "checkpoint_revision": "fb0ee0bc6b3f70342afd8d84cb80dbadbaa8a1fe",
+  "model_dir": "/YOUR_FILESYSTEM/YOUR_ALLOCATION/YOUR_USER/software/.hf-cache/hub/models--nvidia--NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16/snapshots/fb0ee0bc6b3f70342afd8d84cb80dbadbaa8a1fe",
+  "command": ["/YOUR_FILESYSTEM/YOUR_ALLOCATION/YOUR_USER/software/vllm/.venv/bin/vllm"],
+  "max_model_len": 131072,
+  "max_num_seqs": 16,
+  "tensor_parallel_size": 4,
+  "gpu_memory_utilization": 0.85,
+  "warmup_seconds": 5400
+}

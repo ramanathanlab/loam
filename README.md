@@ -67,10 +67,11 @@ The scientific contracts work; coaxing an LLM orchestrator to enforce them via r
 | **Reviewer** | `models.reviewer` | `read_skill`, `fetch_url`, read-only workspace/MCP tools | `Review` |
 | **Reasoner** | `models.reasoner` | *none* | `Brief` |
 
-Each LLM role uses a `ModelSpec` (`{model, base_url, api_key_env, settings}`):
+Each LLM role uses a `ModelSpec` (`{model, base_url, api_key_env, settings, token_refresh}`):
 - **With `base_url`:** Connects to any OpenAI-compatible server (vLLM, ALCF/Argo proxy, LiteLLM, etc.).
 - **Without `base_url`:** Accepts any native `pydantic-ai` model identifier (e.g., `anthropic:claude-sonnet-4-5`, `openai:gpt-5`, `test`).
 - **Secrets stay out of YAML:** API keys are referenced by environment variable name via `api_key_env`; Globus Compute and Academy credentials stay in their standard external stores.
+- **ALCF tokens:** `token_refresh: alcf` makes loam fetch a fresh ALCF inference token into that endpoint's `api_key_env` just before round 1, after any allocation queue wait, with `alcf-tokens get-token inference`. It needs the `alcf-auth` extra and a one-time `alcf-tokens login inference`; `ALCF_TOKENS_BIN` can point to another install. Endpoints without the setting are never touched.
 - **Per-role settings:** `settings` is passed to that role's agent as its pydantic-ai model settings (e.g. `settings: {max_tokens: 32768}` for a reasoner that truncates). Round synthesis reserves the reasoner's `max_tokens` (8192 when unset) in every request's context budget. `model_retries` and `timeouts.model_request` override a role's `max_retries` and `request_timeout`. The tournament's `generation` and `ranking` models do not read `settings`.
 
 With the optional `memory:` block, the validator and code generator also get lessons from earlier work (earlier rounds of this campaign and earlier campaigns) in their prompts; no role gains a tool. See [Memory (optional)](#memory-optional).
@@ -87,6 +88,8 @@ uv sync                    # core dependencies
 uv sync --extra dev        # + pytest for offline test suite
 uv sync --extra hpc        # + managed HPC (fastmcp, globus-compute-sdk, academy-py, ensemble-launcher)
 uv sync --extra memory     # + optional cross-campaign memory (Hindsight); see "Memory (optional)"
+uv sync --extra nemotron   # + optional self-hosted Nemotron inference backend; see "Inference Pool"
+uv sync --extra alcf-auth  # + alcf-tokens, for endpoints with `token_refresh: alcf`
 uv sync --all-extras       # everything above at once
 
 # Or using pip
@@ -268,6 +271,19 @@ The job directory, ROOT/LABEL, owns everything it runs. That covers the campaign
 
 `loam-inference-pool ROOT` serves several replicas of one model, from any OpenAI-compatible backend (vLLM, SGLang, a hosted endpoint), as a single authenticated endpoint. Point campaign models at it like any other `base_url`. `ROOT/pool.json` names the served `model`, an optional `checkpoint` (a replica whose entry declares other weights, or none, gets no requests), the routing `policy` (`least_loaded_affinity`, `least_loaded` or `round_robin`), `max_inflight_per_backend`, and the `backends`, each with an `id`, a `base_url`, and optionally a `token_file` or `token_env` for its bearer token. Unknown top-level keys, a duplicate backend `id` or an out-of-range value refuse the file; a backend entry may carry extra keys for its resolver. The pool re-reads `pool.json` every two seconds, so replicas can be added or retired while it runs. A bad edit marks every replica not ready until it is fixed, and the model and checkpoint are fixed for the pool's lifetime. Requests are forwarded unchanged. A request that fails before it starts streaming is retried on another replica, and a backend's error text is never passed on except for context-length numbers. The pool writes its URL and the path of its client token to `ROOT/pool-service.json`, and one timing record per attempt, with no prompt or completion text, to `ROOT/pool-request-timings.jsonl`. `POST /pool/batch` fans out up to 64 independent non-streaming requests, and `GET /pool/status` reports each replica's load and readiness. Install with the `inference-pool` extra.
 
+**Self-hosted Nemotron replicas** (`loam-nemotron`, the `nemotron` extra) are an optional backend for the pool, ported from Moeen Meigooni's Jupiter runs. Each replica runs vLLM with the measured serving profile (see [`examples/nemotron/serving-profile.json`](examples/nemotron/serving-profile.json) and the [scaling recipe book](docs/scaling-recipe-book.md)) on one node, inside a job you already hold. Nothing here submits or cancels jobs.
+
+```bash
+loam-nemotron add ROOT --profile serving-profile.json --system jupiter --job-id "$JOB" \
+    --expires-at "$JOB_END_EPOCH" --pool-address 10.x.y.z --host node-a --host node-b \
+    [--allocation-manifest allocation.json]   # lists the replicas in ROOT/pool.json and prints their attempts
+loam-nemotron serve ROOT/replicas/ATTEMPT    # on each replica's node, in that job (srun, mpiexec, ...)
+loam-nemotron pool ROOT                       # the pool over them, on the --pool-address host
+loam-nemotron retire ROOT --keep N            # drain, then stop, all but the first N replicas
+```
+
+`add` checks the local snapshot (its directory is named with the pinned revision, and every shard is present) and gives each replica a fresh bearer token and a self-signed certificate. `serve` checks that it runs in its job and on its host (and, with a manifest, on one of the allocation's inference hosts). It then starts vLLM and waits for a real completion. After that it relays to vLLM over TLS, accepting requests only from the pool's address, and writes a readiness record. The pool pins that certificate, and it routes to a replica only while the readiness record names this pool, job, host, model and revision, and the job has not ended. `retire` disables replicas in `pool.json`, waits until the running pool has finished their requests, then has their `serve` shut vLLM down. You then release their nodes.
+
 ---
 
 ## Memory (optional)
@@ -364,6 +380,8 @@ loam/
 ├── synthesis.py       # Round synthesis: reduces threads + steering to the next brief within the context
 ├── skills.py          # SKILL.md discovery, prompt catalog, and read_skill helper
 ├── inference_pool.py  # One OpenAI-compatible endpoint over a pool of replicas (`loam-inference-pool`)
+├── nemotron.py        # Optional pool backend: self-hosted Nemotron replicas on vLLM (`loam-nemotron`)
+├── token_refresh.py   # Fresh ALCF inference tokens for endpoints with `token_refresh: alcf`
 ├── scaling.py         # Scaling recipe from measured density, refusing unmeasured Systems (`loam-scaling`)
 ├── staging.py         # Single-allocation staging, preflight and submission (`loam-stage`)
 ├── coordinator.py     # Runs a staged job inside its allocation: roles, telemetry, inference pool, campaign

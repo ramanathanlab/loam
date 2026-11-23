@@ -11,4 +11,4 @@ loam runs on more than one System (Aurora with PBS and Intel XPUs; Jupiter with 
 ## Consequences
 
 - Adding a System means writing one System implementation plus one reference file per skill. Skills without a reference file for a System are unsupported there, not silently wrong.
-- Code that uses the self-hosted Nemotron service is an optional backend installed through a `jupiter` extra, not a core dependency.
+- Code that uses the self-hosted Nemotron service is an optional backend installed through a `nemotron` extra (named for the backend, not a System), not a core dependency. It names no scheduler: whoever holds the allocation starts its replicas.
