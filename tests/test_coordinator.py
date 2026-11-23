@@ -222,7 +222,8 @@ def gc_policy():
     enabled = gc.isenabled()
     gc.enable()
     gc.set_threshold(4321, 17, 23)
-    yield
+    # Some Python versions ignore threshold2; preserve the policy actually installed.
+    yield gc.get_threshold()
     gc.set_threshold(*before)
     gc.enable() if enabled else gc.disable()
 
@@ -240,9 +241,9 @@ def test_by_default_the_process_gc_policy_is_kept(gc_policy, plan):
 def test_only_the_young_generation_changes_and_collection_stays_on(gc_policy, threshold):
     receipt = coordinator.configure_controller_gc({'controller_gc_threshold0': threshold})
 
-    assert gc.get_threshold() == (threshold, 17, 23)
-    assert receipt['thresholds_before'] == [4321, 17, 23]
-    assert receipt['thresholds_applied'] == [threshold, 17, 23]
+    assert gc.get_threshold() == (threshold, *gc_policy[1:])
+    assert receipt['thresholds_before'] == list(gc_policy)
+    assert receipt['thresholds_applied'] == [threshold, *gc_policy[1:]]
     assert receipt['automatic_gc_enabled'] and gc.isenabled()
 
 
@@ -250,14 +251,14 @@ def test_only_the_young_generation_changes_and_collection_stays_on(gc_policy, th
 def test_an_invalid_policy_fails_without_side_effects(gc_policy, invalid):
     with pytest.raises(ValueError):
         coordinator.configure_controller_gc({'controller_gc_threshold0': invalid})
-    assert gc.get_threshold() == (4321, 17, 23) and gc.isenabled()
+    assert gc.get_threshold() == gc_policy and gc.isenabled()
 
 
 def test_tuning_refuses_a_disabled_collector_without_changing_it(gc_policy):
     gc.disable()
     with pytest.raises(ValueError):
         coordinator.configure_controller_gc({'controller_gc_threshold0': 10000})
-    assert gc.get_threshold() == (4321, 17, 23) and not gc.isenabled()
+    assert gc.get_threshold() == gc_policy and not gc.isenabled()
 
 
 def test_the_default_leaves_a_disabled_collector_disabled(gc_policy):
@@ -278,7 +279,7 @@ def test_another_interpreter_keeps_its_own_policy(gc_policy):
     before = json.loads(subprocess.check_output(command, text=True))
     coordinator.configure_controller_gc({'controller_gc_threshold0': 10000})
     assert json.loads(subprocess.check_output(command, text=True)) == before
-    assert gc.get_threshold() == (10000, 17, 23)
+    assert gc.get_threshold() == (10000, *gc_policy[1:])
 
 
 def test_a_telemetry_sample_satisfies_startup_readiness(tmp_path, monkeypatch):
